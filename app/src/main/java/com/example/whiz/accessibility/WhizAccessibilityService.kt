@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.util.Log
 import android.view.Display
@@ -297,7 +298,49 @@ class WhizAccessibilityService : AccessibilityService() {
             null
         }
     }
-    
+
+    /**
+     * Returns true iff a Google Maps floating navigation overlay (chathead) is currently
+     * visible on screen — i.e. Maps has a window but is not fullscreen foreground.
+     * Used by the self-close tool to decide whether to expand Maps before teardown.
+     */
+    fun isMapsNavigationOverlayPresent(): Boolean {
+        return try {
+            val windowsList = windows ?: return false
+            val dm = resources.displayMetrics
+            val screenW = dm.widthPixels
+            val screenH = dm.heightPixels
+            // 92% tolerance covers status/nav bar insets; observed overlay is ~36% x ~22%.
+            val fullscreenMinW = (screenW * 92) / 100
+            val fullscreenMinH = (screenH * 92) / 100
+
+            var overlayFound = false
+            var mapsIsFullscreenForeground = false
+
+            for (window in windowsList) {
+                val root = window.root ?: continue
+                try {
+                    if (root.packageName?.toString() != "com.google.android.apps.maps") continue
+                    val bounds = Rect()
+                    window.getBoundsInScreen(bounds)
+                    val isFullscreen = bounds.width() >= fullscreenMinW && bounds.height() >= fullscreenMinH
+                    if (isFullscreen) {
+                        mapsIsFullscreenForeground = true
+                    } else {
+                        overlayFound = true
+                    }
+                } finally {
+                    root.recycle()
+                }
+            }
+
+            overlayFound && !mapsIsFullscreenForeground
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking for Maps navigation overlay", e)
+            false
+        }
+    }
+
     /**
      * Finds nodes by text in the current window
      */

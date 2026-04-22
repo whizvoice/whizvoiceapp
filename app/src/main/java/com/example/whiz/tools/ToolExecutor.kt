@@ -893,6 +893,35 @@ class ToolExecutor @Inject constructor(
             // Short delay to allow the result to be sent before closing
             delay(100)
 
+            // If a Google Maps navigation overlay is visible, expand Maps to fullscreen
+            // before tearing down so the user lands in their active navigation.
+            val mapsOverlayPresent = try {
+                com.example.whiz.accessibility.WhizAccessibilityService
+                    .getInstance()?.isMapsNavigationOverlayPresent() ?: false
+            } catch (e: Exception) {
+                Log.w(TAG, "Maps overlay detection failed; proceeding with normal close", e)
+                false
+            }
+
+            if (mapsOverlayPresent) {
+                Log.i(TAG, "Maps nav overlay detected — expanding Maps to fullscreen before close")
+                try {
+                    val mapsIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                        addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                        setPackage("com.google.android.apps.maps")
+                        addFlags(
+                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                            android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        )
+                    }
+                    context.startActivity(mapsIntent)
+                    // Let Maps come forward before we kill ourselves
+                    delay(300)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to expand Maps overlay; continuing with close anyway", e)
+                }
+            }
+
             // Use static callback to tell MainActivity to finish and remove from recents
             Log.i(TAG, "Invoking finishAndRemoveTaskCallback on MainActivity")
             val callback = com.example.whiz.MainActivity.finishAndRemoveTaskCallback
