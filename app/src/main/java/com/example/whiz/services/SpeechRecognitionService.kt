@@ -652,6 +652,19 @@ class SpeechRecognitionService @Inject constructor(
                     }
                 } else {
                     Log.d(TAG, "🔄 RESTART_DEBUG: Auto-restart conditions not met - skipping restart")
+                    // 🔧 BUG FIX (B4): For terminal errors (NETWORK, SERVER, AUDIO, RECOGNIZER_BUSY, etc.)
+                    // that end listening without a restart, the in-flight partial would otherwise be
+                    // silently lost. Deliver it via the callback before bailing.
+                    val currentPartial = _transcriptionState.value
+                    if (currentPartial.isNotBlank() && !manualStopInProgress) {
+                        Log.d(TAG, "[VOICE_TRACE] onError DELIVER_PARTIAL_ON_TERMINAL_ERROR text='$currentPartial' error=$error")
+                        try {
+                            recognitionCallback?.invoke(currentPartial)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error invoking recognition callback from onError terminal path", e)
+                        }
+                        _transcriptionState.value = ""
+                    }
                     // Set listening to false only when we're NOT restarting (conditions not met)
                     _isListening.value = false
                 }
