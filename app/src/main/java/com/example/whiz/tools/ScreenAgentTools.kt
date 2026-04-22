@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.media.AudioManager
 import android.net.Uri
 import android.util.Base64
@@ -145,6 +146,46 @@ class ScreenAgentTools @Inject constructor(
         val appName: String,
         val error: String? = null
     )
+
+    data class GetUiResult(
+        val success: Boolean,
+        val dump: String,
+        val nodeCount: Int,
+        val error: String? = null
+    )
+
+    data class ClickResult(
+        val success: Boolean,
+        val elementId: Int? = null,
+        val matchedText: String? = null,
+        val error: String? = null
+    )
+
+    data class InsertTextResult(
+        val success: Boolean,
+        val elementId: Int? = null,
+        val textSet: String? = null,
+        val error: String? = null
+    )
+
+    data class PressBackResult(
+        val success: Boolean,
+        val error: String? = null
+    )
+
+    data class NodeSignature(
+        val text: String?,
+        val contentDescription: String?,
+        val className: String?,
+        val resourceId: String?,
+        val bounds: Rect
+    )
+
+    // Cache of element_id -> signature from the most recent getUi() call.
+    // Overwritten on every call; re-walked at click/insertText time to re-resolve
+    // the live AccessibilityNodeInfo (refs go stale across calls — see plan doc).
+    @Volatile
+    private var lastUiSnapshot: Map<Int, NodeSignature> = emptyMap()
 
     // ========== Phone Call Functions ==========
 
@@ -1106,8 +1147,303 @@ class ScreenAgentTools @Inject constructor(
         return 0.0f
     }
     
+    // ========== Generic Screen Navigation Functions ==========
+
+    /**
+     * Press the system back button via accessibility service global action.
+     */
+    suspend fun pressBack(): PressBackResult {
+        Log.i(TAG, "pressBack called")
+        trackAction("pressBack")
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return PressBackResult(
+                success = false,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        val ok = accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
+        return if (ok) PressBackResult(success = true)
+        else PressBackResult(success = false, error = "Failed to perform back action")
+    }
+
+    /**
+     * Dump the current accessibility tree for the LLM. Produces a list where each
+     * interactable node has a stable element_id the LLM can pass to clickElement /
+     * insertText. Overwrites lastUiSnapshot.
+     *
+     * scope = "interactable" (default): flat list of only clickable / long-clickable /
+     *     editable nodes. Cheapest tokens; best for navigation.
+     * scope = "full": indented tree of all nodes; only interactable ones get an [id].
+     */
+    suspend fun getUi(scope: String = "interactable"): GetUiResult {
+        Log.i(TAG, "getUi called, scope=$scope")
+        trackAction("getUi: $scope")
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return GetUiResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        val root = accessibilityService.getCurrentRootNode()
+            ?: return GetUiResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = "No active window root available"
+            )
+        val interactableOnly = scope != "full"
+        val sb = StringBuilder()
+        val signatures = mutableMapOf<Int, NodeSignature>()
+        val counter = intArrayOf(0)
+        walkTreeForDump(root, 0, interactableOnly, sb, signatures, counter)
+        lastUiSnapshot = signatures.toMap()
+        return GetUiResult(
+            success = true,
+            dump = sb.toString().trimEnd(),
+            nodeCount = signatures.size
+        )
+    }
+
+    /**
+     * Click the element identified by element_id from the most recent getUi() call.
+     * Resolves the element_id -> signature -> live node by re-walking the tree. If
+     * the matched node is not itself clickable, walks up to the first clickable
+     * ancestor.
+     */
+    suspend fun clickElement(elementId: Int): ClickResult {
+        Log.i(TAG, "clickElement called, elementId=$elementId")
+        trackAction("clickElement: $elementId")
+        val sig = lastUiSnapshot[elementId] ?: return ClickResult(
+            success = false,
+            elementId = elementId,
+            error = "No element with id=$elementId in the last UI snapshot. Call agent_get_ui first."
+        )
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return ClickResult(
+                success = false,
+                elementId = elementId,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        val root = accessibilityService.getCurrentRootNode()
+            ?: return ClickResult(
+                success = false,
+                elementId = elementId,
+                error = "No active window root available"
+            )
+        val node = resolveSignature(root, sig) ?: return ClickResult(
+            success = false,
+            elementId = elementId,
+            matchedText = sig.text,
+            error = "Element no longer present in the current UI. Call agent_get_ui again."
+        )
+        val clickTarget = if (node.isClickable) node else walkUpToClickable(node)
+        if (clickTarget == null) {
+            return ClickResult(
+                success = false,
+                elementId = elementId,
+                matchedText = sig.text,
+                error = "Element found but no clickable ancestor."
+            )
+        }
+        val ok = try {
+            clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clicking element $elementId", e)
+            false
+        }
+        return if (ok) ClickResult(
+            success = true,
+            elementId = elementId,
+            matchedText = sig.text
+        ) else ClickResult(
+            success = false,
+            elementId = elementId,
+            matchedText = sig.text,
+            error = "ACTION_CLICK returned false"
+        )
+    }
+
+    /**
+     * Insert text into an input field. If elementId is given, resolve it via the
+     * last getUi snapshot. Otherwise target the input-focused editable, falling
+     * back to the sole editable on screen.
+     */
+    suspend fun insertText(text: String, elementId: Int? = null): InsertTextResult {
+        Log.i(TAG, "insertText called, elementId=$elementId, textLength=${text.length}")
+        trackAction("insertText: id=$elementId")
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        val root = accessibilityService.getCurrentRootNode()
+            ?: return InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "No active window root available"
+            )
+
+        val target: AccessibilityNodeInfo = if (elementId != null) {
+            val sig = lastUiSnapshot[elementId] ?: return InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "No element with id=$elementId in the last UI snapshot. Call agent_get_ui first."
+            )
+            resolveSignature(root, sig) ?: return InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "Element no longer present in the current UI. Call agent_get_ui again."
+            )
+        } else {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused != null && focused.isEditable) {
+                focused
+            } else {
+                val editables = mutableListOf<AccessibilityNodeInfo>()
+                collectEditableNodes(root, editables)
+                when (editables.size) {
+                    1 -> editables[0]
+                    0 -> return InsertTextResult(
+                        success = false,
+                        error = "No editable input field found on screen. Pass element_id to disambiguate."
+                    )
+                    else -> return InsertTextResult(
+                        success = false,
+                        error = "Multiple editable fields found (${editables.size}). Pass element_id to disambiguate."
+                    )
+                }
+            }
+        }
+
+        return try {
+            target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val clearBundle = Bundle()
+            clearBundle.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                ""
+            )
+            target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+            delay(200)
+            val bundle = Bundle()
+            bundle.putCharSequence(
+                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                text
+            )
+            val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
+            if (ok) InsertTextResult(
+                success = true,
+                elementId = elementId,
+                textSet = text
+            ) else InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "ACTION_SET_TEXT returned false"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error inserting text", e)
+            InsertTextResult(
+                success = false,
+                elementId = elementId,
+                error = "Exception: ${e.message}"
+            )
+        }
+    }
+
+    private fun walkTreeForDump(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        interactableOnly: Boolean,
+        sb: StringBuilder,
+        signatures: MutableMap<Int, NodeSignature>,
+        counter: IntArray
+    ) {
+        val isInteractable = node.isClickable || node.isLongClickable || node.isEditable
+        val include = isInteractable || !interactableOnly
+        if (include) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val className = node.className?.toString()?.substringAfterLast('.') ?: ""
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            val flags = buildList {
+                if (node.isClickable) add("clickable")
+                if (node.isLongClickable) add("long-clickable")
+                if (node.isEditable) add("editable")
+            }.joinToString(",")
+
+            if (interactableOnly) {
+                val id = counter[0]++
+                signatures[id] = NodeSignature(
+                    text = node.text?.toString(),
+                    contentDescription = node.contentDescription?.toString(),
+                    className = node.className?.toString(),
+                    resourceId = node.viewIdResourceName,
+                    bounds = Rect(bounds)
+                )
+                sb.appendLine("[$id] $className text=\"$text\" desc=\"$desc\" $flags bounds=$bounds")
+            } else {
+                val indent = "  ".repeat(depth)
+                if (isInteractable) {
+                    val id = counter[0]++
+                    signatures[id] = NodeSignature(
+                        text = node.text?.toString(),
+                        contentDescription = node.contentDescription?.toString(),
+                        className = node.className?.toString(),
+                        resourceId = node.viewIdResourceName,
+                        bounds = Rect(bounds)
+                    )
+                    sb.appendLine("$indent[$id] $className text=\"$text\" desc=\"$desc\" $flags bounds=$bounds")
+                } else {
+                    sb.appendLine("$indent$className text=\"$text\" desc=\"$desc\" bounds=$bounds")
+                }
+            }
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            walkTreeForDump(child, depth + 1, interactableOnly, sb, signatures, counter)
+        }
+    }
+
+    private fun resolveSignature(root: AccessibilityNodeInfo, sig: NodeSignature): AccessibilityNodeInfo? {
+        if (matchesSignature(root, sig)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            val found = resolveSignature(child, sig)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    private fun matchesSignature(node: AccessibilityNodeInfo, sig: NodeSignature): Boolean {
+        if (node.text?.toString() != sig.text) return false
+        if (node.contentDescription?.toString() != sig.contentDescription) return false
+        if (node.className?.toString() != sig.className) return false
+        if (node.viewIdResourceName != sig.resourceId) return false
+        val nodeBounds = Rect()
+        node.getBoundsInScreen(nodeBounds)
+        return nodeBounds == sig.bounds
+    }
+
+    private fun walkUpToClickable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var current: AccessibilityNodeInfo? = node.parent
+        while (current != null) {
+            if (current.isClickable) return current
+            current = current.parent
+        }
+        return null
+    }
+
+    private fun collectEditableNodes(node: AccessibilityNodeInfo, out: MutableList<AccessibilityNodeInfo>) {
+        if (node.isEditable) out.add(node)
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectEditableNodes(child, out)
+        }
+    }
+
     // ========== WhatsApp Specific Functions ==========
-    
+
     suspend fun selectWhatsAppChat(chatName: String): WhatsAppResult {
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
         trackAction("selectWhatsAppChat: $chatName")
@@ -1414,17 +1750,20 @@ class ScreenAgentTools @Inject constructor(
             
             Log.e(TAG, "Could not find or click on chat: $chatName after $attempts attempts")
 
-            // UI dump for debugging - try to get current screen state
-            val finalRootNode = accessibilityService.getCurrentRootNode()
-            if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts")
-                finalRootNode.recycle()
-            } else {
-                logScreenAgentError(
-                    reason = "whatsapp_chat_not_found",
-                    errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
-                    packageName = "com.whatsapp"
-                )
+            // UI dump for debugging — sample 5% (reduce to 1% at higher user volumes)
+            if (Math.random() < 0.05) {
+                val finalRootNode = accessibilityService.getCurrentRootNode()
+                if (finalRootNode != null) {
+                    dumpUIHierarchy(finalRootNode, "whatsapp_chat_not_found", "Could not find chat '$chatName' after $attempts attempts", expectedFailure = true)
+                    finalRootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "whatsapp_chat_not_found",
+                        errorMessage = "Could not find chat '$chatName' after $attempts attempts (no root node)",
+                        packageName = "com.whatsapp",
+                        expectedFailure = true
+                    )
+                }
             }
 
             return WhatsAppResult(
@@ -2433,17 +2772,20 @@ class ScreenAgentTools @Inject constructor(
 
             Log.e(TAG, "Could not find or click on conversation: $contactName after $attempts attempts")
 
-            // UI dump for debugging
-            val finalRootNode = accessibilityService.getCurrentRootNode()
-            if (finalRootNode != null) {
-                dumpUIHierarchy(finalRootNode, "sms_chat_not_found", "Could not find SMS conversation '$contactName' after $attempts attempts")
-                finalRootNode.recycle()
-            } else {
-                logScreenAgentError(
-                    reason = "sms_chat_not_found",
-                    errorMessage = "Could not find SMS conversation '$contactName' after $attempts attempts (no root node)",
-                    packageName = "com.google.android.apps.messaging"
-                )
+            // UI dump for debugging — sample 5% (reduce to 1% at higher user volumes)
+            if (Math.random() < 0.05) {
+                val finalRootNode = accessibilityService.getCurrentRootNode()
+                if (finalRootNode != null) {
+                    dumpUIHierarchy(finalRootNode, "sms_chat_not_found", "Could not find SMS conversation '$contactName' after $attempts attempts", expectedFailure = true)
+                    finalRootNode.recycle()
+                } else {
+                    logScreenAgentError(
+                        reason = "sms_chat_not_found",
+                        errorMessage = "Could not find SMS conversation '$contactName' after $attempts attempts (no root node)",
+                        packageName = "com.google.android.apps.messaging",
+                        expectedFailure = true
+                    )
+                }
             }
 
             return SMSResult(
@@ -3103,18 +3445,25 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Try multiple approaches to find the contact name
 
-            // Approach 1: Look for top_app_bar_title_row in modern Google Messages (Compose UI)
-            // The contact name is in a TextView child of this element
-            val topAppBarTitleId = "com.google.android.apps.messaging:id/top_app_bar_title_row"
-            val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
-            if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
-                val titleRow = topAppBarTitleNodes[0]
-                // Find the TextView child that contains the contact name
-                val name = findTextInChildren(titleRow)
-                topAppBarTitleNodes.forEach { it.recycle() }
-                if (name != null && name.isNotEmpty()) {
-                    Log.d(TAG, "Current SMS contact name (from top_app_bar_title_row): $name")
-                    return name
+            // Approach 1: Look for top_app_bar_title_row in Google Messages
+            // Try both the fully-qualified View resource ID and the bare Compose testTag,
+            // since newer Messages versions use Jetpack Compose where testTags are exposed
+            // without the package:id/ prefix.
+            val topAppBarTitleIds = listOf(
+                "com.google.android.apps.messaging:id/top_app_bar_title_row",
+                "top_app_bar_title_row"
+            )
+            for (topAppBarTitleId in topAppBarTitleIds) {
+                val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
+                if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
+                    val titleRow = topAppBarTitleNodes[0]
+                    // Find the TextView child that contains the contact name
+                    val name = findTextInChildren(titleRow)
+                    topAppBarTitleNodes.forEach { it.recycle() }
+                    if (name != null && name.isNotEmpty()) {
+                        Log.d(TAG, "Current SMS contact name (from $topAppBarTitleId): $name")
+                        return name
+                    }
                 }
             }
 
@@ -3890,10 +4239,13 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
-                    dumpRoot.recycle()
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
+                        dumpRoot.recycle()
+                    }
                 }
                 return MapsActionResult(
                     success = false,
@@ -4944,10 +5296,13 @@ class ScreenAgentTools @Inject constructor(
             rootNode.recycle()
 
             if (!locationClicked) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc")
-                    dumpRoot.recycle()
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_location_select_failed", "Could not find or click location: $selectionDesc", expectedFailure = true)
+                        dumpRoot.recycle()
+                    }
                 }
                 return MapsActionResult(
                     success = false,
@@ -5046,12 +5401,15 @@ class ScreenAgentTools @Inject constructor(
                 } else false
             }
             if (!resultsLoaded) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time")
-                    dumpRoot.recycle()
-                } else {
-                    logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps")
+                // Sample 5% (reduce to 1% at higher user volumes)
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_search_results_timeout", "Search results did not load in time", expectedFailure = true)
+                        dumpRoot.recycle()
+                    } else {
+                        logScreenAgentError("gmaps_search_results_timeout", "Search results did not load in time", "com.google.android.apps.maps", expectedFailure = true)
+                    }
                 }
                 return MapsActionResult(
                     success = false,
@@ -8697,7 +9055,7 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
-    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null) {
+    internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null, expectedFailure: Boolean = false) {
         try {
             val timestamp = System.currentTimeMillis()
             val fileName = "whiz_ui_dump_${reason}_$timestamp.txt"
@@ -8747,7 +9105,8 @@ class ScreenAgentTools @Inject constructor(
                     errorMessage = errorMessage,
                     uiHierarchy = uiHierarchy,
                     packageName = packageName,
-                    screenAgentContext = screenAgentContext
+                    screenAgentContext = screenAgentContext,
+                    expectedFailure = expectedFailure
                 )
             }
         } catch (e: Exception) {
@@ -8763,7 +9122,8 @@ class ScreenAgentTools @Inject constructor(
         errorMessage: String?,
         uiHierarchy: String?,
         packageName: String?,
-        screenAgentContext: Map<String, Any>? = null
+        screenAgentContext: Map<String, Any>? = null,
+        expectedFailure: Boolean = false
     ) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -8786,7 +9146,8 @@ class ScreenAgentTools @Inject constructor(
                     conversationId = null, // Could be passed in if available
                     recentActions = getRecentActionsCopy(),
                     screenAgentContext = screenAgentContext,
-                    isEmulator = EmulatorDetection.isRunningOnEmulator()
+                    isEmulator = EmulatorDetection.isRunningOnEmulator(),
+                    expectedFailure = expectedFailure
                 )
 
                 val response = apiService.uploadUiDump(request)
@@ -8802,7 +9163,7 @@ class ScreenAgentTools @Inject constructor(
      * Log a screen agent error without UI dump. For failures where UI context isn't useful
      * (app launch failures, accessibility service issues, generic exceptions).
      */
-    private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null) {
+    private fun logScreenAgentError(reason: String, errorMessage: String, packageName: String? = null, expectedFailure: Boolean = false) {
         val logcat = LogcatCapture.capture()
         val screenAgentContext = logcat?.let { mapOf<String, Any>("logcat" to it) }
         uploadUiDumpToServer(
@@ -8810,7 +9171,8 @@ class ScreenAgentTools @Inject constructor(
             errorMessage = errorMessage,
             uiHierarchy = null,
             packageName = packageName,
-            screenAgentContext = screenAgentContext
+            screenAgentContext = screenAgentContext,
+            expectedFailure = expectedFailure
         )
     }
 

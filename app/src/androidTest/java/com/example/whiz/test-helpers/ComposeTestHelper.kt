@@ -1765,17 +1765,32 @@ object ComposeTestHelper {
         return try {
             Log.d(TAG, "🎤 Sending voice message: '$message'")
 
-            // Use reflection to access the _transcriptionFlow and emit to it
+            // Use reflection to access the _transcriptionFlow and emit to it.
+            // Flow now carries TranscriptionEmission(text, seq) — wrap the test message
+            // so the consumer's runtime cast succeeds.
             try {
                 val transcriptionFlowField = voiceManager.javaClass.getDeclaredField("_transcriptionFlow")
                 transcriptionFlowField.isAccessible = true
-                val transcriptionFlow = transcriptionFlowField.get(voiceManager) as? MutableSharedFlow<String>
+                @Suppress("UNCHECKED_CAST")
+                val transcriptionFlow = transcriptionFlowField.get(voiceManager)
+                    as? MutableSharedFlow<com.example.whiz.ui.viewmodels.VoiceManager.TranscriptionEmission>
 
                 if (transcriptionFlow != null) {
-                    // Emit to the flow (this is a blocking operation that needs to run on a coroutine)
+                    // Emit to the flow (this is a blocking operation that needs to run on a coroutine).
+                    // Pull the next seq from the same AtomicLong production code uses so the
+                    // dedup based on lastProcessedTranscriptionSeq stays monotonic across the
+                    // test-injection path and the real recognizer callback path.
+                    val seqCounterField = voiceManager.javaClass.getDeclaredField("transcriptionSeqCounter")
+                    seqCounterField.isAccessible = true
+                    val seqCounter = seqCounterField.get(voiceManager) as java.util.concurrent.atomic.AtomicLong
+                    val nextSeq = seqCounter.incrementAndGet()
                     runBlocking {
-                        Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$message'")
-                        transcriptionFlow.emit(message)
+                        Log.d(TAG, "🎤 Emitting to transcriptionFlow: '$message' (seq=$nextSeq)")
+                        val emission = com.example.whiz.ui.viewmodels.VoiceManager.TranscriptionEmission(
+                            text = message,
+                            seq = nextSeq
+                        )
+                        transcriptionFlow.emit(emission)
                         Log.d(TAG, "✅ Transcription flow emission completed")
                     }
 

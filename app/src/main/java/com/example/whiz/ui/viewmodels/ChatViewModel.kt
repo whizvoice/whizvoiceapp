@@ -412,36 +412,45 @@ class ChatViewModel @Inject constructor(
             }
         }
 
-        // Subscribe to bubble mode transcriptions and send them to the server
-        // Only process when bubble service is actually active (app in background)
-        viewModelScope.launch {
-            Log.d(TAG, "Started collecting bubble transcriptions")
-            BubbleOverlayService.userTranscriptionFlow
-                .distinctUntilChanged() // Prevent duplicate consecutive emissions
-                .collect { transcription ->
-                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
-                    if (transcription.isNotBlank() && BubbleOverlayService.isActive) {
-                        Log.d(TAG, "Received transcription from bubble mode (bubble active): '$transcription'")
-                        sendUserInput(transcription)
-                    } else if (transcription.isNotBlank()) {
-                        Log.d(TAG, "Ignoring bubble transcription - bubble not active (main app handling it): '$transcription'")
-                    }
-                }
-        }
-
-        // Collect voice transcriptions for regular (non-bubble) mode
-        // This runs in the ViewModel (Activity-scoped singleton) to avoid duplicate sends
-        // from multiple ChatScreen compositions during navigation transitions
-        // Guard with isActiveInstance() in case Activity was recreated and old ViewModel still has running collectors
+        // Single transcription consumer for BOTH chat and bubble modes.
+        //
+        // Previously there were two collectors — one on BubbleOverlayService.userTranscriptionFlow
+        // and one on voiceManager.transcriptionFlow — gating mutually-exclusively on
+        // BubbleOverlayService.isActive at consume time. That created a race where a bubble
+        // open/close mid-utterance could leave both gates failing (message dropped) or both
+        // passing (message duplicated). Both consumers always called the same sendUserInput
+        // with the same chat-id semantics, so the split bought nothing functional.
+        //
+        // Now: one collector on voiceManager.transcriptionFlow processes every final regardless
+        // of bubble state. The bubble UI keeps its own subscription on
+        // BubbleOverlayService.userTranscriptionFlow for display purposes (BubbleOverlayService
+        // still receives via SpeechRecognitionService.onResults / onSegmentResults).
+        //
+        // Dedup uses voiceManager.lastProcessedTranscriptionSeq so a freshly-created
+        // ChatViewModel that receives the replayed last emission doesn't double-send what an
+        // earlier (now superseded) instance already sent.
         viewModelScope.launch {
             voiceManager.transcriptionFlow
-                .distinctUntilChanged()
-                .collect { transcription ->
-                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
-                    if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
-                        Log.d(TAG, "Received voice transcription (main app): '$transcription'")
+                .collect { emission ->
+                    val active = isActiveInstance()
+                    val bubbleActive = BubbleOverlayService.isActive  // for diagnostics only
+                    val transcription = emission.text
+                    if (!active) {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' isActiveInstance=false bubbleActive=$bubbleActive sendCalled=false reason=superseded")
+                        return@collect
+                    }
+                    if (emission.seq <= voiceManager.lastProcessedTranscriptionSeq) {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' lastProcessed=${voiceManager.lastProcessedTranscriptionSeq} sendCalled=false reason=already_processed")
+                        return@collect
+                    }
+                    if (transcription.isNotBlank()) {
+                        Log.d(TAG, "Received voice transcription: '$transcription' (bubbleActive=$bubbleActive)")
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SEND seq=${emission.seq} text='$transcription' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=true")
+                        voiceManager.lastProcessedTranscriptionSeq = emission.seq
                         updateInputText(transcription, fromVoice = true)
                         sendUserInput(transcription)
+                    } else {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=false reason=blank")
                     }
                 }
         }

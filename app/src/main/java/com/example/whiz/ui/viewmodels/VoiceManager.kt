@@ -22,6 +22,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -745,9 +747,35 @@ class VoiceManager @Inject constructor(
         speechRecognitionService.stopListening()
     }
 
-    // Transcription flow for continuous listening - consumers can collect from this
-    private val _transcriptionFlow = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1)
-    val transcriptionFlow: SharedFlow<String> = _transcriptionFlow.asSharedFlow()
+    /**
+     * One emission of a finalised voice transcription. Carries a monotonic [seq] so consumers
+     * can dedupe across ViewModel recreation: a newly-subscribed collector that gets a replayed
+     * emission can compare [seq] to [lastProcessedTranscriptionSeq] and skip if it's already
+     * been handled.
+     */
+    data class TranscriptionEmission(val text: String, val seq: Long)
+
+    private val transcriptionSeqCounter = AtomicLong(0L)
+
+    /**
+     * The sequence number of the last transcription a consumer actually processed (sent as a
+     * message). Lives on this singleton so it survives Activity / ChatViewModel recreation —
+     * a freshly-created ChatViewModel that immediately receives the replayed last emission can
+     * compare against this and skip if it's already been handled.
+     */
+    @Volatile
+    var lastProcessedTranscriptionSeq: Long = -1L
+
+    // Transcription flow for continuous listening - consumers can collect from this.
+    // replay = 1 + DROP_OLDEST: newly-subscribed collectors immediately receive the most recent
+    // emission, fixing the supersession race where a ChatViewModel created mid-utterance would
+    // otherwise miss the final transcription. Dedup on the consumer side via the seq counter.
+    private val _transcriptionFlow = MutableSharedFlow<TranscriptionEmission>(
+        replay = 1,
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    val transcriptionFlow: SharedFlow<TranscriptionEmission> = _transcriptionFlow.asSharedFlow()
 
     // Transcription callback for continuous listening (set by consumers like ChatViewModel)
     // TODO: This can be deprecated once all consumers move to using transcriptionFlow
@@ -773,8 +801,13 @@ class VoiceManager @Inject constructor(
             // Call the transcription callback if set (for chat integration)
             if (finalText.isNotBlank()) {
                 // Emit to flow for all consumers (ChatScreen, BubbleOverlayService, etc.)
+                val emission = TranscriptionEmission(
+                    text = finalText,
+                    seq = transcriptionSeqCounter.incrementAndGet()
+                )
+                Log.d(TAG, "[VOICE_TRACE] VoiceManager EMIT seq=${emission.seq} text='${emission.text}'")
                 coroutineScope.launch {
-                    _transcriptionFlow.emit(finalText)
+                    _transcriptionFlow.emit(emission)
                 }
 
                 // Also call legacy callback if set (for backward compatibility)

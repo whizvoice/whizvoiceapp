@@ -147,8 +147,8 @@ fun ChatsListScreen(
                         Icon(
                             imageVector = if (isWakeWordEnabled) Icons.Default.Hearing else Icons.Default.HearingDisabled,
                             contentDescription = null,
-                            tint = if (isWakeWordEnabled) MaterialTheme.colorScheme.onPrimary
-                                   else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f)
+                            tint = if (isWakeWordEnabled) MaterialTheme.colorScheme.onPrimaryContainer
+                                   else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
                         )
                     }
                     IconButton(
@@ -162,17 +162,17 @@ fun ChatsListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                    actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    actionIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             )
         },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onNewChatClick,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
                 modifier = Modifier.semantics {
                     // Explicit accessibility properties
                     role = Role.Button

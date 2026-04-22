@@ -23,7 +23,7 @@ import androidx.compose.ui.zIndex
  * setShowWhenLocked(true), making buttons untappable on the lock screen.
  */
 @Composable
-private fun InlineDialog(
+internal fun InlineDialog(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     title: @Composable (() -> Unit)? = null,

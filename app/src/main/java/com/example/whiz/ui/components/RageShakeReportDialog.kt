@@ -29,11 +29,8 @@ fun RageShakeReportDialog(
 ) {
     var description by remember { mutableStateOf("") }
 
-    AlertDialog(
+    InlineDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
-        modifier = Modifier.semantics {
-            contentDescription = "Bug report dialog"
-        },
         title = {
             Text(
                 "Report a Problem",
