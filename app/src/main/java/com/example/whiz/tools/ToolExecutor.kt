@@ -76,7 +76,9 @@ class ToolExecutor @Inject constructor(
         "agent_save_calendar_event", "agent_draft_calendar_event",
         "agent_fitbit_add_quick_calories",
         "agent_delete_alarm",
-        "agent_close_other_app"
+        "agent_close_other_app",
+        "agent_click",
+        "agent_insert_text"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -333,6 +335,18 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_fitbit_add_quick_calories" -> {
                         executeFitbitAddQuickCalories(requestId, params)
+                    }
+                    "agent_press_back" -> {
+                        executePressBack(requestId)
+                    }
+                    "agent_get_ui" -> {
+                        executeGetUi(requestId, params)
+                    }
+                    "agent_click" -> {
+                        executeClick(requestId, params)
+                    }
+                    "agent_insert_text" -> {
+                        executeInsertText(requestId, params)
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
@@ -1969,6 +1983,132 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_close_other_app",
                     requestId = requestId,
                     error = "Failed to close app: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executePressBack(requestId: String) {
+        try {
+            Log.i(TAG, "agent_press_back invoked")
+            val result = screenAgentTools.pressBack()
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_press_back result for requestId=$requestId: ${resultJson.toString(2)}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_press_back",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing press back", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_press_back",
+                    requestId = requestId,
+                    error = "Failed to press back: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeGetUi(requestId: String, params: JSONObject) {
+        try {
+            val scope = if (params.has("scope")) params.getString("scope") else "interactable"
+            Log.i(TAG, "agent_get_ui invoked, scope=$scope")
+            val result = screenAgentTools.getUi(scope)
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("dump", result.dump)
+                put("node_count", result.nodeCount)
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_get_ui result for requestId=$requestId: success=${result.success}, nodes=${result.nodeCount}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_get_ui",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing get ui", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_get_ui",
+                    requestId = requestId,
+                    error = "Failed to get UI: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeClick(requestId: String, params: JSONObject) {
+        try {
+            val elementId = params.getInt("element_id")
+            Log.i(TAG, "agent_click invoked, element_id=$elementId")
+            val result = screenAgentTools.clickElement(elementId)
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.elementId?.let { put("element_id", it) }
+                result.matchedText?.let { put("matched_text", it) }
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_click result for requestId=$requestId: ${resultJson.toString(2)}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_click",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing click", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_click",
+                    requestId = requestId,
+                    error = "Failed to click element: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeInsertText(requestId: String, params: JSONObject) {
+        try {
+            val text = params.getString("text")
+            val elementId = if (params.has("element_id") && !params.isNull("element_id")) {
+                params.getInt("element_id")
+            } else {
+                null
+            }
+            Log.i(TAG, "agent_insert_text invoked, element_id=$elementId, textLen=${text.length}")
+            val result = screenAgentTools.insertText(text, elementId)
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.elementId?.let { put("element_id", it) }
+                result.textSet?.let { put("text_set", it) }
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_insert_text result for requestId=$requestId: ${resultJson.toString(2)}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_insert_text",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing insert text", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_insert_text",
+                    requestId = requestId,
+                    error = "Failed to insert text: ${e.message}"
                 )
             )
         }
