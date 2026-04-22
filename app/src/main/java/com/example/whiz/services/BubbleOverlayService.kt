@@ -257,9 +257,12 @@ class BubbleOverlayService : Service() {
         updateModeVisual() // Set initial visual state
         applyCurrentMode() // Apply initial mode to VoiceManager
 
-        // Collect transcriptions from VoiceManager flow and forward to bubble UI when active
+        // Collect transcriptions from VoiceManager flow and forward to bubble UI when active.
+        // Emissions are TranscriptionEmission(text, seq); we only need the text here since the
+        // bubble path is for UI display, not for sending — dedup happens at the chat collector.
         serviceScope.launch {
-            voiceManager.transcriptionFlow.collect { transcription ->
+            voiceManager.transcriptionFlow.collect { emission ->
+                val transcription = emission.text
                 if (transcription.isNotBlank() && isActive) {
                     Log.d(TAG, "Transcription received from flow in bubble mode: '$transcription'")
                     stuckPartialTimeoutJob?.cancel()
