@@ -25,10 +25,10 @@ fun WhizTheme(
         SideEffect {
             val window = (view.context as Activity).window
             // Set the status bar color to your primary color
-            window.statusBarColor = colorScheme.primary.toArgb()
+            window.statusBarColor = colorScheme.primaryContainer.toArgb()
 
             // Determine if the primary color is light or dark
-            val primaryColor = colorScheme.primary
+            val primaryColor = colorScheme.primaryContainer
             val luminance =
                 (0.2126 * primaryColor.red + 0.7152 * primaryColor.green + 0.0722 * primaryColor.blue)
 

@@ -693,21 +693,28 @@ class BubbleOverlayService : Service() {
             val profileImage = chatHeadView?.findViewById<ImageView>(R.id.profile_image)
             val modeIndicator = chatHeadView?.findViewById<ImageView>(R.id.mode_indicator)
             val chatHead = chatHeadView?.findViewById<CardView>(R.id.chat_head)
-            
+
+            // Use a dark background for the chat head circle to contrast with the themed icon
+            chatHead?.setCardBackgroundColor(
+                resolveThemeColor(com.google.android.material.R.attr.colorSurfaceContainerHighest)
+            )
+
             // Clear any existing animations
             modeIndicator?.clearAnimation()
-            
+
             when (currentMode) {
                 ListeningMode.CONTINUOUS_LISTENING -> {
+                    val primaryColor = resolveThemeColor(com.google.android.material.R.attr.colorPrimary)
                     // Robot face with microphone icon
                     profileImage?.setImageResource(R.drawable.robot_no_face)
+                    profileImage?.setColorFilter(primaryColor, android.graphics.PorterDuff.Mode.SRC_IN)
                     profileImage?.alpha = 1.0f
-                    
+
                     // Show mic icon overlay with pulsing animation
                     modeIndicator?.visibility = View.VISIBLE
                     modeIndicator?.setImageResource(R.drawable.ic_mic)
                     modeIndicator?.setColorFilter(
-                        android.graphics.Color.BLACK,
+                        primaryColor,
                         android.graphics.PorterDuff.Mode.SRC_IN
                     )
                     modeIndicator?.contentDescription = "Microphone Active"
@@ -715,25 +722,29 @@ class BubbleOverlayService : Service() {
                     startPulsingAnimation(modeIndicator)
                 }
                 ListeningMode.MIC_OFF -> {
-                    // Show original robot face with face (not no_face version)
-                    profileImage?.setImageResource(R.mipmap.ic_launcher_round)
+                    val primaryColor = resolveThemeColor(com.google.android.material.R.attr.colorPrimary)
+                    // Show robot icon tinted with theme color
+                    profileImage?.setImageResource(R.drawable.whiz_icon)
+                    profileImage?.setColorFilter(primaryColor, android.graphics.PorterDuff.Mode.SRC_IN)
                     profileImage?.alpha = 1.0f
-                    
+
                     // Hide mode indicator
                     modeIndicator?.visibility = View.GONE
                     modeIndicator?.clearAnimation()
                     chatHead?.contentDescription = "WhizVoice Chat Bubble - Mic Off"
                 }
                 ListeningMode.TTS_WITH_LISTENING -> {
+                    val primaryColor = resolveThemeColor(com.google.android.material.R.attr.colorPrimary)
                     // Robot face with speaker icon
                     profileImage?.setImageResource(R.drawable.robot_no_face)
+                    profileImage?.setColorFilter(primaryColor, android.graphics.PorterDuff.Mode.SRC_IN)
                     profileImage?.alpha = 1.0f
-                    
+
                     // Show speaker icon overlay with pulsing animation
                     modeIndicator?.visibility = View.VISIBLE
                     modeIndicator?.setImageResource(R.drawable.ic_volume_up)
                     modeIndicator?.setColorFilter(
-                        android.graphics.Color.BLACK,
+                        primaryColor,
                         android.graphics.PorterDuff.Mode.SRC_IN
                     )
                     modeIndicator?.contentDescription = "Speaker Active"

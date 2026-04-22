@@ -920,10 +920,10 @@ fun ChatScreen(
                 }
             },
             colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                navigationIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                actionIconContentColor = MaterialTheme.colorScheme.onPrimaryContainer
             )
         )
         
@@ -1156,11 +1156,11 @@ fun MessageItem(
     val isUserMessage = message.type == MessageType.USER
     
     val backgroundColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.surface  // White background for user messages
+        MessageType.USER -> MaterialTheme.colorScheme.surfaceVariant
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.secondaryContainer
     }
     val textColor = when (message.type) {
-        MessageType.USER -> MaterialTheme.colorScheme.onSurface  // Black text for user messages
+        MessageType.USER -> MaterialTheme.colorScheme.onSurfaceVariant
         MessageType.ASSISTANT -> MaterialTheme.colorScheme.onSecondaryContainer  // Black text from theme
     }
     val alignment = if (isUserMessage) Alignment.CenterEnd else Alignment.CenterStart
