@@ -419,12 +419,21 @@ class ChatViewModel @Inject constructor(
             BubbleOverlayService.userTranscriptionFlow
                 .distinctUntilChanged() // Prevent duplicate consecutive emissions
                 .collect { transcription ->
-                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
-                    if (transcription.isNotBlank() && BubbleOverlayService.isActive) {
+                    val active = isActiveInstance()
+                    val bubbleActive = BubbleOverlayService.isActive
+                    if (!active) {
+                        Log.d(TAG, "[VOICE_TRACE] bubbleCollector SUPPRESSED text='$transcription' isActiveInstance=false bubbleActive=$bubbleActive sendCalled=false reason=superseded")
+                        return@collect
+                    }
+                    if (transcription.isNotBlank() && bubbleActive) {
                         Log.d(TAG, "Received transcription from bubble mode (bubble active): '$transcription'")
+                        Log.d(TAG, "[VOICE_TRACE] bubbleCollector SEND text='$transcription' isActiveInstance=true bubbleActive=true sendCalled=true")
                         sendUserInput(transcription)
                     } else if (transcription.isNotBlank()) {
                         Log.d(TAG, "Ignoring bubble transcription - bubble not active (main app handling it): '$transcription'")
+                        Log.d(TAG, "[VOICE_TRACE] bubbleCollector SUPPRESSED text='$transcription' isActiveInstance=true bubbleActive=false sendCalled=false reason=bubble_inactive")
+                    } else {
+                        Log.d(TAG, "[VOICE_TRACE] bubbleCollector SUPPRESSED text='' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=false reason=blank")
                     }
                 }
         }
@@ -437,11 +446,21 @@ class ChatViewModel @Inject constructor(
             voiceManager.transcriptionFlow
                 .distinctUntilChanged()
                 .collect { transcription ->
-                    if (!isActiveInstance()) return@collect // Skip if superseded by newer ViewModel
-                    if (transcription.isNotBlank() && !BubbleOverlayService.isActive) {
+                    val active = isActiveInstance()
+                    val bubbleActive = BubbleOverlayService.isActive
+                    if (!active) {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED text='$transcription' isActiveInstance=false bubbleActive=$bubbleActive sendCalled=false reason=superseded")
+                        return@collect
+                    }
+                    if (transcription.isNotBlank() && !bubbleActive) {
                         Log.d(TAG, "Received voice transcription (main app): '$transcription'")
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SEND text='$transcription' isActiveInstance=true bubbleActive=false sendCalled=true")
                         updateInputText(transcription, fromVoice = true)
                         sendUserInput(transcription)
+                    } else if (transcription.isNotBlank()) {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED text='$transcription' isActiveInstance=true bubbleActive=true sendCalled=false reason=bubble_active")
+                    } else {
+                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED text='' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=false reason=blank")
                     }
                 }
         }
