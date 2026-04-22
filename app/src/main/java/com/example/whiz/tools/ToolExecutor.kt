@@ -212,6 +212,9 @@ class ToolExecutor @Inject constructor(
                     "agent_close_app" -> {
                         executeCloseApp(requestId)
                     }
+                    "agent_open_app" -> {
+                        executeOpenApp(requestId)
+                    }
                     "agent_close_other_app" -> {
                         executeCloseOtherApp(requestId, params)
                     }
@@ -924,6 +927,64 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_close_app",
                     requestId = requestId,
                     error = "Failed to close app: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeOpenApp(requestId: String) {
+        try {
+            Log.i(TAG, "Executing open app command")
+
+            val isBubbleActive = BubbleOverlayService.isActive
+
+            if (!isBubbleActive) {
+                Log.i(TAG, "Bubble not active - app is already in foreground")
+                val resultJson = JSONObject().apply {
+                    put("success", true)
+                    put("message", "App is already in foreground")
+                }
+                _toolResults.emit(
+                    ToolExecutionResult.Success(
+                        toolName = "agent_open_app",
+                        requestId = requestId,
+                        result = resultJson
+                    )
+                )
+                return
+            }
+
+            // Bubble is active - bring app to foreground (mirrors BubbleOverlayService.returnToApp())
+            Log.i(TAG, "Bringing app to foreground from bubble mode")
+
+            val intent = android.content.Intent(context, com.example.whiz.MainActivity::class.java).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            context.startActivity(intent)
+
+            BubbleOverlayService.stop(context)
+
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "App brought to foreground from bubble mode")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Open app result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_open_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing open app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_open_app",
+                    requestId = requestId,
+                    error = "Failed to open app: ${e.message}"
                 )
             )
         }
