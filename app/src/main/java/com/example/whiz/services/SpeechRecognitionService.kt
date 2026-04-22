@@ -796,7 +796,6 @@ class SpeechRecognitionService @Inject constructor(
                 }
 
                 Log.d(TAG, "[DEBUG] 🎙️ PARTIAL transcription: '$partialText' (previous: '${_transcriptionState.value}', peak: $peakPartialLength)")
-                Log.d(TAG, "[VOICE_TRACE] onPartialResults partial='$partialText' peakLen=$peakPartialLength savedPartial='$savedPartialForConcatenation' transcriptionState='${_transcriptionState.value}' segmented=$useSegmentedSession")
 
                 // Ignore empty partial results to prevent clearing user's spoken text
                 // Empty partials can occur due to TTS interference, pauses, or recognition resets
