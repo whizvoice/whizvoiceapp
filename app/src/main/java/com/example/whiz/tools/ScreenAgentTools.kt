@@ -3095,18 +3095,25 @@ class ScreenAgentTools @Inject constructor(
         try {
             // Try multiple approaches to find the contact name
 
-            // Approach 1: Look for top_app_bar_title_row in modern Google Messages (Compose UI)
-            // The contact name is in a TextView child of this element
-            val topAppBarTitleId = "com.google.android.apps.messaging:id/top_app_bar_title_row"
-            val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
-            if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
-                val titleRow = topAppBarTitleNodes[0]
-                // Find the TextView child that contains the contact name
-                val name = findTextInChildren(titleRow)
-                topAppBarTitleNodes.forEach { it.recycle() }
-                if (name != null && name.isNotEmpty()) {
-                    Log.d(TAG, "Current SMS contact name (from top_app_bar_title_row): $name")
-                    return name
+            // Approach 1: Look for top_app_bar_title_row in Google Messages
+            // Try both the fully-qualified View resource ID and the bare Compose testTag,
+            // since newer Messages versions use Jetpack Compose where testTags are exposed
+            // without the package:id/ prefix.
+            val topAppBarTitleIds = listOf(
+                "com.google.android.apps.messaging:id/top_app_bar_title_row",
+                "top_app_bar_title_row"
+            )
+            for (topAppBarTitleId in topAppBarTitleIds) {
+                val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
+                if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
+                    val titleRow = topAppBarTitleNodes[0]
+                    // Find the TextView child that contains the contact name
+                    val name = findTextInChildren(titleRow)
+                    topAppBarTitleNodes.forEach { it.recycle() }
+                    if (name != null && name.isNotEmpty()) {
+                        Log.d(TAG, "Current SMS contact name (from $topAppBarTitleId): $name")
+                        return name
+                    }
                 }
             }
 
