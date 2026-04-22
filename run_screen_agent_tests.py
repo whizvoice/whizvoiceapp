@@ -746,14 +746,24 @@ def test_youtube_music_integration(tester):
         print("\n========================================")
         print("STEP 9: Opening queue view")
         print("========================================")
-        # Tap to full screen the current song
+        # YouTube Music's newer UI (2026) removed the separate "Up Next" tab. The player now
+        # has a bottom-sheet queue that's collapsed by default. The reliable way to expand it
+        # is a slow swipe up from the bottom of the sheet — works in both mini-player and
+        # fullscreen states. Taps on the drag handle (id=bottom_sheet_drag_handle, bounds
+        # ~[492,2115][587,2158] on Pixel 8) are unreliable because that ImageView has
+        # clickable=false and the surrounding clickable parent's behaviour depends on state.
+        # Two steps — still need the first to get from the mini-player bar up into the
+        # fullscreen now-playing view, then tap the drag handle to expand the bottom sheet.
+        # YouTube Music's newer UI (2026) collapsed the "Up Next" tab into the bottom sheet;
+        # drag handle bounds on Pixel 8 are ~[492,2115][587,2158].
+        # Step 1: tap the mini-player to fullscreen the current song.
         print("🖱️  Tapping to fullscreen current song at (500, 2100)...")
         subprocess.run(['adb', 'shell', 'input', 'tap', '500', '2100'], check=True)
         time.sleep(1)
 
-        # Tap to see what's up next
-        print("🖱️  Tapping to see queue at (300, 2200)...")
-        subprocess.run(['adb', 'shell', 'input', 'tap', '300', '2200'], check=True)
+        # Step 2: tap the drag handle to expand the queue sheet.
+        print("🖱️  Tapping bottom-sheet drag handle at (540, 2137) to expand the queue...")
+        subprocess.run(['adb', 'shell', 'input', 'tap', '540', '2137'], check=True)
         print("⏳ Waiting 2 seconds for queue to appear...")
         time.sleep(2)  # Wait for queue to appear
 
