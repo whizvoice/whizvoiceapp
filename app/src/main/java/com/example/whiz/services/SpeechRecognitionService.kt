@@ -665,7 +665,6 @@ class SpeechRecognitionService @Inject constructor(
                     // silently lost. Deliver it via the callback before bailing.
                     val currentPartial = _transcriptionState.value
                     if (currentPartial.isNotBlank() && !manualStopInProgress) {
-                        Log.d(TAG, "[VOICE_TRACE] onError DELIVER_PARTIAL_ON_TERMINAL_ERROR text='$currentPartial' error=$error")
                         try {
                             recognitionCallback?.invoke(currentPartial)
                         } catch (e: Exception) {
@@ -687,9 +686,6 @@ class SpeechRecognitionService @Inject constructor(
                 Log.d(TAG, "[DEBUG] onResults")
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 var finalText = matches?.firstOrNull() ?: ""
-                val originalRawFinal = finalText
-                val savedPartialAtEntry = savedPartialForConcatenation
-                val transcriptionStateAtEntry = _transcriptionState.value
 
                 // 🔧 If we have a saved partial from a previous session, merge it with the final result
                 if (savedPartialForConcatenation.isNotBlank() && finalText.isNotBlank()) {
@@ -720,18 +716,11 @@ class SpeechRecognitionService @Inject constructor(
                     Log.w(TAG, "Could not update bubble overlay: ${e.message}")
                 }
 
-                if (recognitionCallback != null) {
-                    if (finalText.isNotBlank()) {
-                        Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
-                        Log.d(TAG, "[VOICE_TRACE] onResults DELIVER rawFinal='$originalRawFinal' savedAtEntry='$savedPartialAtEntry' stateAtEntry='$transcriptionStateAtEntry' merged='$finalText' callbackFired=true segmented=$useSegmentedSession")
-                        // Deliver final transcription even if manually stopped
-                        // This ensures the user gets their speech text in the input field
-                        recognitionCallback?.invoke(finalText)
-                    } else {
-                        Log.d(TAG, "[VOICE_TRACE] onResults SUPPRESSED rawFinal='$originalRawFinal' savedAtEntry='$savedPartialAtEntry' stateAtEntry='$transcriptionStateAtEntry' merged='$finalText' callbackFired=false reason=blank")
-                    }
-                } else {
-                    Log.d(TAG, "[VOICE_TRACE] onResults SUPPRESSED rawFinal='$originalRawFinal' savedAtEntry='$savedPartialAtEntry' stateAtEntry='$transcriptionStateAtEntry' merged='$finalText' callbackFired=false reason=null_callback")
+                if (recognitionCallback != null && finalText.isNotBlank()) {
+                    Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
+                    // Deliver final transcription even if manually stopped
+                    // This ensures the user gets their speech text in the input field
+                    recognitionCallback?.invoke(finalText)
                 }
 
                 // Check if we're in continuous listening mode
@@ -840,11 +829,8 @@ class SpeechRecognitionService @Inject constructor(
 
                 val matches = segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val segmentText = matches?.firstOrNull() ?: ""
-                val transcriptionStateAtEntry = _transcriptionState.value
-                val peakAtEntry = peakPartialLength
 
                 Log.d(TAG, "🔄 SEGMENTED: onSegmentResults: '$segmentText'")
-                Log.d(TAG, "[VOICE_TRACE] onSegmentResults segmentText='$segmentText' stateAtEntry='$transcriptionStateAtEntry' peakLen=$peakAtEntry")
 
                 // Fallback: if segment result is empty but we had good partials, use the
                 // longest partial we observed during this segment. Android's segmented
@@ -890,7 +876,6 @@ class SpeechRecognitionService @Inject constructor(
                             else "callback '$lastCallbackText'"
                         Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$effectiveText' " +
                                 "(already $dupSource)")
-                        Log.d(TAG, "[VOICE_TRACE] onSegmentResults SUPPRESSED effective='$effectiveText' segmentBlank=${segmentText.isBlank()} usedFallback=${segmentText.isBlank() && transcriptionStateAtEntry.isNotBlank()} callbackFired=false reason=dup_$dupSource")
                     } else {
                         _transcriptionState.value = effectiveText
                         lastSpeechActivityTimestamp = System.currentTimeMillis()
@@ -901,12 +886,9 @@ class SpeechRecognitionService @Inject constructor(
                             Log.w(TAG, "Could not update bubble overlay: ${e.message}")
                         }
 
-                        Log.d(TAG, "[VOICE_TRACE] onSegmentResults DELIVER effective='$effectiveText' segmentBlank=${segmentText.isBlank()} usedFallback=${segmentText.isBlank() && transcriptionStateAtEntry.isNotBlank()} callbackFired=true")
                         recognitionCallback?.invoke(effectiveText)
                         lastCallbackText = effectiveText
                     }
-                } else {
-                    Log.d(TAG, "[VOICE_TRACE] onSegmentResults SUPPRESSED effective='' segmentBlank=${segmentText.isBlank()} usedFallback=false callbackFired=false reason=blank_after_fallback peakLen=$peakAtEntry")
                 }
 
                 // Reset partial tracking for next segment (mic stays open)

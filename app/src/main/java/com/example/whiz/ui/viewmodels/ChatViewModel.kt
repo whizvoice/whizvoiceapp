@@ -436,21 +436,16 @@ class ChatViewModel @Inject constructor(
                     val bubbleActive = BubbleOverlayService.isActive  // for diagnostics only
                     val transcription = emission.text
                     if (!active) {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' isActiveInstance=false bubbleActive=$bubbleActive sendCalled=false reason=superseded")
                         return@collect
                     }
                     if (emission.seq <= voiceManager.lastProcessedTranscriptionSeq) {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' lastProcessed=${voiceManager.lastProcessedTranscriptionSeq} sendCalled=false reason=already_processed")
                         return@collect
                     }
                     if (transcription.isNotBlank()) {
                         Log.d(TAG, "Received voice transcription: '$transcription' (bubbleActive=$bubbleActive)")
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SEND seq=${emission.seq} text='$transcription' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=true")
                         voiceManager.lastProcessedTranscriptionSeq = emission.seq
                         updateInputText(transcription, fromVoice = true)
                         sendUserInput(transcription)
-                    } else {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=false reason=blank")
                     }
                 }
         }
