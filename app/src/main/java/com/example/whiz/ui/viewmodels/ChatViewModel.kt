@@ -2126,9 +2126,13 @@ class ChatViewModel @Inject constructor(
             Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
         
-        // VoiceManager is a singleton that manages its own cleanup
+        // VoiceManager is a singleton that manages its own cleanup.
+        // Don't shutdown() the singleton TTSManager here — VoiceManager (also singleton)
+        // is still using it, and tearing down the underlying TextToSpeech causes the
+        // next initialize() to build a fresh engine at platform defaults, silently
+        // dropping the user's custom rate/pitch. The OS reclaims TTS resources at
+        // process death; we don't need to release them on nav-scoped cleanup.
         ttsManager.stop()
-        ttsManager.shutdown()
         persistenceJob?.cancel()
         
         // Clear active conversation in ConnectionStateManager
@@ -2322,39 +2326,16 @@ class ChatViewModel @Inject constructor(
 
     private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
         try {
-            val previousSettings = currentVoiceSettings
             currentVoiceSettings = voiceSettings
-            
+
             if (!voiceSettings.useSystemDefaults) {
                 Log.d(TAG, "Applying custom voice settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
                 ttsManager.setSpeechRate(voiceSettings.speechRate)
                 ttsManager.setPitch(voiceSettings.pitch)
             } else {
-                // Check if we're switching from custom to system defaults
-                if (previousSettings != null && !previousSettings.useSystemDefaults) {
-                    Log.d(TAG, "Switching from custom to system TTS settings - reinitializing TTS engine")
-                    // We need to reinitialize the TTS engine to clear custom settings
-                    viewModelScope.launch {
-                        try {
-                            ttsManager.stop()
-                            ttsManager.shutdown()
-                            ttsManager.initialize { success ->
-                                if (success) {
-                                    Log.d(TAG, "TTS reinitialized successfully")
-                                    _isTTSInitialized.value = true
-                                } else {
-                                    Log.e(TAG, "Failed to reinitialize TTS")
-                                    _isTTSInitialized.value = false
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error reinitializing TTS", e)
-                            _isTTSInitialized.value = false
-                        }
-                    }
-                } else {
-                    Log.d(TAG, "Using system default TTS settings - not overriding speech rate or pitch")
-                }
+                Log.d(TAG, "Using system default TTS settings - resetting speech rate and pitch to 1.0")
+                ttsManager.setSpeechRate(1.0f)
+                ttsManager.setPitch(1.0f)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error applying voice settings", e)
