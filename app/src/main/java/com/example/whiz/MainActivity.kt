@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -315,21 +316,31 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = { onSuccess, onCancelled ->
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked) {
-                // Hold the screen on while the keyguard prompt is up so the user
-                // has time to reach the fingerprint sensor / PIN entry.
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                val keepScreenOnHandler = Handler(Looper.getMainLooper())
-                val safetyClear = Runnable {
-                    Log.d(TAG, "Unlock keep-screen-on safety timeout fired - clearing flag")
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
-                // Slightly longer than ToolExecutor's 60s withTimeoutOrNull so the
-                // success/cancel callbacks normally win, but we still recover if
-                // the dismiss callback is never invoked.
-                keepScreenOnHandler.postDelayed(safetyClear, 65_000L)
-                val clearKeepScreenOn = {
-                    keepScreenOnHandler.removeCallbacks(safetyClear)
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                // Hold the screen on while the keyguard prompt is up. We must use a
+                // PowerManager wake lock here, NOT FLAG_KEEP_SCREEN_ON: setShowWhenLocked(false)
+                // pauses our activity, and window flags are only honored on the foreground
+                // window. Once paused, the keyguard window's activityTimeoutWM (typically
+                // 10s) takes effect and the screen turns off before the user can reach the
+                // fingerprint sensor / PIN entry.
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                @Suppress("DEPRECATION")
+                val unlockWakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    "whiz:unlock_prompt"
+                )
+                // Built-in 65s timeout (slightly longer than ToolExecutor's 60s) so the
+                // wake lock auto-releases even if neither dismiss callback is invoked.
+                unlockWakeLock.acquire(65_000L)
+                Log.d(TAG, "Unlock wake lock acquired (SCREEN_BRIGHT, 65s timeout)")
+                val releaseUnlockWakeLock = {
+                    if (unlockWakeLock.isHeld) {
+                        try {
+                            unlockWakeLock.release()
+                            Log.d(TAG, "Unlock wake lock released")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Unlock wake lock release failed", e)
+                        }
+                    }
                 }
 
                 // Must clear showWhenLocked so the keyguard PIN entry can appear
@@ -337,11 +348,11 @@ class MainActivity : ComponentActivity() {
                 setShowWhenLocked(false)
                 km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
                     override fun onDismissSucceeded() {
-                        clearKeepScreenOn()
+                        releaseUnlockWakeLock()
                         onSuccess()
                     }
                     override fun onDismissCancelled() {
-                        clearKeepScreenOn()
+                        releaseUnlockWakeLock()
                         // User cancelled — restore showWhenLocked so the activity stays visible
                         setShowWhenLocked(true)
                         onCancelled()
