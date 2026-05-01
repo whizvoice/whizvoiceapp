@@ -97,7 +97,21 @@ class SpeechRecognitionService @Inject constructor(
      * which auto-enables AcousticEchoCanceler.
      */
     fun isAECActive(): Boolean {
-        return audioPipeRecorder != null && useSegmentedSession
+        val legacy = audioPipeRecorder != null && useSegmentedSession
+        // Diagnostic only: surface cases where the legacy answer (which gates
+        // VoiceManager.isFullDuplexAvailable) disagrees with the actual AEC effect state.
+        // Do not change return value yet — see AEC investigation plan.
+        val realEnabled = audioPipeRecorder?.isAECEnabled == true
+        if (legacy != realEnabled) {
+            Log.w(
+                TAG,
+                "AEC_STATE: isAECActive disagreement — returning $legacy" +
+                        " (audioPipeRecorder=${audioPipeRecorder != null}," +
+                        " useSegmentedSession=$useSegmentedSession," +
+                        " isAECEnabled=$realEnabled)"
+            )
+        }
+        return legacy
     }
 
     // --- Continuous Listening State ---

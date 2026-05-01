@@ -323,6 +323,7 @@ class WakeWordService : Service() {
 
                 ownAudioSessionId = audioRecord?.audioSessionId ?: 0
                 Log.d(TAG, "Own audio session ID: $ownAudioSessionId")
+                Log.i(TAG, "AEC_STATE: WakeWord AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_COMMUNICATION, aecAttached=false (no canceler on this session)")
 
                 audioRecord?.startRecording()
                 Log.d(TAG, "Detection loop started")
