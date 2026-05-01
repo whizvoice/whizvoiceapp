@@ -23,6 +23,11 @@ class TTSManager @Inject constructor(
     @Volatile private var isInitialized = false
     @Volatile private var isInitializing = false
 
+    // Desired rate/pitch — survives engine reinitialization so a freshly-built
+    // TextToSpeech instance gets the user's settings reapplied automatically.
+    @Volatile private var currentRate: Float = 1.0f
+    @Volatile private var currentPitch: Float = 1.0f
+
     // Expose isSpeaking state for testing and UI
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
@@ -76,6 +81,11 @@ class TTSManager @Inject constructor(
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 )
+                // Reapply last-requested rate/pitch — new TextToSpeech instances start at
+                // platform defaults (1.0/1.0), which would silently revert custom voice
+                // settings whenever the engine is rebuilt.
+                tts?.setSpeechRate(currentRate)
+                tts?.setPitch(currentPitch)
                 Log.d(TAG, "TTS initialized successfully with VOICE_COMMUNICATION audio attributes")
                 onInitialized(true)
                 // Notify all pending callbacks
@@ -203,24 +213,26 @@ class TTSManager @Inject constructor(
     }
     
     fun setSpeechRate(speechRate: Float) {
+        currentRate = speechRate
         if (!isInitialized) {
-            Log.w(TAG, "TTS not initialized, cannot set speech rate")
+            Log.w(TAG, "TTS not initialized, recorded speech rate for next init")
             return
         }
-        
+
         try {
             tts?.setSpeechRate(speechRate)
         } catch (e: Exception) {
             Log.e(TAG, "Error setting speech rate", e)
         }
     }
-    
+
     fun setPitch(pitch: Float) {
+        currentPitch = pitch
         if (!isInitialized) {
-            Log.w(TAG, "TTS not initialized, cannot set pitch")
+            Log.w(TAG, "TTS not initialized, recorded pitch for next init")
             return
         }
-        
+
         try {
             tts?.setPitch(pitch)
         } catch (e: Exception) {
