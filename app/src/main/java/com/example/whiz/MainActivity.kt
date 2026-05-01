@@ -127,9 +127,6 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
 
-    @Inject
-    lateinit var wakeWordPreferences: com.example.whiz.data.preferences.WakeWordPreferences
-
     // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
     private val isSubmittingRageShake = mutableStateOf(false)
@@ -275,29 +272,6 @@ class MainActivity : ComponentActivity() {
                     pendingSnapshot = null
                 }
             }
-        }
-
-        // Manage audio-only WakeWordService when dev mode is on but wake word is off
-        lifecycleScope.launch {
-            // Combine dev mode and wake word state
-            kotlinx.coroutines.flow.combine(
-                devPreferences.isDeveloperMode,
-                wakeWordPreferences.isEnabled
-            ) { devMode, wakeWordEnabled -> devMode to wakeWordEnabled }
-                .collect { (devMode, wakeWordEnabled) ->
-                    if (devMode && !wakeWordEnabled) {
-                        // Start audio-only mode for bug report audio capture
-                        Log.d(TAG, "Dev mode ON, wake word OFF -> starting audio-only WakeWordService")
-                        com.example.whiz.services.WakeWordService.startAudioOnly(this@MainActivity)
-                    } else if (!devMode && !wakeWordEnabled) {
-                        // Stop audio-only service if dev mode disabled and wake word not running
-                        if (com.example.whiz.services.WakeWordService.isRunning) {
-                            Log.d(TAG, "Dev mode OFF, wake word OFF -> stopping audio-only WakeWordService")
-                            com.example.whiz.services.WakeWordService.stop(this@MainActivity)
-                        }
-                    }
-                    // If wake word is enabled, normal mode is already running — no change needed
-                }
         }
 
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
