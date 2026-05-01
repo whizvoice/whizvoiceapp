@@ -2035,6 +2035,52 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Send a hidden user message — processed by the server like a normal user input
+     * (so the LLM responds), but never inserted into the local message list and excluded
+     * from REST history sync via `content_type='hidden_text'` on the server. Used for
+     * side-channel signals like "screen unlocked" after a tool was blocked on the keyguard.
+     */
+    fun sendHiddenSystemMessage(content: String) {
+        if (content.isBlank()) return
+        if (!configUseRemoteAgent) {
+            Log.d(TAG, "sendHiddenSystemMessage skipped — remote agent disabled")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val originalChatId = _chatId.value
+                if (originalChatId == -1L) {
+                    Log.w(TAG, "sendHiddenSystemMessage skipped — no active chat")
+                    return@launch
+                }
+                val actualChatId = repository.getActualChatId(originalChatId)
+                if (actualChatId != originalChatId) {
+                    _chatId.value = actualChatId
+                }
+
+                val requestId = java.util.UUID.randomUUID().toString()
+                pendingRequests[requestId] = actualChatId
+                whizServerRepository.trackRequest(requestId)
+
+                Log.d(TAG, "📤 SENDING HIDDEN SYSTEM MESSAGE: requestId=$requestId, chatId=$actualChatId, content='$content'")
+                val success = whizServerRepository.sendMessage(
+                    message = content,
+                    requestId = requestId,
+                    chatId = actualChatId,
+                    timestamp = System.currentTimeMillis(),
+                    hidden = true
+                )
+                if (!success) {
+                    Log.d(TAG, "Hidden system message queued for retry")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending hidden system message", e)
+            }
+        }
+    }
+
     fun dismissOverlayPermissionDialog() {
         _showOverlayPermissionDialog.value = false
     }

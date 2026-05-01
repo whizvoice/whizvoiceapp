@@ -42,7 +42,8 @@ id | int8
 conversation_id | int8 | foreign key to conversations.id
 content | text
 message_sender | text | 'USER' or 'ASSISTANT' (renamed from message_type)
-content_type | text | 'text', 'tool_use', 'tool_result', or 'mixed' | default 'text' | NOT NULL
+content_type | text | 'text', 'tool_use', 'tool_result', 'mixed', or 'hidden_text' | default 'text' | NOT NULL
+              | ('hidden_text' is filtered out of REST history sync — used for system-generated user messages like screen-unlocked notifications that should not appear in the chat UI but are visible to the LLM)
 tool_content | jsonb | NULL for text messages, populated for tool-related messages
 timestamp | timestamp | now()
 updated_at | timestamp | now()

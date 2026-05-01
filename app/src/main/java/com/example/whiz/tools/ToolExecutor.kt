@@ -151,13 +151,21 @@ class ToolExecutor @Inject constructor(
                         message = "Phone is locked. Waiting for user to unlock."
                     ))
 
-                    // Suspend and wait for user to unlock (or cancel), with 60s timeout
+                    // Suspend and wait for user to unlock (or cancel), with 60s timeout.
+                    // If the user unlocks AFTER the timeout, the dismiss callback still fires;
+                    // in that case, send a hidden user message so the server can decide whether
+                    // to retry. (No effect on the visible chat — see ChatViewModel.sendHiddenSystemMessage.)
                     val unlocked = withTimeoutOrNull(60_000L) {
                         suspendCancellableCoroutine<Boolean> { cont ->
                             unlockCallback(
                                 { // onSuccess
                                     Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
-                                    if (cont.isActive) cont.resume(true)
+                                    if (cont.isActive) {
+                                        cont.resume(true)
+                                    } else {
+                                        Log.i(TAG, "🔓 Late unlock for $toolName (after 60s timeout) — sending hidden screen-unlocked notification to server")
+                                        chatViewModel?.sendHiddenSystemMessage("The user just unlocked their phone screen.")
+                                    }
                                 },
                                 { // onCancelled
                                     Log.i(TAG, "🔒 User cancelled unlock - aborting tool $toolName")

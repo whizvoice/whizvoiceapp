@@ -59,7 +59,8 @@ data class PendingMessage(
     val chatId: Long,
     val clientMessageId: String? = null,
     val timestamp: Long? = null,
-    val retryCount: Int = 0
+    val retryCount: Int = 0,
+    val hidden: Boolean = false
 )
 
 // Debug event tracking
@@ -1106,9 +1107,9 @@ class WhizServerRepository @Inject constructor(
         }
     }
     
-    fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null): Boolean {
+    fun sendMessage(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null, hidden: Boolean = false): Boolean {
         // 🔧 CRITICAL LOGGING: Log what we're about to send
-        Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp")
+        Log.d(TAG, "📤 SENDING MESSAGE: requestId=$requestId, chatId=$chatId, content='${message.take(50)}...', timestamp=$timestamp, hidden=$hidden")
 
         // Warn if timestamp is missing - helps debug message ordering issues
         if (timestamp == null) {
@@ -1121,7 +1122,7 @@ class WhizServerRepository @Inject constructor(
                 // 🔧 ENHANCED: Check connection state before sending
                 if (connectionState != ConnectionState.CONNECTED) {
                     Log.w(TAG, "WebSocket exists but connection state is $connectionState - queueing message for retry")
-                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp, hidden)
                     return false
                 }
 
@@ -1133,7 +1134,7 @@ class WhizServerRepository @Inject constructor(
                     val effectiveConnectedId = connectionStateManager.getEffectiveChatId(connectedConvId) ?: connectedConvId
                     if (effectiveMessageChatId != effectiveConnectedId) {
                         Log.w(TAG, "Message chatId $chatId (effective: $effectiveMessageChatId) doesn't match connected conversation $connectedConvId (effective: $effectiveConnectedId) - queueing for retry")
-                        queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                        queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp, hidden)
                         return false
                     }
                 }
@@ -1143,21 +1144,26 @@ class WhizServerRepository @Inject constructor(
                     put("message", message)
                     put("request_id", requestId)
                     put("type", "message")
-                    
+
                     // Use chatId directly - send as conversation_id if positive, client_conversation_id if negative
                     if (chatId > 0) {
                         put("conversation_id", chatId)
                     } else if (chatId < 0) {
                         put("client_conversation_id", chatId)
                     }
-                    
+
                     clientMessageId?.let { put("client_message_id", it) }
-                    
+
                     // Include timestamp if provided
-                    timestamp?.let { 
+                    timestamp?.let {
                         // Convert milliseconds to ISO format string for server
                         val isoTimestamp = formatTimestamp(it)
                         put("timestamp", isoTimestamp)
+                    }
+
+                    // Hidden user messages get processed by the LLM but never surface in the chat UI
+                    if (hidden) {
+                        put("hidden", true)
                     }
                 }
                 val jsonMessage = messageJson.toString()
@@ -1172,12 +1178,12 @@ class WhizServerRepository @Inject constructor(
                     true
                 } else {
                     Log.w(TAG, "❌ WEBSOCKET SEND FAILED: requestId=$requestId - queueing message for retry")
-                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                    queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp, hidden)
                     false
                 }
             } else {
                 Log.w(TAG, "WebSocket not connected - queueing message for retry")
-                queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp)
+                queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp, hidden)
                 
                 // Attempt to reconnect if we're not in test disconnect mode
                 // and if we don't already have a retry job running
@@ -1196,15 +1202,15 @@ class WhizServerRepository @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error sending message - queueing for retry", e)
-            queueMessageForRetry(message, requestId, chatId, clientMessageId)
+            queueMessageForRetry(message, requestId, chatId, clientMessageId, timestamp, hidden)
             false
         }
     }
 
-    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null) {
+    private fun queueMessageForRetry(message: String, requestId: String, chatId: Long, clientMessageId: String? = null, timestamp: Long? = null, hidden: Boolean = false) {
         // 🔧 CRITICAL LOGGING: Log complete message content being queued
-        Log.d(TAG, "📥 QUEUEING MESSAGE FOR RETRY: requestId=$requestId, chatId=$chatId, content='$message', timestamp=$timestamp")
-        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId, timestamp)
+        Log.d(TAG, "📥 QUEUEING MESSAGE FOR RETRY: requestId=$requestId, chatId=$chatId, content='$message', timestamp=$timestamp, hidden=$hidden")
+        val pendingMessage = PendingMessage(message, requestId, chatId, clientMessageId, timestamp, hidden = hidden)
         
         // Remove any existing message with the same requestId to avoid duplicates
         messageRetryQueue.removeAll { it.requestId == requestId }
@@ -1292,21 +1298,26 @@ class WhizServerRepository @Inject constructor(
                         put("message", pendingMessage.message)
                         put("request_id", pendingMessage.requestId)
                         put("type", "message")
-                        
+
                         // Send as conversation_id if positive, client_conversation_id if negative
                         if (pendingMessage.chatId > 0) {
                             put("conversation_id", pendingMessage.chatId)
                         } else if (pendingMessage.chatId < 0) {
                             put("client_conversation_id", pendingMessage.chatId)
                         }
-                        
+
                         pendingMessage.clientMessageId?.let { put("client_message_id", it) }
-                        
+
                         // Include timestamp if provided
-                        pendingMessage.timestamp?.let { 
+                        pendingMessage.timestamp?.let {
                             // Convert milliseconds to ISO format string for server
                             val isoTimestamp = formatTimestamp(it)
                             put("timestamp", isoTimestamp)
+                        }
+
+                        // Preserve hidden flag across retries so the message remains hidden from the chat UI.
+                        if (pendingMessage.hidden) {
+                            put("hidden", true)
                         }
                     }
                     messageJson.toString()
