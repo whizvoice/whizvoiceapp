@@ -315,12 +315,33 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = { onSuccess, onCancelled ->
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked) {
+                // Hold the screen on while the keyguard prompt is up so the user
+                // has time to reach the fingerprint sensor / PIN entry.
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val keepScreenOnHandler = Handler(Looper.getMainLooper())
+                val safetyClear = Runnable {
+                    Log.d(TAG, "Unlock keep-screen-on safety timeout fired - clearing flag")
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                // Slightly longer than ToolExecutor's 60s withTimeoutOrNull so the
+                // success/cancel callbacks normally win, but we still recover if
+                // the dismiss callback is never invoked.
+                keepScreenOnHandler.postDelayed(safetyClear, 65_000L)
+                val clearKeepScreenOn = {
+                    keepScreenOnHandler.removeCallbacks(safetyClear)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+
                 // Must clear showWhenLocked so the keyguard PIN entry can appear
                 // (otherwise our activity occludes the keyguard, causing a deadlock)
                 setShowWhenLocked(false)
                 km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-                    override fun onDismissSucceeded() { onSuccess() }
+                    override fun onDismissSucceeded() {
+                        clearKeepScreenOn()
+                        onSuccess()
+                    }
                     override fun onDismissCancelled() {
+                        clearKeepScreenOn()
                         // User cancelled — restore showWhenLocked so the activity stays visible
                         setShowWhenLocked(true)
                         onCancelled()
