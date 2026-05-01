@@ -119,6 +119,10 @@ class ChatViewModel @Inject constructor(
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
+    // Most recently sent user requestId — used to skip TTS for stale responses
+    // (when user has sent a newer message before the prior response arrives)
+    private var latestUserRequestId: String? = null
+
     // Track request IDs that were superseded by newer requests (to prevent orphaned retry)
     private val supersededRequestIds = mutableSetOf<String>()
     
@@ -1177,19 +1181,27 @@ class ChatViewModel @Inject constructor(
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
+                                // Skip TTS if a newer user message exists (response is stale).
+                                // Null cases fall through to speak: legacy non-remote-agent path or first response in session.
+                                val isResponseLatest = event.requestId == null ||
+                                                       latestUserRequestId == null ||
+                                                       event.requestId == latestUserRequestId
+
                                 // Use VoiceManager's shouldEnableTTS which checks bubble mode properly
                                 val ttsEnabled = voiceManager.shouldEnableTTS()
-                                val shouldSpeak = ttsEnabled && 
-                                                _isTTSInitialized.value && 
-                                                speakThisMessage && 
+                                val shouldSpeak = ttsEnabled &&
+                                                _isTTSInitialized.value &&
+                                                speakThisMessage &&
                                                 messageContentForChat.isNotBlank() &&
-                                                isResponseForCurrentChat && 
+                                                isResponseForCurrentChat &&
                                                 targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
                                                 targetChatId == _chatId.value && // Double-check current chat
-                                                isMessageFresh // Only speak fresh messages
-                                
+                                                isMessageFresh && // Only speak fresh messages
+                                                isResponseLatest // Skip stale responses (newer user msg exists)
+
                                 Log.d(TAG, "TTS Decision: ttsEnabled=$ttsEnabled, ttsInit=${_isTTSInitialized.value}, " +
-                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
+                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, latest=$isResponseLatest, " +
+                                        "shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
                                     // Check if user has active partial transcription OR was recently speaking
@@ -1837,7 +1849,18 @@ class ChatViewModel @Inject constructor(
             
             // 🔧 NEW: Generate request ID early for optimistic UI pairing
             val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
-            
+            if (requestId != null) {
+                latestUserRequestId = requestId
+            }
+
+            // New user message supersedes any in-flight TTS from a prior response
+            pendingTTSCheckJob?.cancel()
+            pendingTTSMessage = null
+            if (ttsManager.isSpeaking.value) {
+                Log.d(TAG, "New user message — stopping TTS for prior response")
+                ttsManager.stop()
+            }
+
             // Capture timestamp for message consistency between local and server
             val messageTimestamp = System.currentTimeMillis()
 
