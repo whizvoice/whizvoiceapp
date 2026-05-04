@@ -560,9 +560,10 @@ class WakeWordService : Service() {
 
     private fun stopDetection() {
         audioManager?.unregisterAudioRecordingCallback(recordingCallback)
-        detectionJob?.cancel()
+        val job = detectionJob
         detectionJob = null
         audioRingBuffer = null
+        job?.cancel()
         try {
             audioRecord?.let {
                 if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -571,6 +572,21 @@ class WakeWordService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord", e)
+        }
+        // Wait for the detection coroutine to fully exit before any subsequent native
+        // resource cleanup (releaseResources -> recognizer.close / voskModel.close).
+        // acceptWaveForm and Recognizer.result are synchronous native calls that
+        // cancellation can't interrupt; closing the recognizer while one is in flight
+        // SIGABRTs in Vosk's CuSubMatrix. Bounded so onDestroy never hangs.
+        if (job != null) {
+            try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(2000L) { job.join() }
+                        ?: Log.w(TAG, "Detection coroutine did not exit within 2s of cancel")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error joining detection coroutine", e)
+            }
         }
         // Release wake lock
         wakeLock?.let {
