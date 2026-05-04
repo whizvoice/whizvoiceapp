@@ -361,6 +361,23 @@ class MainActivity : ComponentActivity() {
                 ) {
                     navController = rememberNavController()
 
+                    // Disable continuous listening when leaving a chat route. Bubble overlay
+                    // owns its own listening lifecycle, so skip while it's active or pending.
+                    DisposableEffect(navController) {
+                        val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, _ ->
+                            val onChatRoute = destination.route?.startsWith("chat/") == true
+                            val bubbleOwnsListening = com.example.whiz.services.BubbleOverlayService.isActive ||
+                                                       com.example.whiz.services.BubbleOverlayService.isPendingStart
+                            if (!onChatRoute && !bubbleOwnsListening) {
+                                voiceManager.updateContinuousListeningEnabled(false)
+                            }
+                        }
+                        navController.addOnDestinationChangedListener(listener)
+                        onDispose {
+                            navController.removeOnDestinationChangedListener(listener)
+                        }
+                    }
+
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
 
