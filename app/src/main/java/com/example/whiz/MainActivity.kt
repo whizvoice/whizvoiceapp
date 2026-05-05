@@ -256,6 +256,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        lifecycleScope.launch {
+            voiceManager.isListening.collect { listening ->
+                if (listening) {
+                    inactivityTimer.resume("mic-off")
+                } else {
+                    inactivityTimer.pause("mic-off")
+                }
+            }
+        }
+
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
         

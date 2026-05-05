@@ -269,6 +269,16 @@ class BubbleOverlayService : Service() {
         }
 
         serviceScope.launch {
+            voiceManager.isListening.collect { listening ->
+                if (listening) {
+                    inactivityTimer.resume("mic-off")
+                } else {
+                    inactivityTimer.pause("mic-off")
+                }
+            }
+        }
+
+        serviceScope.launch {
             appLifecycleService.isInForegroundFlow.collect { inForeground ->
                 if (inForeground) {
                     inactivityTimer.pause("main-foreground")
