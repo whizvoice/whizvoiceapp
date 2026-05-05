@@ -4365,11 +4365,14 @@ class ScreenAgentTools @Inject constructor(
 
             if (!locationSelected) {
                 Log.w(TAG, "Could not select location from search results after $maxScrollAttempts scroll attempts")
-                // Dump UI hierarchy to help debug why no non-sponsored result could be selected
-                val dumpRoot = accessibilityService.getCurrentRootNode()
-                if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsored_result", "Could not select non-sponsored location for '$address' after $maxScrollAttempts scroll attempts")
-                    dumpRoot.recycle()
+                // Sample 5% (reduce to 1% at higher user volumes) — expected if the user
+                // searched for something with no clean non-sponsored hit.
+                if (Math.random() < 0.05) {
+                    val dumpRoot = accessibilityService.getCurrentRootNode()
+                    if (dumpRoot != null) {
+                        dumpUIHierarchy(dumpRoot, "gmaps_no_nonsponsored_result", "Could not select non-sponsored location for '$address' after $maxScrollAttempts scroll attempts", expectedFailure = true)
+                        dumpRoot.recycle()
+                    }
                 }
                 return MapsActionResult(
                     success = false,
