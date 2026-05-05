@@ -298,23 +298,10 @@ class WakeWordService : Service() {
                     4096
                 )
 
-                audioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufferSize
-                )
-
-                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                audioRecord = createAudioRecord(bufferSize) ?: run {
                     Log.e(TAG, "AudioRecord failed to initialize")
                     return@launch
                 }
-
-                ownAudioSessionId = audioRecord?.audioSessionId ?: 0
-                Log.d(TAG, "Own audio session ID: $ownAudioSessionId")
-                Log.i(TAG, "AEC_STATE: WakeWord AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_COMMUNICATION, aecAttached=false (no canceler on this session)")
-
                 audioRecord?.startRecording()
                 Log.d(TAG, "Detection loop started")
 
@@ -328,26 +315,42 @@ class WakeWordService : Service() {
                     // Pause while main speech recognizer or external recorder is active
                     val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
                     if (shouldPause) {
-                        if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord?.let { rec ->
                             val reason = when {
                                 speechRecognitionService.isListening.value -> "main speech recognizer active"
                                 isExternalRecorderActive -> "external recorder active"
                                 else -> "unknown"
                             }
-                            audioRecord?.stop()
-                            Log.d(TAG, "Paused: $reason")
+                            try {
+                                if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error stopping AudioRecord on pause", e)
+                            }
+                            // Full release frees the audio HAL slot for the other app.
+                            // stop() alone keeps the AudioFlinger client and (on some
+                            // Android versions) the audio policy's claim on the input port.
+                            rec.release()
+                            audioRecord = null
+                            Log.d(TAG, "Paused (released): $reason")
                         }
                         delay(200)
                         continue
                     }
 
-                    // Resume after pause source stops (with debounce)
-                    if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    // Resume after pause source stops (with debounce). createAudioRecord()
+                    // may return null if the other app hasn't fully released the input port
+                    // yet; the loop retries on the next iteration.
+                    if (audioRecord == null) {
                         delay(RESUME_DEBOUNCE_MS)
-                        // Re-check that no pause source has started again
                         if (speechRecognitionService.isListening.value || isExternalRecorderActive) continue
-                        audioRecord?.startRecording()
-                        Log.d(TAG, "Resumed: no active recorders")
+                        val fresh = createAudioRecord(bufferSize)
+                        if (fresh == null) {
+                            delay(500)
+                            continue
+                        }
+                        audioRecord = fresh
+                        fresh.startRecording()
+                        Log.d(TAG, "Resumed: created fresh AudioRecord")
                     }
 
                     // Cooldown after detection
@@ -384,6 +387,33 @@ class WakeWordService : Service() {
                 Log.e(TAG, "Detection loop error", e)
             }
         }
+    }
+
+    /**
+     * Construct a fresh AudioRecord. Refreshes ownAudioSessionId before the caller
+     * starts recording — otherwise the AudioRecordingCallback would see the new
+     * session as "external" and we'd flap pause→release→recreate.
+     */
+    private fun createAudioRecord(bufferSize: Int): AudioRecord? {
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "AudioRecord construction threw", e)
+            return null
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            return null
+        }
+        ownAudioSessionId = record.audioSessionId
+        Log.d(TAG, "AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_COMMUNICATION, aecAttached=false (no canceler on this session)")
+        return record
     }
 
     /**
