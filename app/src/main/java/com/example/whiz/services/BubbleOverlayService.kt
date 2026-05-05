@@ -833,6 +833,12 @@ class BubbleOverlayService : Service() {
         bubbleListeningMode = currentMode
         Log.d(TAG, "[APPLY_MODE] Set bubbleListeningMode to: $currentMode")
 
+        // Update keep-screen-on flag immediately, alongside the mode flag, so external
+        // pollers observing bubbleListeningMode also see the matching isKeepScreenOnEnabled.
+        // Otherwise the slow voiceManager.updateContinuousListeningEnabled call below opens
+        // a window where the two flags disagree.
+        updateKeepScreenOnFlag()
+
         // Use the injected voiceManager directly
         Log.d(TAG, "[APPLY_MODE] Using injected VoiceManager for mode: $currentMode")
 
@@ -872,9 +878,6 @@ class BubbleOverlayService : Service() {
             Log.d(TAG, "[APPLY_MODE] Mode change emitted successfully")
         }
         Log.d(TAG, "[APPLY_MODE] Completed applyCurrentMode")
-
-        // Update keep screen on flag based on new mode
-        updateKeepScreenOnFlag()
     }
 
     private fun updateKeepScreenOnFlag() {

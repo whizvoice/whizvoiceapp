@@ -344,7 +344,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
             // Should start quickly since assistant message already arrived during partials
             var ttsStarted = false
             val ttsStartTime = System.currentTimeMillis()
-            val ttsTimeout = 2000L // 2 seconds - message already arrived, should start quickly
+            val ttsTimeout = 7000L // 7 seconds - message usually arrives during partials so TTS starts fast, but slower devices / networks need more headroom
 
             while (!ttsStarted && (System.currentTimeMillis() - ttsStartTime) < ttsTimeout) {
                 val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false

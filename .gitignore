@@ -10,6 +10,7 @@
 local.properties
 .kotlin
 test_credentials.json
+.worktrees/
 
 # Test artifacts
 test_summary.log
