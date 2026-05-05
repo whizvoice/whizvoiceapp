@@ -181,26 +181,16 @@ class WakeWordService : Service() {
     private var audioManager: AudioManager? = null
     private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
         override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>?) {
-            val myUid = android.os.Process.myUid()
+            // Session-id inequality alone identifies "not us"; AudioFlinger does not
+            // reuse session ids across clients. Additional filters on clientAudioSource
+            // or clientAudioSessionId == 0 only add false negatives.
             val externalActive = configs?.any { config ->
-                config.clientAudioSource != MediaRecorder.AudioSource.DEFAULT &&
-                    config.clientAudioSessionId != 0 &&
-                    config.clientAudioSessionId != ownAudioSessionId &&
-                    getUidFromConfig(config, myUid) != myUid
+                config.clientAudioSessionId != ownAudioSessionId
             } ?: false
             if (externalActive != isExternalRecorderActive) {
                 Log.d(TAG, "External recorder active changed: $isExternalRecorderActive -> $externalActive")
                 isExternalRecorderActive = externalActive
             }
-        }
-    }
-
-    private fun getUidFromConfig(config: AudioRecordingConfiguration, fallback: Int): Int {
-        return try {
-            val method = AudioRecordingConfiguration::class.java.getMethod("getClientUid")
-            method.invoke(config) as Int
-        } catch (e: Exception) {
-            fallback // If reflection fails, treat as own UID to avoid self-detection
         }
     }
 
