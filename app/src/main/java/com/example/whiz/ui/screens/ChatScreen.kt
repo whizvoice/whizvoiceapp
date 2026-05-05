@@ -839,9 +839,10 @@ fun ChatScreen(
             return@LaunchedEffect
         }
 
-        // Only enable continuous listening automatically for NEW chats (optimistic negative IDs)
-        // For existing chats, respect the user's current continuous listening state
-        if (effectiveHasPermission && viewModelChatId < 0) {
+        // Enable continuous listening on voice-activated entry (wake word, long-press, OS assistant)
+        // OR for new chats (optimistic negative IDs). For existing-chat re-entry without voice
+        // activation, respect the user's current state (the MainActivity nav listener restores it).
+        if (effectiveHasPermission && (enableTTSMode || viewModelChatId < 0)) {
             voiceManager.updateContinuousListeningEnabled(true)
             viewModel.ensureContinuousListeningEnabled()
             voiceInitialized.value = true

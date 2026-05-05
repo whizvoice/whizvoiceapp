@@ -361,16 +361,42 @@ class MainActivity : ComponentActivity() {
                 ) {
                     navController = rememberNavController()
 
-                    // Disable continuous listening when leaving a chat route. Bubble overlay
+                    // Save voice state when leaving a chat, restore it on return. Bubble overlay
                     // owns its own listening lifecycle, so skip while it's active or pending.
                     DisposableEffect(navController) {
+                        var lastWasChat = false
+                        var savedListeningState: Boolean? = null
+                        var savedTTSState: Boolean? = null
                         val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, _ ->
                             val onChatRoute = destination.route?.startsWith("chat/") == true
                             val bubbleOwnsListening = com.example.whiz.services.BubbleOverlayService.isActive ||
                                                        com.example.whiz.services.BubbleOverlayService.isPendingStart
-                            if (!onChatRoute && !bubbleOwnsListening) {
-                                voiceManager.updateContinuousListeningEnabled(false)
+                            if (bubbleOwnsListening) {
+                                lastWasChat = onChatRoute
+                                return@OnDestinationChangedListener
                             }
+                            when {
+                                lastWasChat && !onChatRoute -> {
+                                    savedListeningState = voiceManager.isContinuousListeningEnabled.value
+                                    savedTTSState = voiceManager.isVoiceResponseEnabled.value
+                                    voiceManager.updateContinuousListeningEnabled(false)
+                                    voiceManager.stopSpeaking()
+                                }
+                                !lastWasChat && onChatRoute -> {
+                                    if (savedListeningState == true) {
+                                        voiceManager.updateContinuousListeningEnabled(true)
+                                    }
+                                    savedTTSState?.let { voiceManager.setVoiceResponseEnabled(it) }
+                                    savedListeningState = null
+                                    savedTTSState = null
+                                }
+                                !lastWasChat && !onChatRoute -> {
+                                    voiceManager.updateContinuousListeningEnabled(false)
+                                    voiceManager.stopSpeaking()
+                                }
+                                // chat → chat: leave alone
+                            }
+                            lastWasChat = onChatRoute
                         }
                         navController.addOnDestinationChangedListener(listener)
                         onDispose {
