@@ -45,6 +45,8 @@ import kotlin.math.abs
 import kotlin.math.pow
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.tools.ToolExecutor
+import com.example.whiz.util.INACTIVITY_TIMEOUT_MS
+import com.example.whiz.util.InactivityTimer
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -99,6 +101,8 @@ class BubbleOverlayService : Service() {
     private var dismissedByUser = false
 
     private var currentMode = ListeningMode.CONTINUOUS_LISTENING
+
+    private lateinit var inactivityTimer: InactivityTimer
 
     private fun resolveThemeColor(@AttrRes attrId: Int): Int {
         val typedValue = TypedValue()
@@ -240,6 +244,40 @@ class BubbleOverlayService : Service() {
         serviceInstance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
+        inactivityTimer = InactivityTimer(
+            scope = serviceScope,
+            durationMs = INACTIVITY_TIMEOUT_MS,
+            onTimeout = {
+                Log.d(TAG, "Inactivity timeout fired - stopping bubble overlay")
+                BubbleOverlayService.stop(this@BubbleOverlayService)
+            }
+        )
+        inactivityTimer.reset()
+        if (appLifecycleService.isInForeground()) {
+            // MainActivity is up; bubble is visually obscured, so don't tick yet.
+            inactivityTimer.pause("main-foreground")
+        }
+
+        serviceScope.launch {
+            toolExecutor.activeToolCount.collect { count ->
+                if (count > 0) {
+                    inactivityTimer.pause("tool")
+                } else {
+                    inactivityTimer.resume("tool")
+                }
+            }
+        }
+
+        serviceScope.launch {
+            appLifecycleService.isInForegroundFlow.collect { inForeground ->
+                if (inForeground) {
+                    inactivityTimer.pause("main-foreground")
+                } else {
+                    inactivityTimer.resume("main-foreground")
+                }
+            }
+        }
+
         // Determine initial mode based on TTS state BEFORE backgrounding
         // ChatViewModel disables TTS on background, but we check the saved state
         // to see if user had TTS enabled before backgrounding
@@ -267,6 +305,9 @@ class BubbleOverlayService : Service() {
                     Log.d(TAG, "Transcription received from flow in bubble mode: '$transcription'")
                     stuckPartialTimeoutJob?.cancel()
                     lastPartialText = ""
+                    if (::inactivityTimer.isInitialized) {
+                        inactivityTimer.reset()
+                    }
                     _userTranscriptionFlow.emit(transcription)
                 }
             }
@@ -403,6 +444,9 @@ class BubbleOverlayService : Service() {
         var longPressRunnable: Runnable? = null
 
         chatHead?.setOnTouchListener { _, event ->
+            if (::inactivityTimer.isInitialized) {
+                inactivityTimer.reset()
+            }
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -1014,6 +1058,10 @@ class BubbleOverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "BubbleOverlayService onDestroy - setting isActive to false")
+
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.cancel()
+        }
 
         // Cancel active server requests and in-flight tools only when user drag-dismissed the bubble
         if (dismissedByUser) {

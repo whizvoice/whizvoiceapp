@@ -46,6 +46,8 @@ import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.RageShakeDetector
+import com.example.whiz.util.INACTIVITY_TIMEOUT_MS
+import com.example.whiz.util.InactivityTimer
 import com.example.whiz.util.LogcatCapture
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
@@ -125,7 +127,12 @@ class MainActivity : ComponentActivity() {
     lateinit var rageShakeDetector: RageShakeDetector
 
     @Inject
+    lateinit var toolExecutor: com.example.whiz.tools.ToolExecutor
+
+    @Inject
     lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
+
+    private lateinit var inactivityTimer: InactivityTimer
 
     // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
@@ -226,7 +233,29 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
+        inactivityTimer = InactivityTimer(
+            scope = lifecycleScope,
+            durationMs = INACTIVITY_TIMEOUT_MS,
+            onTimeout = {
+                Log.d(TAG, "Inactivity timeout fired - calling finishAndRemoveTask()")
+                finishAndRemoveTask()
+            }
+        )
+        inactivityTimer.reset()
+        // onCreate runs before onResume; mark as paused for foreground state until onResume fires.
+        inactivityTimer.pause("foreground")
+
+        lifecycleScope.launch {
+            toolExecutor.activeToolCount.collect { count ->
+                if (count > 0) {
+                    inactivityTimer.pause("tool")
+                } else {
+                    inactivityTimer.resume("tool")
+                }
+            }
+        }
+
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
         
@@ -999,9 +1028,19 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.reset()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.resume("foreground")
+        }
 
         // Stop bubble overlay when MainActivity comes to foreground
         // This is more reliable than listening to app lifecycle events, which can fire
@@ -1059,6 +1098,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.pause("foreground")
+        }
         // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
 
         // Check if bubble overlay is active and in TTS mode before stopping TTS
@@ -1095,6 +1137,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
+
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.cancel()
+        }
 
         // Release any held audio focus as a safety net
         audioFocusManager.abandonDuckingFocus()

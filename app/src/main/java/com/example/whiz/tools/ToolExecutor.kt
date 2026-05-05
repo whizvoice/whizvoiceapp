@@ -18,8 +18,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -87,6 +90,9 @@ class ToolExecutor @Inject constructor(
     // Dedup guard: prevents the same requestId from being executed concurrently
     private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    private val _activeToolCount = MutableStateFlow(0)
+    val activeToolCount: StateFlow<Int> = _activeToolCount.asStateFlow()
+
     /**
      * Cancel all in-flight tool executions. Called when user dismisses the bubble.
      * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
@@ -96,6 +102,7 @@ class ToolExecutor @Inject constructor(
         Log.d(TAG, "Cancelling all in-flight tool executions (count: $count)")
         supervisorJob.cancelChildren()
         inFlightRequestIds.clear()
+        _activeToolCount.value = 0
         Log.d(TAG, "Cancelled $count in-flight tool execution(s)")
     }
 
@@ -122,6 +129,7 @@ class ToolExecutor @Inject constructor(
                     Log.w(TAG, "🚫 DEDUP: requestId $requestId already in flight, skipping duplicate execution of $toolName")
                     return@launch
                 }
+                _activeToolCount.value = inFlightRequestIds.size
 
                 try {
 
@@ -370,6 +378,7 @@ class ToolExecutor @Inject constructor(
 
                 } finally {
                     inFlightRequestIds.remove(requestId)
+                    _activeToolCount.value = inFlightRequestIds.size
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error parsing tool request", e)
@@ -385,6 +394,7 @@ class ToolExecutor @Inject constructor(
                         "unknown"
                     }
                     inFlightRequestIds.remove(requestId)
+                    _activeToolCount.value = inFlightRequestIds.size
 
                     _toolResults.emit(
                         ToolExecutionResult.Error(
