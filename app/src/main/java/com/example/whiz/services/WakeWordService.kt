@@ -64,6 +64,7 @@ class WakeWordService : Service() {
         private const val MAX_AUDIO_DIR_BYTES = 50L * 1024 * 1024 // 50MB
 
         private const val RESUME_DEBOUNCE_MS = 500L
+        private const val EXTERNAL_RECORDER_RECHECK_MS = 1000L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "en-us-0.22-lgraph"
 
@@ -181,16 +182,21 @@ class WakeWordService : Service() {
     private var audioManager: AudioManager? = null
     private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
         override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>?) {
-            // Session-id inequality alone identifies "not us"; AudioFlinger does not
-            // reuse session ids across clients. Additional filters on clientAudioSource
-            // or clientAudioSessionId == 0 only add false negatives.
-            val externalActive = configs?.any { config ->
-                config.clientAudioSessionId != ownAudioSessionId
-            } ?: false
-            if (externalActive != isExternalRecorderActive) {
-                Log.d(TAG, "External recorder active changed: $isExternalRecorderActive -> $externalActive")
-                isExternalRecorderActive = externalActive
-            }
+            updateExternalRecorderState(isAnyExternalRecorder(configs), source = "callback")
+        }
+    }
+
+    // Session-id inequality alone identifies "not us"; AudioFlinger does not reuse
+    // session ids across clients. Additional filters on clientAudioSource or
+    // clientAudioSessionId == 0 only add false negatives.
+    private fun isAnyExternalRecorder(configs: List<AudioRecordingConfiguration>?): Boolean {
+        return configs?.any { it.clientAudioSessionId != ownAudioSessionId } ?: false
+    }
+
+    private fun updateExternalRecorderState(externalActive: Boolean, source: String) {
+        if (externalActive != isExternalRecorderActive) {
+            Log.d(TAG, "External recorder active changed ($source): $isExternalRecorderActive -> $externalActive")
+            isExternalRecorderActive = externalActive
         }
     }
 
@@ -310,8 +316,19 @@ class WakeWordService : Service() {
                 val buffer = ByteArray(bufferSize)
                 var frameCount = 0L
                 var lastHeartbeatTime = System.currentTimeMillis()
+                var lastExternalRecheckTime = System.currentTimeMillis()
 
                 while (true) {
+                    // Belt-and-suspenders: if AudioRecordingCallback ever misses an
+                    // end-event, we'd be stranded paused forever. Re-derive the flag
+                    // from the live config list every EXTERNAL_RECORDER_RECHECK_MS.
+                    val nowRecheck = System.currentTimeMillis()
+                    if (nowRecheck - lastExternalRecheckTime >= EXTERNAL_RECORDER_RECHECK_MS) {
+                        val freshConfigs = audioManager?.activeRecordingConfigurations
+                        updateExternalRecorderState(isAnyExternalRecorder(freshConfigs), source = "recheck")
+                        lastExternalRecheckTime = nowRecheck
+                    }
+
                     // Pause while main speech recognizer or external recorder is active
                     val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
                     if (shouldPause) {
