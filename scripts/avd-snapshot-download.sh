@@ -73,9 +73,12 @@ echo "==> Using SDK root: $SDK_ROOT"
 # ---------------------------------------------------------------------------
 # Validate prerequisites
 # ---------------------------------------------------------------------------
-for cmd in zstd gh shasum openssl; do
+for cmd in zstd gh shasum openssl strings; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "Error: '$cmd' is required but not found in PATH"
+        if [[ "$cmd" == "strings" ]]; then
+            echo "  (install with: apt-get install -y binutils)"
+        fi
         exit 1
     fi
 done
