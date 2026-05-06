@@ -6709,6 +6709,27 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
         try {
+            // First-launch sign-in screen (id/sign_in_title "Over 100 million songs and counting").
+            // Tap "Sign in" to auto-complete via system Google account; "Device files only" would put
+            // the app in offline-only mode where streaming search can't find anything.
+            val signInButtons = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/sign_in_button"
+            )
+            if (signInButtons != null && signInButtons.isNotEmpty()) {
+                for (button in signInButtons) {
+                    if (button.isClickable && button.isEnabled) {
+                        Log.d(TAG, "Found YouTube Music sign-in screen, tapping 'Sign in'")
+                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        signInButtons.forEach { it.recycle() }
+                        if (clicked) {
+                            Log.d(TAG, "Successfully tapped Sign in on YouTube Music sign-in screen")
+                            return true
+                        }
+                    }
+                }
+                signInButtons.forEach { it.recycle() }
+            }
+
             // Look for dismiss buttons by text or content-description (case-insensitive)
             val dismissLabels = listOf("Close", "No thanks")
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
