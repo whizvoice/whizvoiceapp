@@ -539,11 +539,11 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // is also a stronger test: it lands on a positive chat ID with no ENABLE_VOICE_MODE flag,
             // so ChatScreen.kt:835's auto-enable branch does NOT fire, and the listener's restore is
             // the only thing that can flip continuous listening back on.
-            val chatList = device.findObject(By.scrollable(true).pkg(packageName))
-            if (chatList == null) {
-                failWithScreenshot("Could not find scrollable chats list to tap a row")
-            }
-            val firstRow = chatList.findObjects(By.clickable(true))
+            // Can't filter by By.scrollable(true) on the LazyColumn — Compose only marks
+            // a LazyColumn scrollable when its content actually overflows, so short chat
+            // lists (e.g. after cleanup runs) yield null. Chat rows are long-clickable;
+            // the header buttons and the New Chat FAB aren't, so that distinguishes them.
+            val firstRow = device.findObjects(By.clickable(true).longClickable(true).pkg(packageName))
                 .firstOrNull { it.findObject(By.clazz("android.widget.TextView")) != null }
             if (firstRow == null) {
                 failWithScreenshot("Could not find any chat row to tap in chats list")
