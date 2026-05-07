@@ -6709,6 +6709,25 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
         try {
+            // System "App Not Responding" dialog (e.g., YT Music hangs on slow CI emulators
+            // post-sign-in while loading home). Tap "Wait" to give it more time rather than
+            // "Close app" which would kill the deep-link state.
+            val anrWaitButtons = rootNode.findAccessibilityNodeInfosByViewId("android:id/aerr_wait")
+            if (anrWaitButtons != null && anrWaitButtons.isNotEmpty()) {
+                for (button in anrWaitButtons) {
+                    if (button.isClickable && button.isEnabled) {
+                        Log.d(TAG, "Found ANR dialog, tapping 'Wait'")
+                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        anrWaitButtons.forEach { it.recycle() }
+                        if (clicked) {
+                            Log.d(TAG, "Successfully tapped Wait on ANR dialog")
+                            return true
+                        }
+                    }
+                }
+                anrWaitButtons.forEach { it.recycle() }
+            }
+
             // First-launch sign-in screen (id/sign_in_title "Over 100 million songs and counting").
             // Tap "Sign in" to auto-complete via system Google account; "Device files only" would put
             // the app in offline-only mode where streaming search can't find anything.
