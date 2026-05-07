@@ -8485,14 +8485,42 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         Log.d(TAG, "Waiting for app $packageName to be ready...")
         return waitForCondition(maxWaitMs = maxWaitMs) {
+            // Primary check: existing rootInActiveWindow path (preserved for backwards compatibility)
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
                 val isReady = rootNode.packageName?.toString() == packageName
                 rootNode.recycle()
                 if (isReady) {
                     Log.d(TAG, "App $packageName is now in foreground")
+                    return@waitForCondition true
                 }
-                isReady
+            }
+            // Fallback: search all accessibility windows. The target app may have
+            // launched but Whiz's bubble overlay / IME / lingering Whiz MainActivity
+            // window can keep rootInActiveWindow pointing elsewhere even though the
+            // target app is visible and ready to receive UI interactions.
+            val targetWindowRoot = try {
+                val allWindows = accessibilityService.windows
+                if (allWindows != null) {
+                    var match: AccessibilityNodeInfo? = null
+                    for (window in allWindows) {
+                        val root = window.root ?: continue
+                        if (root.packageName?.toString() == packageName) {
+                            match = root
+                            break
+                        }
+                        root.recycle()
+                    }
+                    match
+                } else null
+            } catch (e: Exception) {
+                Log.w(TAG, "Error searching windows for $packageName: ${e.message}")
+                null
+            }
+            if (targetWindowRoot != null) {
+                targetWindowRoot.recycle()
+                Log.d(TAG, "App $packageName found in window list (not active window)")
+                true
             } else {
                 false
             }
