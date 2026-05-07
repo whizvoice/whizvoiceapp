@@ -509,9 +509,107 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 }
             }
 
+            // PHASE: In-app navigation chat → chats list → back to chat preserves voice state.
+            // Regression coverage for the OnDestinationChangedListener save/restore behavior in MainActivity.
+            Log.d(TAG, "🧪 PHASE: Testing in-app nav (chat → chats list → chat) preserves voice state...")
+
+            val beforeBackListening = voiceManager.isContinuousListeningEnabled.value
+            val beforeBackTTS = voiceManager.isVoiceResponseEnabled.value
+            Log.d(TAG, "📊 Before press-back: continuous=$beforeBackListening, TTS=$beforeBackTTS")
+
+            device.pressBack()
+            val onChatsList = device.wait(Until.hasObject(By.textContains("My Chats").pkg(packageName)), 5000)
+            if (!onChatsList) {
+                failWithScreenshot("Pressing back from chat did not navigate to chats list")
+            }
+            Log.d(TAG, "✅ Navigated to chats list via press-back")
+
+            // device.wait above already confirmed the new destination is rendered, so the
+            // OnDestinationChangedListener has already run synchronously on the main thread.
+            val onListContinuous = voiceManager.isContinuousListeningEnabled.value
+            Log.d(TAG, "📊 On chats list: continuous=$onListContinuous")
+            if (onListContinuous) {
+                failWithScreenshot("Continuous listening should be FALSE on chats list (listener should have disabled it) but was TRUE")
+            }
+            Log.d(TAG, "✅ Listener disabled continuous listening on entering chats list")
+
+            // Re-enter a chat by tapping the first row in the scrollable chat list. We deliberately
+            // do NOT target our just-created chat by title — the chats list UI doesn't reflect the
+            // optimistic chat synchronously, so by-title lookup is racy. Tapping any existing chat
+            // is also a stronger test: it lands on a positive chat ID with no ENABLE_VOICE_MODE flag,
+            // so ChatScreen.kt:835's auto-enable branch does NOT fire, and the listener's restore is
+            // the only thing that can flip continuous listening back on.
+            // Can't filter by By.scrollable(true) on the LazyColumn — Compose only marks
+            // a LazyColumn scrollable when its content actually overflows, so short chat
+            // lists (e.g. after cleanup runs) yield null. Chat rows are long-clickable;
+            // the header buttons and the New Chat FAB aren't, so that distinguishes them.
+            val firstRow = device.findObjects(By.clickable(true).longClickable(true).pkg(packageName))
+                .firstOrNull { it.findObject(By.clazz("android.widget.TextView")) != null }
+            if (firstRow == null) {
+                failWithScreenshot("Could not find any chat row to tap in chats list")
+            }
+            firstRow.click()
+
+            val backInChat = device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 5000)
+            if (!backInChat) {
+                failWithScreenshot("Tapping chat row did not return to chat screen")
+            }
+            Log.d(TAG, "✅ Re-entered chat via chat row tap")
+
+            // device.wait above confirmed the chat screen is rendered; the listener has run.
+            val afterRestoreListening = voiceManager.isContinuousListeningEnabled.value
+            val afterRestoreTTS = voiceManager.isVoiceResponseEnabled.value
+            Log.d(TAG, "📊 After re-entering chat: continuous=$afterRestoreListening, TTS=$afterRestoreTTS")
+
+            if (afterRestoreListening != beforeBackListening) {
+                failWithScreenshot("Continuous listening was not restored on chat re-entry. Was $beforeBackListening before press-back, now $afterRestoreListening")
+            }
+            if (afterRestoreTTS != beforeBackTTS) {
+                failWithScreenshot("TTS state was not restored on chat re-entry. Was $beforeBackTTS before press-back, now $afterRestoreTTS")
+            }
+            Log.d(TAG, "✅ In-app nav (chat → chats list → chat) preserves voice state correctly")
+
+            // PHASE: Voice-launch creates a new chat with continuous listening enabled, even when
+            // a prior ChatViewModel is still in scope (Bug 2 coverage — stale viewModelChatId race).
+            // Without the ENABLE_VOICE_MODE-driven auto-enable in ChatScreen.kt:835, listening would
+            // stay off on the new chat because viewModelChatId reads stale positive at LaunchedEffect
+            // time. Pattern matches testVoiceLaunch_automaticallyAddsFlags in VoiceLaunchDetectionIntegrationTest.
+            Log.d(TAG, "🧪 PHASE: Testing voice-launch enables listening on a new chat with prior ChatViewModel...")
+            val voiceLaunchIntent = Intent(context, com.example.whiz.MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or 0x10000000
+                putExtra("tracing_intent_id", System.currentTimeMillis())
+            }
+            context.startActivity(voiceLaunchIntent)
+
+            val navigatedAfterVoice = device.wait(Until.hasObject(By.clazz("android.widget.EditText").pkg(packageName)), 10000)
+            if (!navigatedAfterVoice) {
+                failWithScreenshot("Voice-launch intent did not navigate to a chat screen")
+            }
+            Log.d(TAG, "✅ Voice launch navigated to chat screen")
+
+            val voiceLaunchListening = voiceManager.isContinuousListeningEnabled.value
+            Log.d(TAG, "📊 After voice launch: continuous=$voiceLaunchListening")
+            if (!voiceLaunchListening) {
+                failWithScreenshot("Voice launch should enable continuous listening on the new chat but it was FALSE — Bug 2 regression (likely stale viewModelChatId race in ChatScreen.kt:835)")
+            }
+            Log.d(TAG, "✅ Voice launch enabled continuous listening on new chat — Bug 2 fix verified")
+
+            // Track any chat created by the voice launch so cleanup picks it up
+            try {
+                val currentChats = runBlocking { repository.getAllChats() }
+                currentChats.filter { it.id !in createdChatIds }.forEach { chat ->
+                    createdChatIds.add(chat.id)
+                    Log.d(TAG, "📝 Tracked voice-launch chat for cleanup: ${chat.id} ('${chat.title}')")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Could not track voice-launch chat: ${e.message}")
+            }
+
             // Key insight: Real navigation triggered observable coordinator state changes
             Log.d(TAG, "✅ REAL navigation away and back successfully preserves coordinator states: continuous=true, SpeechService.isListening=true")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during real navigation test", e)
             failWithScreenshot("Real navigation should trigger service behaviors: ${e.message}")

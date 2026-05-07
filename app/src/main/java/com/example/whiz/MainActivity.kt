@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -45,6 +46,8 @@ import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.RageShakeDetector
+import com.example.whiz.util.INACTIVITY_TIMEOUT_MS
+import com.example.whiz.util.InactivityTimer
 import com.example.whiz.util.LogcatCapture
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
@@ -124,10 +127,12 @@ class MainActivity : ComponentActivity() {
     lateinit var rageShakeDetector: RageShakeDetector
 
     @Inject
-    lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
+    lateinit var toolExecutor: com.example.whiz.tools.ToolExecutor
 
     @Inject
-    lateinit var wakeWordPreferences: com.example.whiz.data.preferences.WakeWordPreferences
+    lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
+
+    private lateinit var inactivityTimer: InactivityTimer
 
     // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
@@ -228,7 +233,39 @@ class MainActivity : ComponentActivity() {
 
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
+        inactivityTimer = InactivityTimer(
+            scope = lifecycleScope,
+            durationMs = INACTIVITY_TIMEOUT_MS,
+            onTimeout = {
+                Log.d(TAG, "Inactivity timeout fired - calling finishAndRemoveTask()")
+                finishAndRemoveTask()
+            }
+        )
+        inactivityTimer.reset()
+        // onCreate runs before onResume; mark as paused for foreground state until onResume fires.
+        inactivityTimer.pause("foreground")
+
+        lifecycleScope.launch {
+            toolExecutor.activeToolCount.collect { count ->
+                if (count > 0) {
+                    inactivityTimer.pause("tool")
+                } else {
+                    inactivityTimer.resume("tool")
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            voiceManager.isListening.collect { listening ->
+                if (listening) {
+                    inactivityTimer.resume("mic-off")
+                } else {
+                    inactivityTimer.pause("mic-off")
+                }
+            }
+        }
+
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
         
@@ -276,29 +313,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Manage audio-only WakeWordService when dev mode is on but wake word is off
-        lifecycleScope.launch {
-            // Combine dev mode and wake word state
-            kotlinx.coroutines.flow.combine(
-                devPreferences.isDeveloperMode,
-                wakeWordPreferences.isEnabled
-            ) { devMode, wakeWordEnabled -> devMode to wakeWordEnabled }
-                .collect { (devMode, wakeWordEnabled) ->
-                    if (devMode && !wakeWordEnabled) {
-                        // Start audio-only mode for bug report audio capture
-                        Log.d(TAG, "Dev mode ON, wake word OFF -> starting audio-only WakeWordService")
-                        com.example.whiz.services.WakeWordService.startAudioOnly(this@MainActivity)
-                    } else if (!devMode && !wakeWordEnabled) {
-                        // Stop audio-only service if dev mode disabled and wake word not running
-                        if (com.example.whiz.services.WakeWordService.isRunning) {
-                            Log.d(TAG, "Dev mode OFF, wake word OFF -> stopping audio-only WakeWordService")
-                            com.example.whiz.services.WakeWordService.stop(this@MainActivity)
-                        }
-                    }
-                    // If wake word is enabled, normal mode is already running — no change needed
-                }
-        }
-
         // Setup close app receiver BEFORE setContent (needs to work even when activity is stopped)
         setupCloseAppReceiver()
 
@@ -315,12 +329,43 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = { onSuccess, onCancelled ->
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked) {
+                // Hold the screen on while the keyguard prompt is up. We must use a
+                // PowerManager wake lock here, NOT FLAG_KEEP_SCREEN_ON: setShowWhenLocked(false)
+                // pauses our activity, and window flags are only honored on the foreground
+                // window. Once paused, the keyguard window's activityTimeoutWM (typically
+                // 10s) takes effect and the screen turns off before the user can reach the
+                // fingerprint sensor / PIN entry.
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                @Suppress("DEPRECATION")
+                val unlockWakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    "whiz:unlock_prompt"
+                )
+                // Built-in 65s timeout (slightly longer than ToolExecutor's 60s) so the
+                // wake lock auto-releases even if neither dismiss callback is invoked.
+                unlockWakeLock.acquire(65_000L)
+                Log.d(TAG, "Unlock wake lock acquired (SCREEN_BRIGHT, 65s timeout)")
+                val releaseUnlockWakeLock = {
+                    if (unlockWakeLock.isHeld) {
+                        try {
+                            unlockWakeLock.release()
+                            Log.d(TAG, "Unlock wake lock released")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Unlock wake lock release failed", e)
+                        }
+                    }
+                }
+
                 // Must clear showWhenLocked so the keyguard PIN entry can appear
                 // (otherwise our activity occludes the keyguard, causing a deadlock)
                 setShowWhenLocked(false)
                 km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-                    override fun onDismissSucceeded() { onSuccess() }
+                    override fun onDismissSucceeded() {
+                        releaseUnlockWakeLock()
+                        onSuccess()
+                    }
                     override fun onDismissCancelled() {
+                        releaseUnlockWakeLock()
                         // User cancelled — restore showWhenLocked so the activity stays visible
                         setShowWhenLocked(true)
                         onCancelled()
@@ -354,6 +399,49 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     navController = rememberNavController()
+
+                    // Save voice state when leaving a chat, restore it on return. Bubble overlay
+                    // owns its own listening lifecycle, so skip while it's active or pending.
+                    DisposableEffect(navController) {
+                        var lastWasChat = false
+                        var savedListeningState: Boolean? = null
+                        var savedTTSState: Boolean? = null
+                        val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, _ ->
+                            val onChatRoute = destination.route?.startsWith("chat/") == true
+                            val bubbleOwnsListening = com.example.whiz.services.BubbleOverlayService.isActive ||
+                                                       com.example.whiz.services.BubbleOverlayService.isPendingStart
+                            if (bubbleOwnsListening) {
+                                lastWasChat = onChatRoute
+                                return@OnDestinationChangedListener
+                            }
+                            when {
+                                lastWasChat && !onChatRoute -> {
+                                    savedListeningState = voiceManager.isContinuousListeningEnabled.value
+                                    savedTTSState = voiceManager.isVoiceResponseEnabled.value
+                                    voiceManager.updateContinuousListeningEnabled(false)
+                                    voiceManager.stopSpeaking()
+                                }
+                                !lastWasChat && onChatRoute -> {
+                                    if (savedListeningState == true) {
+                                        voiceManager.updateContinuousListeningEnabled(true)
+                                    }
+                                    savedTTSState?.let { voiceManager.setVoiceResponseEnabled(it) }
+                                    savedListeningState = null
+                                    savedTTSState = null
+                                }
+                                !lastWasChat && !onChatRoute -> {
+                                    voiceManager.updateContinuousListeningEnabled(false)
+                                    voiceManager.stopSpeaking()
+                                }
+                                // chat → chat: leave alone
+                            }
+                            lastWasChat = onChatRoute
+                        }
+                        navController.addOnDestinationChangedListener(listener)
+                        onDispose {
+                            navController.removeOnDestinationChangedListener(listener)
+                        }
+                    }
 
                     // Check if this is a voice launch
                     val isVoiceLaunch = intent?.getBooleanExtra("FROM_ASSISTANT", false) ?: false
@@ -950,9 +1038,19 @@ class MainActivity : ComponentActivity() {
         }
     }
     
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.reset()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.resume("foreground")
+        }
 
         // Stop bubble overlay when MainActivity comes to foreground
         // This is more reliable than listening to app lifecycle events, which can fire
@@ -1010,6 +1108,9 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.pause("foreground")
+        }
         // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
 
         // Check if bubble overlay is active and in TTS mode before stopping TTS
@@ -1046,6 +1147,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d("MainActivity", "Main Activity Destroyed")
+
+        if (::inactivityTimer.isInitialized) {
+            inactivityTimer.cancel()
+        }
 
         // Release any held audio focus as a safety net
         audioFocusManager.abandonDuckingFocus()

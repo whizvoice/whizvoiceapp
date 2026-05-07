@@ -805,7 +805,6 @@ class VoiceManager @Inject constructor(
                     text = finalText,
                     seq = transcriptionSeqCounter.incrementAndGet()
                 )
-                Log.d(TAG, "[VOICE_TRACE] VoiceManager EMIT seq=${emission.seq} text='${emission.text}'")
                 coroutineScope.launch {
                     _transcriptionFlow.emit(emission)
                 }

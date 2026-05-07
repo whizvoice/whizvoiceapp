@@ -47,6 +47,7 @@ class ChatsListViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val newEnabled = !wakeWordPreferences.isEnabled.value
+                Log.d(TAG, "toggleWakeWord: ${!newEnabled} -> $newEnabled (from ChatsList)")
                 wakeWordPreferences.setEnabled(newEnabled)
                 if (newEnabled) {
                     WakeWordService.start(context)

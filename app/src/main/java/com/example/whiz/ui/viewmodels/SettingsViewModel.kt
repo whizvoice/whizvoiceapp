@@ -97,6 +97,7 @@ class SettingsViewModel @Inject constructor(
     fun setWakeWordEnabled(enabled: Boolean) {
         viewModelScope.launch {
             try {
+                Log.d(TAG, "setWakeWordEnabled: ${!enabled} -> $enabled (from Settings)")
                 wakeWordPreferences.setEnabled(enabled)
                 if (enabled) {
                     WakeWordService.start(context)

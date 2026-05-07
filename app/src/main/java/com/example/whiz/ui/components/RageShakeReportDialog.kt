@@ -15,8 +15,6 @@ import androidx.compose.ui.Modifier
 
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
@@ -81,25 +79,14 @@ fun RageShakeReportDialog(
             }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
-                    onClick = onSnooze,
-                    enabled = !isSubmitting,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Turn off shaking button"
-                    }
-                ) {
-                    Text("Turn off shaking")
+            TextButton(
+                onClick = onSnooze,
+                enabled = !isSubmitting,
+                modifier = Modifier.semantics {
+                    contentDescription = "Turn off shaking button"
                 }
-                TextButton(
-                    onClick = onDismiss,
-                    enabled = !isSubmitting,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Cancel bug report button"
-                    }
-                ) {
-                    Text("Cancel")
-                }
+            ) {
+                Text("Turn off shaking")
             }
         }
     )

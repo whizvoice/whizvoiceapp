@@ -7,8 +7,11 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,6 +30,9 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
     // App background events - replay=1 so tests can catch events emitted before collection starts
     private val _appBackgroundEvent = MutableSharedFlow<Unit>(replay = 1)
     val appBackgroundEvent: SharedFlow<Unit> = _appBackgroundEvent.asSharedFlow()
+
+    private val _isInForegroundFlow = MutableStateFlow(false)
+    val isInForegroundFlow: StateFlow<Boolean> = _isInForegroundFlow.asStateFlow()
 
     // Track whether we've already registered the observer
     @Volatile
@@ -58,6 +64,7 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
         // App moved to foreground (at least one activity is visible)
         Log.d(TAG, "App foregrounded (onStart)")
         _isInForeground = true
+        _isInForegroundFlow.value = true
         _appForegroundEvent.tryEmit(Unit)
     }
 
@@ -65,6 +72,7 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
         // App moved to background (no activities are visible)
         Log.d(TAG, "App backgrounded (onStop)")
         _isInForeground = false
+        _isInForegroundFlow.value = false
         _appBackgroundEvent.tryEmit(Unit)
     }
 
@@ -76,12 +84,14 @@ class AppLifecycleService @Inject constructor() : DefaultLifecycleObserver {
     fun notifyAppForegrounded() {
         Log.d(TAG, "Manual notification: App foregrounded")
         _isInForeground = true
+        _isInForegroundFlow.value = true
         _appForegroundEvent.tryEmit(Unit)
     }
 
     fun notifyAppBackgrounded() {
         Log.d(TAG, "Manual notification: App backgrounded")
         _isInForeground = false
+        _isInForegroundFlow.value = false
         _appBackgroundEvent.tryEmit(Unit)
     }
 } 

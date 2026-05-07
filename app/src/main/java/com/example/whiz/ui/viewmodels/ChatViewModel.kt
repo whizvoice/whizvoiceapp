@@ -119,6 +119,10 @@ class ChatViewModel @Inject constructor(
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
+    // Most recently sent user requestId — used to skip TTS for stale responses
+    // (when user has sent a newer message before the prior response arrives)
+    private var latestUserRequestId: String? = null
+
     // Track request IDs that were superseded by newer requests (to prevent orphaned retry)
     private val supersededRequestIds = mutableSetOf<String>()
     
@@ -436,21 +440,16 @@ class ChatViewModel @Inject constructor(
                     val bubbleActive = BubbleOverlayService.isActive  // for diagnostics only
                     val transcription = emission.text
                     if (!active) {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' isActiveInstance=false bubbleActive=$bubbleActive sendCalled=false reason=superseded")
                         return@collect
                     }
                     if (emission.seq <= voiceManager.lastProcessedTranscriptionSeq) {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='$transcription' lastProcessed=${voiceManager.lastProcessedTranscriptionSeq} sendCalled=false reason=already_processed")
                         return@collect
                     }
                     if (transcription.isNotBlank()) {
                         Log.d(TAG, "Received voice transcription: '$transcription' (bubbleActive=$bubbleActive)")
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SEND seq=${emission.seq} text='$transcription' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=true")
                         voiceManager.lastProcessedTranscriptionSeq = emission.seq
                         updateInputText(transcription, fromVoice = true)
                         sendUserInput(transcription)
-                    } else {
-                        Log.d(TAG, "[VOICE_TRACE] chatCollector SUPPRESSED seq=${emission.seq} text='' isActiveInstance=true bubbleActive=$bubbleActive sendCalled=false reason=blank")
                     }
                 }
         }
@@ -1182,19 +1181,27 @@ class ChatViewModel @Inject constructor(
                                 
                                 // 🔧 Additional validation: Only speak if this is truly for the current visible chat
                                 // and the message is actually being displayed to the user
+                                // Skip TTS if a newer user message exists (response is stale).
+                                // Null cases fall through to speak: legacy non-remote-agent path or first response in session.
+                                val isResponseLatest = event.requestId == null ||
+                                                       latestUserRequestId == null ||
+                                                       event.requestId == latestUserRequestId
+
                                 // Use VoiceManager's shouldEnableTTS which checks bubble mode properly
                                 val ttsEnabled = voiceManager.shouldEnableTTS()
-                                val shouldSpeak = ttsEnabled && 
-                                                _isTTSInitialized.value && 
-                                                speakThisMessage && 
+                                val shouldSpeak = ttsEnabled &&
+                                                _isTTSInitialized.value &&
+                                                speakThisMessage &&
                                                 messageContentForChat.isNotBlank() &&
-                                                isResponseForCurrentChat && 
+                                                isResponseForCurrentChat &&
                                                 targetChatId != 0L && // Allow speaking for both positive (server) and negative (optimistic) chat IDs
                                                 targetChatId == _chatId.value && // Double-check current chat
-                                                isMessageFresh // Only speak fresh messages
-                                
+                                                isMessageFresh && // Only speak fresh messages
+                                                isResponseLatest // Skip stale responses (newer user msg exists)
+
                                 Log.d(TAG, "TTS Decision: ttsEnabled=$ttsEnabled, ttsInit=${_isTTSInitialized.value}, " +
-                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, shouldSpeak=$shouldSpeak")
+                                        "speakThis=$speakThisMessage, fresh=$isMessageFresh, latest=$isResponseLatest, " +
+                                        "shouldSpeak=$shouldSpeak")
                                 
                                 if (shouldSpeak) {
                                     // Check if user has active partial transcription OR was recently speaking
@@ -1842,7 +1849,18 @@ class ChatViewModel @Inject constructor(
             
             // 🔧 NEW: Generate request ID early for optimistic UI pairing
             val requestId = if (configUseRemoteAgent) java.util.UUID.randomUUID().toString() else null
-            
+            if (requestId != null) {
+                latestUserRequestId = requestId
+            }
+
+            // New user message supersedes any in-flight TTS from a prior response
+            pendingTTSCheckJob?.cancel()
+            pendingTTSMessage = null
+            if (ttsManager.isSpeaking.value) {
+                Log.d(TAG, "New user message — stopping TTS for prior response")
+                ttsManager.stop()
+            }
+
             // Capture timestamp for message consistency between local and server
             val messageTimestamp = System.currentTimeMillis()
 
@@ -2017,6 +2035,52 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Send a hidden user message — processed by the server like a normal user input
+     * (so the LLM responds), but never inserted into the local message list and excluded
+     * from REST history sync via `content_type='hidden_text'` on the server. Used for
+     * side-channel signals like "screen unlocked" after a tool was blocked on the keyguard.
+     */
+    fun sendHiddenSystemMessage(content: String) {
+        if (content.isBlank()) return
+        if (!configUseRemoteAgent) {
+            Log.d(TAG, "sendHiddenSystemMessage skipped — remote agent disabled")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val originalChatId = _chatId.value
+                if (originalChatId == -1L) {
+                    Log.w(TAG, "sendHiddenSystemMessage skipped — no active chat")
+                    return@launch
+                }
+                val actualChatId = repository.getActualChatId(originalChatId)
+                if (actualChatId != originalChatId) {
+                    _chatId.value = actualChatId
+                }
+
+                val requestId = java.util.UUID.randomUUID().toString()
+                pendingRequests[requestId] = actualChatId
+                whizServerRepository.trackRequest(requestId)
+
+                Log.d(TAG, "📤 SENDING HIDDEN SYSTEM MESSAGE: requestId=$requestId, chatId=$actualChatId, content='$content'")
+                val success = whizServerRepository.sendMessage(
+                    message = content,
+                    requestId = requestId,
+                    chatId = actualChatId,
+                    timestamp = System.currentTimeMillis(),
+                    hidden = true
+                )
+                if (!success) {
+                    Log.d(TAG, "Hidden system message queued for retry")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending hidden system message", e)
+            }
+        }
+    }
+
     fun dismissOverlayPermissionDialog() {
         _showOverlayPermissionDialog.value = false
     }
@@ -2131,9 +2195,13 @@ class ChatViewModel @Inject constructor(
             Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
         
-        // VoiceManager is a singleton that manages its own cleanup
+        // VoiceManager is a singleton that manages its own cleanup.
+        // Don't shutdown() the singleton TTSManager here — VoiceManager (also singleton)
+        // is still using it, and tearing down the underlying TextToSpeech causes the
+        // next initialize() to build a fresh engine at platform defaults, silently
+        // dropping the user's custom rate/pitch. The OS reclaims TTS resources at
+        // process death; we don't need to release them on nav-scoped cleanup.
         ttsManager.stop()
-        ttsManager.shutdown()
         persistenceJob?.cancel()
         
         // Clear active conversation in ConnectionStateManager
@@ -2327,39 +2395,16 @@ class ChatViewModel @Inject constructor(
 
     private fun applyVoiceSettings(voiceSettings: com.example.whiz.data.preferences.VoiceSettings) {
         try {
-            val previousSettings = currentVoiceSettings
             currentVoiceSettings = voiceSettings
-            
+
             if (!voiceSettings.useSystemDefaults) {
                 Log.d(TAG, "Applying custom voice settings: speechRate=${voiceSettings.speechRate}, pitch=${voiceSettings.pitch}")
                 ttsManager.setSpeechRate(voiceSettings.speechRate)
                 ttsManager.setPitch(voiceSettings.pitch)
             } else {
-                // Check if we're switching from custom to system defaults
-                if (previousSettings != null && !previousSettings.useSystemDefaults) {
-                    Log.d(TAG, "Switching from custom to system TTS settings - reinitializing TTS engine")
-                    // We need to reinitialize the TTS engine to clear custom settings
-                    viewModelScope.launch {
-                        try {
-                            ttsManager.stop()
-                            ttsManager.shutdown()
-                            ttsManager.initialize { success ->
-                                if (success) {
-                                    Log.d(TAG, "TTS reinitialized successfully")
-                                    _isTTSInitialized.value = true
-                                } else {
-                                    Log.e(TAG, "Failed to reinitialize TTS")
-                                    _isTTSInitialized.value = false
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error reinitializing TTS", e)
-                            _isTTSInitialized.value = false
-                        }
-                    }
-                } else {
-                    Log.d(TAG, "Using system default TTS settings - not overriding speech rate or pitch")
-                }
+                Log.d(TAG, "Using system default TTS settings - resetting speech rate and pitch to 1.0")
+                ttsManager.setSpeechRate(1.0f)
+                ttsManager.setPitch(1.0f)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error applying voice settings", e)

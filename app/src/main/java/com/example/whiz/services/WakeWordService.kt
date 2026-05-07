@@ -64,6 +64,7 @@ class WakeWordService : Service() {
         private const val MAX_AUDIO_DIR_BYTES = 50L * 1024 * 1024 // 50MB
 
         private const val RESUME_DEBOUNCE_MS = 500L
+        private const val EXTERNAL_RECORDER_RECHECK_MS = 1000L
         private const val MODEL_VERSION_KEY = "vosk_model_version"
         private const val MODEL_VERSION = "en-us-0.22-lgraph"
 
@@ -181,26 +182,21 @@ class WakeWordService : Service() {
     private var audioManager: AudioManager? = null
     private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
         override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>?) {
-            val myUid = android.os.Process.myUid()
-            val externalActive = configs?.any { config ->
-                config.clientAudioSource != MediaRecorder.AudioSource.DEFAULT &&
-                    config.clientAudioSessionId != 0 &&
-                    config.clientAudioSessionId != ownAudioSessionId &&
-                    getUidFromConfig(config, myUid) != myUid
-            } ?: false
-            if (externalActive != isExternalRecorderActive) {
-                Log.d(TAG, "External recorder active changed: $isExternalRecorderActive -> $externalActive")
-                isExternalRecorderActive = externalActive
-            }
+            updateExternalRecorderState(isAnyExternalRecorder(configs), source = "callback")
         }
     }
 
-    private fun getUidFromConfig(config: AudioRecordingConfiguration, fallback: Int): Int {
-        return try {
-            val method = AudioRecordingConfiguration::class.java.getMethod("getClientUid")
-            method.invoke(config) as Int
-        } catch (e: Exception) {
-            fallback // If reflection fails, treat as own UID to avoid self-detection
+    // Session-id inequality alone identifies "not us"; AudioFlinger does not reuse
+    // session ids across clients. Additional filters on clientAudioSource or
+    // clientAudioSessionId == 0 only add false negatives.
+    private fun isAnyExternalRecorder(configs: List<AudioRecordingConfiguration>?): Boolean {
+        return configs?.any { it.clientAudioSessionId != ownAudioSessionId } ?: false
+    }
+
+    private fun updateExternalRecorderState(externalActive: Boolean, source: String) {
+        if (externalActive != isExternalRecorderActive) {
+            Log.d(TAG, "External recorder active changed ($source): $isExternalRecorderActive -> $externalActive")
+            isExternalRecorderActive = externalActive
         }
     }
 
@@ -308,22 +304,10 @@ class WakeWordService : Service() {
                     4096
                 )
 
-                audioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    bufferSize
-                )
-
-                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                audioRecord = createAudioRecord(bufferSize) ?: run {
                     Log.e(TAG, "AudioRecord failed to initialize")
                     return@launch
                 }
-
-                ownAudioSessionId = audioRecord?.audioSessionId ?: 0
-                Log.d(TAG, "Own audio session ID: $ownAudioSessionId")
-
                 audioRecord?.startRecording()
                 Log.d(TAG, "Detection loop started")
 
@@ -332,31 +316,58 @@ class WakeWordService : Service() {
                 val buffer = ByteArray(bufferSize)
                 var frameCount = 0L
                 var lastHeartbeatTime = System.currentTimeMillis()
+                var lastExternalRecheckTime = System.currentTimeMillis()
 
                 while (true) {
+                    // Belt-and-suspenders: if AudioRecordingCallback ever misses an
+                    // end-event, we'd be stranded paused forever. Re-derive the flag
+                    // from the live config list every EXTERNAL_RECORDER_RECHECK_MS.
+                    val nowRecheck = System.currentTimeMillis()
+                    if (nowRecheck - lastExternalRecheckTime >= EXTERNAL_RECORDER_RECHECK_MS) {
+                        val freshConfigs = audioManager?.activeRecordingConfigurations
+                        updateExternalRecorderState(isAnyExternalRecorder(freshConfigs), source = "recheck")
+                        lastExternalRecheckTime = nowRecheck
+                    }
+
                     // Pause while main speech recognizer or external recorder is active
                     val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
                     if (shouldPause) {
-                        if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord?.let { rec ->
                             val reason = when {
                                 speechRecognitionService.isListening.value -> "main speech recognizer active"
                                 isExternalRecorderActive -> "external recorder active"
                                 else -> "unknown"
                             }
-                            audioRecord?.stop()
-                            Log.d(TAG, "Paused: $reason")
+                            try {
+                                if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error stopping AudioRecord on pause", e)
+                            }
+                            // Full release frees the audio HAL slot for the other app.
+                            // stop() alone keeps the AudioFlinger client and (on some
+                            // Android versions) the audio policy's claim on the input port.
+                            rec.release()
+                            audioRecord = null
+                            Log.d(TAG, "Paused (released): $reason")
                         }
                         delay(200)
                         continue
                     }
 
-                    // Resume after pause source stops (with debounce)
-                    if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    // Resume after pause source stops (with debounce). createAudioRecord()
+                    // may return null if the other app hasn't fully released the input port
+                    // yet; the loop retries on the next iteration.
+                    if (audioRecord == null) {
                         delay(RESUME_DEBOUNCE_MS)
-                        // Re-check that no pause source has started again
                         if (speechRecognitionService.isListening.value || isExternalRecorderActive) continue
-                        audioRecord?.startRecording()
-                        Log.d(TAG, "Resumed: no active recorders")
+                        val fresh = createAudioRecord(bufferSize)
+                        if (fresh == null) {
+                            delay(500)
+                            continue
+                        }
+                        audioRecord = fresh
+                        fresh.startRecording()
+                        Log.d(TAG, "Resumed: created fresh AudioRecord")
                     }
 
                     // Cooldown after detection
@@ -393,6 +404,33 @@ class WakeWordService : Service() {
                 Log.e(TAG, "Detection loop error", e)
             }
         }
+    }
+
+    /**
+     * Construct a fresh AudioRecord. Refreshes ownAudioSessionId before the caller
+     * starts recording — otherwise the AudioRecordingCallback would see the new
+     * session as "external" and we'd flap pause→release→recreate.
+     */
+    private fun createAudioRecord(bufferSize: Int): AudioRecord? {
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "AudioRecord construction threw", e)
+            return null
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            return null
+        }
+        ownAudioSessionId = record.audioSessionId
+        Log.d(TAG, "AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_COMMUNICATION, aecAttached=false (no canceler on this session)")
+        return record
     }
 
     /**
@@ -559,9 +597,10 @@ class WakeWordService : Service() {
 
     private fun stopDetection() {
         audioManager?.unregisterAudioRecordingCallback(recordingCallback)
-        detectionJob?.cancel()
+        val job = detectionJob
         detectionJob = null
         audioRingBuffer = null
+        job?.cancel()
         try {
             audioRecord?.let {
                 if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -570,6 +609,21 @@ class WakeWordService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord", e)
+        }
+        // Wait for the detection coroutine to fully exit before any subsequent native
+        // resource cleanup (releaseResources -> recognizer.close / voskModel.close).
+        // acceptWaveForm and Recognizer.result are synchronous native calls that
+        // cancellation can't interrupt; closing the recognizer while one is in flight
+        // SIGABRTs in Vosk's CuSubMatrix. Bounded so onDestroy never hangs.
+        if (job != null) {
+            try {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(2000L) { job.join() }
+                        ?: Log.w(TAG, "Detection coroutine did not exit within 2s of cancel")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error joining detection coroutine", e)
+            }
         }
         // Release wake lock
         wakeLock?.let {

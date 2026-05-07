@@ -94,6 +94,17 @@ class AudioPipeRecorder {
             echoCanceler = null
         }
 
+        // Always-fire AEC state log so we can see silent failures in logcat (the success-branch
+        // log above only fires when create() returns non-null).
+        Log.i(
+            TAG,
+            "AEC_STATE: available=${AcousticEchoCanceler.isAvailable()}," +
+                    " attached=${echoCanceler != null}," +
+                    " enabled=${echoCanceler?.enabled}," +
+                    " sessionId=${audioRecord.audioSessionId}," +
+                    " source=VOICE_COMMUNICATION"
+        )
+
         Log.d(TAG, "AudioPipeRecorder created (bufferSize=$bufferSize)")
     }
 
@@ -117,6 +128,7 @@ class AudioPipeRecorder {
         recordingThread = Thread({
             val buffer = ByteArray(4096)
             val outputStream = ParcelFileDescriptor.AutoCloseOutputStream(writeParcel)
+            var lastLevelLogTime = 0L
 
             try {
                 while (isRecording.get()) {
@@ -124,6 +136,26 @@ class AudioPipeRecorder {
                     when {
                         bytesRead > 0 -> {
                             outputStream.write(buffer, 0, bytesRead)
+                            // ~1Hz log of mean absolute PCM amplitude. If this drops to ~0 while
+                            // speaker audio is playing, the OS is suppressing mic capture (AEC
+                            // misconfigured or disabled at the HAL level).
+                            val now = System.currentTimeMillis()
+                            if (now - lastLevelLogTime >= 1000) {
+                                lastLevelLogTime = now
+                                var sum = 0L
+                                var count = 0
+                                var i = 0
+                                while (i + 1 < bytesRead) {
+                                    val lo = buffer[i].toInt() and 0xFF
+                                    val hi = buffer[i + 1].toInt()
+                                    val sample = ((hi shl 8) or lo).toShort().toInt()
+                                    sum += if (sample < 0) -sample else sample
+                                    count++
+                                    i += 2
+                                }
+                                val mean = if (count > 0) sum / count else 0L
+                                Log.d(TAG, "AEC_LEVEL: mean=$mean (samples=$count, aecEnabled=${echoCanceler?.enabled})")
+                            }
                         }
                         bytesRead == AudioRecord.ERROR_DEAD_OBJECT -> {
                             Log.w(TAG, "AudioRecord ERROR_DEAD_OBJECT, stopping")
