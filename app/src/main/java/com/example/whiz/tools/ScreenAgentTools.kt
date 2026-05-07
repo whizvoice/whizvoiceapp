@@ -3882,7 +3882,15 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!clickResult.clicked) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
+                // If the ANR overlay is still up at dump time, dismiss it once and
+                // re-grab the root so the dump captures YT Music's real state — giving
+                // the autofix-feedback loop a useful tree instead of just the dialog.
+                var dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null && dismissSystemAnrDialogIfPresent(dumpRoot)) {
+                    dumpRoot.recycle()
+                    delay(500)
+                    dumpRoot = accessibilityService.getCurrentRootNode()
+                }
                 if (dumpRoot != null) {
                     dumpUIHierarchy(dumpRoot, "ytmusic_play_deeplink_no_result", "Deep link search loaded but could not find/click result for: $query")
                     dumpRoot.recycle()
@@ -6707,26 +6715,36 @@ class ScreenAgentTools @Inject constructor(
      * Detect and dismiss YouTube Music promotional pop-ups (e.g., Family Plan, Premium).
      * Returns true if a pop-up was detected and dismissed, false otherwise.
      */
-    private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
+    /**
+     * If the active window is the system "App isn't responding" dialog, tap Wait
+     * (rather than Close app, which would kill any in-progress deep-link state).
+     * Returns true if the dialog was found and the click succeeded.
+     *
+     * YT Music on CI emulators occasionally ANRs mid-search; the ANR overlay steals
+     * focus so getCurrentRootNode() returns its tree (package "android") instead of
+     * YT Music's. Caller should tap Wait and re-poll on the next tick.
+     */
+    private fun dismissSystemAnrDialogIfPresent(rootNode: AccessibilityNodeInfo): Boolean {
+        val waitButtons = rootNode.findAccessibilityNodeInfosByViewId("android:id/aerr_wait")
+        if (waitButtons.isNullOrEmpty()) return false
         try {
-            // System "App Not Responding" dialog (e.g., YT Music hangs on slow CI emulators
-            // post-sign-in while loading home). Tap "Wait" to give it more time rather than
-            // "Close app" which would kill the deep-link state.
-            val anrWaitButtons = rootNode.findAccessibilityNodeInfosByViewId("android:id/aerr_wait")
-            if (anrWaitButtons != null && anrWaitButtons.isNotEmpty()) {
-                for (button in anrWaitButtons) {
-                    if (button.isClickable && button.isEnabled) {
-                        Log.d(TAG, "Found ANR dialog, tapping 'Wait'")
-                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        anrWaitButtons.forEach { it.recycle() }
-                        if (clicked) {
-                            Log.d(TAG, "Successfully tapped Wait on ANR dialog")
-                            return true
-                        }
+            for (button in waitButtons) {
+                if (button.isClickable && button.isEnabled) {
+                    Log.d(TAG, "System ANR dialog detected; tapping Wait")
+                    if (button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
                     }
                 }
-                anrWaitButtons.forEach { it.recycle() }
             }
+            return false
+        } finally {
+            waitButtons.forEach { it.recycle() }
+        }
+    }
+
+    private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
+        try {
+            if (dismissSystemAnrDialogIfPresent(rootNode)) return true
 
             // First-launch sign-in screen (id/sign_in_title "Over 100 million songs and counting").
             // Tap "Sign in" to auto-complete via system Google account; "Device files only" would put
@@ -7395,6 +7413,14 @@ class ScreenAgentTools @Inject constructor(
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
+                // ANR overlay steals focus mid-search; tap Wait and re-poll so the next
+                // iteration sees YT Music's real window rather than the system dialog.
+                if (dismissSystemAnrDialogIfPresent(rootNode)) {
+                    rootNode.recycle()
+                    delay(pollIntervalMs)
+                    continue
+                }
+
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, contentType)
                 rootNode.recycle()
 
