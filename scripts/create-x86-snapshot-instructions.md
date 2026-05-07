@@ -165,6 +165,19 @@ The Android emulator's modified QEMU requires ALL block devices to have the snap
 | `swangle` | Fails to boot | Works | Droplet interactive setup |
 | `gpu auto` | May segfault | Varies | Not recommended |
 
+### RAM and CPU sizing
+
+GitHub-hosted `ubuntu-latest` runners have **4 vCPU + 16 GB RAM + 14 GB SSD** (same spec for x86_64 and arm64 standard runners). The emulator gets a slice of that, with the rest reserved for the runner OS, gh-actions agent, gradle (when not stopped), the Python autofix harness, ADB, and logcat capture.
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `-memory 8192` | safe | Leaves ~7 GB for runner/agent/harness — comfortable margin. Going past ~12 GB risks OOM-kill of QEMU mid-test. |
+| `-cores 4` | full use | Cores are time-shared, not exclusive — fine to give all 4 to the guest. The runner scheduler handles contention. |
+
+**Snapshot vs runtime memory**: when the workflow boots with `-no-snapshot-load` (cold boot from snapshot disk state), runtime `-memory` does NOT need to match the value the snapshot was saved with. You can bump the workflow's `-memory` independently. When booting with `-snapshot baseline_clean` (full RAM snapshot load), QEMU requires exact match — bumping requires a snapshot rebuild + workflow update together.
+
+**Stop Gradle before launching emulator**: the workflow already does `Stop Gradle daemon to free memory for emulator` before booting. Without that, gradle's daemon can hold ~2-3 GB and crowd the emulator.
+
 ### Google OAuth
 
 - Google Cloud Console needs an Android OAuth client for `com.example.whiz.debug` with the CI debug keystore's SHA-1
