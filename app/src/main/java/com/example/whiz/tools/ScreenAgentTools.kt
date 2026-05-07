@@ -3882,7 +3882,15 @@ class ScreenAgentTools @Inject constructor(
             )
 
             if (!clickResult.clicked) {
-                val dumpRoot = accessibilityService.getCurrentRootNode()
+                // If the ANR overlay is still up at dump time, dismiss it once and
+                // re-grab the root so the dump captures YT Music's real state — giving
+                // the autofix-feedback loop a useful tree instead of just the dialog.
+                var dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null && dismissSystemAnrDialogIfPresent(dumpRoot)) {
+                    dumpRoot.recycle()
+                    delay(500)
+                    dumpRoot = accessibilityService.getCurrentRootNode()
+                }
                 if (dumpRoot != null) {
                     dumpUIHierarchy(dumpRoot, "ytmusic_play_deeplink_no_result", "Deep link search loaded but could not find/click result for: $query")
                     dumpRoot.recycle()
@@ -6707,8 +6715,58 @@ class ScreenAgentTools @Inject constructor(
      * Detect and dismiss YouTube Music promotional pop-ups (e.g., Family Plan, Premium).
      * Returns true if a pop-up was detected and dismissed, false otherwise.
      */
+    /**
+     * If the active window is the system "App isn't responding" dialog, tap Wait
+     * (rather than Close app, which would kill any in-progress deep-link state).
+     * Returns true if the dialog was found and the click succeeded.
+     *
+     * YT Music on CI emulators occasionally ANRs mid-search; the ANR overlay steals
+     * focus so getCurrentRootNode() returns its tree (package "android") instead of
+     * YT Music's. Caller should tap Wait and re-poll on the next tick.
+     */
+    private fun dismissSystemAnrDialogIfPresent(rootNode: AccessibilityNodeInfo): Boolean {
+        val waitButtons = rootNode.findAccessibilityNodeInfosByViewId("android:id/aerr_wait")
+        if (waitButtons.isNullOrEmpty()) return false
+        try {
+            for (button in waitButtons) {
+                if (button.isClickable && button.isEnabled) {
+                    Log.d(TAG, "System ANR dialog detected; tapping Wait")
+                    if (button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        return true
+                    }
+                }
+            }
+            return false
+        } finally {
+            waitButtons.forEach { it.recycle() }
+        }
+    }
+
     private fun dismissYouTubeMusicPopup(rootNode: AccessibilityNodeInfo): Boolean {
         try {
+            if (dismissSystemAnrDialogIfPresent(rootNode)) return true
+
+            // First-launch sign-in screen (id/sign_in_title "Over 100 million songs and counting").
+            // Tap "Sign in" to auto-complete via system Google account; "Device files only" would put
+            // the app in offline-only mode where streaming search can't find anything.
+            val signInButtons = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/sign_in_button"
+            )
+            if (signInButtons != null && signInButtons.isNotEmpty()) {
+                for (button in signInButtons) {
+                    if (button.isClickable && button.isEnabled) {
+                        Log.d(TAG, "Found YouTube Music sign-in screen, tapping 'Sign in'")
+                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        signInButtons.forEach { it.recycle() }
+                        if (clicked) {
+                            Log.d(TAG, "Successfully tapped Sign in on YouTube Music sign-in screen")
+                            return true
+                        }
+                    }
+                }
+                signInButtons.forEach { it.recycle() }
+            }
+
             // Look for dismiss buttons by text or content-description (case-insensitive)
             val dismissLabels = listOf("Close", "No thanks")
             val allNodes = mutableListOf<AccessibilityNodeInfo>()
@@ -7355,6 +7413,14 @@ class ScreenAgentTools @Inject constructor(
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
+                // ANR overlay steals focus mid-search; tap Wait and re-poll so the next
+                // iteration sees YT Music's real window rather than the system dialog.
+                if (dismissSystemAnrDialogIfPresent(rootNode)) {
+                    rootNode.recycle()
+                    delay(pollIntervalMs)
+                    continue
+                }
+
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, contentType)
                 rootNode.recycle()
 
@@ -7562,6 +7628,21 @@ class ScreenAgentTools @Inject constructor(
                     return ClickResultInfo(clicked, title)
                 }
                 Log.w(TAG, "Failed to click top result Play button, falling back to row click")
+            }
+
+            // If the top result is an artist card (Shuffle/Mix instead of "Play X"),
+            // tap Shuffle play — that's the right action for an artist query.
+            val artistShuffle = findArtistShufflePlayButton(rootNode)
+            if (artistShuffle != null) {
+                val (shuffleButton, artistName) = artistShuffle
+                Log.d(TAG, "Found artist top result; clicking Shuffle play for '$artistName'")
+                val clicked = accessibilityService.clickNode(shuffleButton)
+                shuffleButton.recycle()
+                if (clicked) {
+                    Log.d(TAG, "Successfully clicked Shuffle play on artist top result")
+                    return ClickResultInfo(true, artistName)
+                }
+                Log.w(TAG, "Failed to click Shuffle play, falling back to row click")
             }
 
             // Fall back to clicking a result row that matches the content type
@@ -7992,6 +8073,54 @@ class ScreenAgentTools @Inject constructor(
 
         allNodes.forEach { it.recycle() }
         return null
+    }
+
+    /**
+     * Find the "Shuffle play" button on an artist top-result card. For queries like
+     * "play Clean Bandit" the user named an artist, not a song, so YT Music shows the
+     * artist page with Shuffle/Mix instead of a "Play" button — and the regular row
+     * matcher then fails to find a "Song •" row that matches the query. The artist
+     * card is identified by a "monthly audience" descendant somewhere on screen,
+     * which distinguishes it from Shuffle buttons in album/playlist contexts.
+     */
+    private fun findArtistShufflePlayButton(rootNode: AccessibilityNodeInfo): Pair<AccessibilityNodeInfo, String>? {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+
+        var shuffleButton: AccessibilityNodeInfo? = null
+        var hasArtistSignature = false
+        for (node in allNodes) {
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            if (shuffleButton == null && node.isClickable && desc == "Shuffle play") {
+                shuffleButton = node
+            }
+            if (text.contains("monthly audience", ignoreCase = true) ||
+                desc.contains("monthly audience", ignoreCase = true)) {
+                hasArtistSignature = true
+            }
+        }
+
+        if (shuffleButton == null || !hasArtistSignature) {
+            allNodes.forEach { it.recycle() }
+            return null
+        }
+
+        val skipLabels = setOf(
+            "Shuffle", "Mix", "Shuffle play", "Start mix",
+            "Songs", "Albums", "Artists", "Videos", "Episodes", "Featured playlists",
+            "YT Music", "Library", "Downloads", "Home", "Samples", "Explore"
+        )
+        val artistName = allNodes
+            .mapNotNull { it.text?.toString() }
+            .firstOrNull {
+                it.isNotBlank() &&
+                !it.contains("monthly audience", ignoreCase = true) &&
+                it !in skipLabels
+            } ?: "artist"
+
+        allNodes.filter { it !== shuffleButton }.forEach { it.recycle() }
+        return Pair(shuffleButton, artistName)
     }
 
     private fun hasSongTypeIndicator(node: AccessibilityNodeInfo, acceptableTypes: List<String>): Boolean {
