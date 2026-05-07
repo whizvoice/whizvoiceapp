@@ -242,6 +242,21 @@ class VoiceManager @Inject constructor(
         // Set up audio focus callbacks
         setupAudioFocusCallbacks()
 
+        // Ducking is held for the entire continuous-listening session (matches the comment at the
+        // updateContinuousListeningEnabled call site). Event-driven requestDuckingFocus() calls
+        // elsewhere in this class miss the cold-start / wake-word / restart-after-error paths, so
+        // observe the actual recognizer state and request ducking whenever the mic is on in
+        // continuous mode. Skip if already holding so we don't flap on transient listen restarts.
+        coroutineScope.launch {
+            speechRecognitionService.isListening.collect { listening ->
+                if (listening && continuousListeningEnabled
+                    && !audioFocusManager.isHoldingDuckingFocus()) {
+                    Log.d(TAG, "Listening started in continuous mode — requesting ducking via state observer")
+                    audioFocusManager.requestDuckingFocus()
+                }
+            }
+        }
+
         // Start desync detection to heal listening state mismatches
         startDesyncHealing()
     }
