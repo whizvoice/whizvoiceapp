@@ -131,10 +131,7 @@ fun EmptyChatPlaceholder() {
 fun TypingIndicator() {
     // State for animation
     var isAnimating by remember { mutableStateOf(true) }
-    
-    // 🔧 DEBUG: Track animation timing for test vs production comparison
-    val animationStartTime = remember { System.currentTimeMillis() }
-    
+
     // Using Card for consistency
     Card(
         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), // Match assistant bubble
@@ -175,30 +172,23 @@ fun TypingIndicator() {
                     LaunchedEffect(isAnimating) {
                         delay(delay.toLong()) // Initial stagger delay (0ms, 200ms, 400ms)
                         while (isAnimating) {
-                            val cycleStart = System.currentTimeMillis()
                             dotVisible = true
-                            
+
                             // 🔧 NON-BLOCKING WAIT: Use system time + yielding (immune to test framework acceleration)
                             val visibleStart = System.currentTimeMillis()
                             while (System.currentTimeMillis() - visibleStart < 600L && isAnimating) {
                                 delay(16L) // Yield every frame (~60fps) - allows other coroutines to run
                             }
-                            
+
                             // Early exit if animation stopped during visible phase
                             if (!isAnimating) break
-                            
+
                             dotVisible = false
                             val dimStart = System.currentTimeMillis()
                             while (System.currentTimeMillis() - dimStart < 600L && isAnimating) {
                                 delay(16L) // Yield every frame
                             }
-                            
-                            val cycleEnd = System.currentTimeMillis()
-                            val actualCycleDuration = cycleEnd - cycleStart
-                            val expectedDuration = 1200L // 600ms visible + 600ms dim
-                            
-                            Log.d("TypingIndicator", "🎬 Dot $i animation cycle: ${actualCycleDuration}ms (expected: ${expectedDuration}ms)")
-                            
+
                             // Early exit if animation stopped during dim phase
                             if (!isAnimating) break
                         }
@@ -217,13 +207,6 @@ fun TypingIndicator() {
         }
     }
     
-    // 🔧 DEBUG: Log total animation duration when component is disposed
-    DisposableEffect(Unit) {
-        onDispose {
-            val totalDuration = System.currentTimeMillis() - animationStartTime
-            Log.d("TypingIndicator", "🎬 TypingIndicator total duration: ${totalDuration}ms")
-        }
-    }
 }
 
 @Composable
@@ -399,13 +382,6 @@ fun ChatInputBar(
                         }
                     }
                     
-                    // Debug logging for button decision
-                    val buttonInstanceId = "BTN_${System.currentTimeMillis()}_${hashCode()}"
-                    Log.d("ChatInputBar", "🎯 Button decision: description='$description', icon=${icon.name}")
-                    Log.d("ChatInputBar", "🔍 BUTTON INSTANCE: Creating button ID='$buttonInstanceId' with description='$description'")
-                    Log.d("ChatInputBar", "🔍 BUTTON CONTEXT: hasTypedText=$hasTypedText, hasVoiceText=$hasVoiceText, isResponding=$isResponding")
-                    Log.d("ChatInputBar", "🎤 VOICE_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton")
-
                     val isButtonEnabled = when {
                         hasTypedText -> true  // Send button for typed text is ALWAYS enabled
                         hasVoiceText -> true  // Send button for voice text is ALWAYS enabled
@@ -521,7 +497,6 @@ fun ChatScreen(
 
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
-    android.util.Log.d("ChatScreen", "Composed with isAuthenticated=$isAuthenticated")
 
     // Navigate to login immediately if not authenticated
     LaunchedEffect(isAuthenticated) {
@@ -537,7 +512,6 @@ fun ChatScreen(
     // Check for TTS mode flag (full voice experience: speech recognition + TTS responses)
     val enableTTSMode = navController.currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") ?: false
     val initialTranscription = navController.currentBackStackEntry?.savedStateHandle?.get<String>("INITIAL_TRANSCRIPTION")
-    Log.d("ChatScreen", "Composed with enableTTSMode=$enableTTSMode, initialTranscription=$initialTranscription, hasPermission=$hasPermission")
 
     // Observe FORCE_NEW_CHAT signal from power button long-press
     // Using getStateFlow to reactively observe savedStateHandle changes
@@ -549,19 +523,7 @@ fun ChatScreen(
     // ViewModel state collections
     val viewModelChatId by viewModel.chatId.collectAsState()
 
-    LaunchedEffect(viewModelChatId) {
-        Log.d("ChatScreen", "🔥 UI_DEBUG: ViewModel chat ID changed to $viewModelChatId (provided chatId=$chatId)")
-    }
-    
     val messages by viewModel.messages.collectAsState(initial = emptyList())
-    
-    LaunchedEffect(messages) {
-        Log.d("ChatScreen", "🔥 UI_DEBUG: Messages collection changed! Now have ${messages.size} messages for chatId=$chatId (vm chatId=$viewModelChatId)")
-        messages.forEachIndexed { index, msg ->
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Message[$index]: ${msg.type} - ${msg.content.take(50)}...")
-        }
-    }
-    Log.d("ChatScreen", "🔥 UI_DEBUG: ChatScreen recomposed with ${messages.size} messages, chatId=$chatId, viewModelChatId=$viewModelChatId, viewModel=${viewModel.hashCode()}")
     val inputText by viewModel.inputText.collectAsState()
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
@@ -618,12 +580,7 @@ fun ChatScreen(
                     val totalItems = layoutInfo.totalItemsCount
                     if (lastVisibleItem != null && totalItems > 0) {
                         // At bottom = the very last item in the list is visible on screen
-                        val atBottom = lastVisibleItem.index >= totalItems - 1
-                        val prev = stickToBottom
-                        stickToBottom = atBottom
-                        if (prev != atBottom) {
-                            android.util.Log.d("ChatScreen", "📜 STICK-TO-BOTTOM changed: $prev -> $atBottom (lastVisible=${lastVisibleItem.index}, totalItems=$totalItems)")
-                        }
+                        stickToBottom = lastVisibleItem.index >= totalItems - 1
                     }
                 }
                 wasScrolling = scrolling
@@ -643,7 +600,6 @@ fun ChatScreen(
                 isProgrammaticScroll = true
                 listState.animateScrollToItem(lastIndex)
                 isProgrammaticScroll = false
-                android.util.Log.d("ChatScreen", "📜 AUTO-SCROLL: Scrolled to index $lastIndex (trigger=$scrollTrigger, stickToBottom=$stickToBottom)")
             }
         }
     }
@@ -659,10 +615,7 @@ fun ChatScreen(
     
     // Compute TTS state - should be enabled for voice launches
     val shouldEnableTTS = enableTTSMode && effectiveHasPermission
-    
-    // Debug log UI state changes
-    Log.d("ChatScreen", "🎤 UI_STATE_DEBUG: isListening=$isListening, isContinuousListeningEnabled=$isContinuousListeningEnabled, isSpeaking=$isSpeaking, shouldShowMuteButton=$shouldShowMuteButton, shouldEnableTTS=$shouldEnableTTS")
-    
+
     // Enable TTS immediately for voice launches (without delay that can be interrupted)
     LaunchedEffect(shouldEnableTTS) {
         if (shouldEnableTTS && !isVoiceResponseEnabled) {
@@ -937,7 +890,6 @@ fun ChatScreen(
                 when {
                     // Show error state if there's a chat load error
                     chatLoadError != null -> {
-                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing ChatLoadErrorView - error: $chatLoadError")
                         ChatLoadErrorView(
                             onRetry = {
                                 viewModel.retryChatLoad()
@@ -949,13 +901,10 @@ fun ChatScreen(
                     }
                     // Show empty placeholder when no messages
                     messages.isEmpty() && !isResponding && !isSpeaking -> {
-                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing EmptyChatPlaceholder - messages.isEmpty()=${messages.isEmpty()}, isResponding=$isResponding, isSpeaking=$isSpeaking, chatId=$chatId")
                         EmptyChatPlaceholder()
                     }
                     // Show messages list normally
                     else -> {
-                        Log.d("ChatScreen", "🔥 UI_DEBUG: Showing MessagesList with ${messages.size} messages for chatId=$chatId")
-                        
                         // Wrap MessagesList with SwipeRefresh
                         val swipeRefreshState = rememberSwipeRefreshState(isRefreshing = isRefreshing)
                         SwipeRefresh(
@@ -1111,8 +1060,6 @@ fun MessagesList(
     showTypingIndicator: Boolean = false,
     onLongPressMessage: ((MessageEntity) -> Unit)? = null
 ) {
-    android.util.Log.d("MessagesList", "🔥 MESSAGES_LIST_RECOMPOSE: Received ${messages.size} messages, listState.firstVisibleItemIndex=${listState.firstVisibleItemIndex}")
-
     // NOTE: Deduplication is handled by ChatViewModel - no UI-level deduplication needed
     // NOTE: Auto-scroll is now handled in ChatScreen via viewModel.scrollTrigger
 
