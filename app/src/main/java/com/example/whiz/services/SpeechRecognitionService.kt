@@ -664,10 +664,24 @@ class SpeechRecognitionService @Inject constructor(
                     // 🔧 BUG FIX (B4): For terminal errors (NETWORK, SERVER, AUDIO, RECOGNIZER_BUSY, etc.)
                     // that end listening without a restart, the in-flight partial would otherwise be
                     // silently lost. Deliver it via the callback before bailing.
+                    // Default to the latest partial (_transcriptionState.value) — it's the recognizer's
+                    // most-processed hypothesis and is usually more accurate than earlier partials.
+                    // Only prefer peakPartialText when it's *significantly* longer (>= 1.5x), which
+                    // signals a likely partial-buffer reset rather than a minor self-correction. The
+                    // existing buffer-reset flag at lines 505/611 uses a stricter 2x threshold for a
+                    // different downstream use (merge-vs-pick-longer in onResults); here we're just
+                    // picking which partial to deliver, so a moderate reset is worth catching too.
                     val currentPartial = _transcriptionState.value
-                    if (currentPartial.isNotBlank() && !manualStopInProgress) {
+                    val partialToDeliver = when {
+                        currentPartial.isBlank() -> peakPartialText.trim()
+                        // peakPartialText.length >= 1.5 * currentPartial.length, in integer arithmetic
+                        peakPartialText.length * 2 >= currentPartial.length * 3 -> peakPartialText.trim()
+                        else -> currentPartial
+                    }
+                    if (partialToDeliver.isNotBlank() && !manualStopInProgress) {
+                        Log.d(TAG, "[VOICE_TRACE] onError DELIVER_PARTIAL_ON_TERMINAL_ERROR text='$partialToDeliver' (current='$currentPartial', peak='$peakPartialText') error=$error")
                         try {
-                            recognitionCallback?.invoke(currentPartial)
+                            recognitionCallback?.invoke(partialToDeliver)
                         } catch (e: Exception) {
                             Log.e(TAG, "Error invoking recognition callback from onError terminal path", e)
                         }
