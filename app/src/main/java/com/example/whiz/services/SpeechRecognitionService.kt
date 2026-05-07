@@ -92,26 +92,13 @@ class SpeechRecognitionService @Inject constructor(
         get() = _isInitialized
 
     /**
-     * Returns true when AEC (Acoustic Echo Cancellation) is active.
-     * This is the case on API 33+ with continuous listening using AudioPipeRecorder,
-     * which auto-enables AcousticEchoCanceler.
+     * Returns true when AEC is active on the recognition audio path.
+     * AEC comes from the HAL chain attached to MediaRecorder.AudioSource.VOICE_COMMUNICATION
+     * inside AudioPipeRecorder; we no longer attach a software AcousticEchoCanceler on top.
+     * Used by VoiceManager.isFullDuplexAvailable to decide if simultaneous TTS + listening is OK.
      */
     fun isAECActive(): Boolean {
-        val legacy = audioPipeRecorder != null && useSegmentedSession
-        // Diagnostic only: surface cases where the legacy answer (which gates
-        // VoiceManager.isFullDuplexAvailable) disagrees with the actual AEC effect state.
-        // Do not change return value yet — see AEC investigation plan.
-        val realEnabled = audioPipeRecorder?.isAECEnabled == true
-        if (legacy != realEnabled) {
-            Log.w(
-                TAG,
-                "AEC_STATE: isAECActive disagreement — returning $legacy" +
-                        " (audioPipeRecorder=${audioPipeRecorder != null}," +
-                        " useSegmentedSession=$useSegmentedSession," +
-                        " isAECEnabled=$realEnabled)"
-            )
-        }
-        return legacy
+        return audioPipeRecorder != null && useSegmentedSession
     }
 
     // --- Continuous Listening State ---
