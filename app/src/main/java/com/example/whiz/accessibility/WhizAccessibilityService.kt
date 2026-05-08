@@ -342,6 +342,29 @@ class WhizAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Gets the root node for a specific package by searching all windows.
+     * Falls back to rootInActiveWindow if no window for the package is found.
+     * This handles the case where Maps is behind the Whiz app or IME.
+     */
+    fun getRootNodeForPackage(packageName: String): AccessibilityNodeInfo? {
+        return try {
+            val allWindows = windows
+            for (window in allWindows) {
+                val root = window.root ?: continue
+                if (root.packageName?.toString() == packageName) {
+                    return root
+                }
+                root.recycle()
+            }
+            // Fall back to rootInActiveWindow
+            rootInActiveWindow
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting root node for package $packageName", e)
+            null
+        }
+    }
+
+    /**
      * Finds nodes by text in the current window
      */
     fun findNodesByText(text: String): List<AccessibilityNodeInfo> {
