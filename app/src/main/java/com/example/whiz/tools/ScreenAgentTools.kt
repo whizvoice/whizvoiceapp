@@ -1592,7 +1592,7 @@ class ScreenAgentTools @Inject constructor(
                             if (success) {
                                 // Wait to verify we're in the chat
                                 val inChat = waitForCondition(maxWaitMs = 5000) {
-                                    val rootNode = accessibilityService.getCurrentRootNode()
+                                    val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
                                         val isInChat = screen == WhatsAppScreen.INSIDE_CHAT
@@ -1642,7 +1642,7 @@ class ScreenAgentTools @Inject constructor(
                                             if (msgClicked) {
                                                 delay(1000)
                                                 val msgInChat = waitForCondition(maxWaitMs = 5000) {
-                                                    val r = accessibilityService.getCurrentRootNode()
+                                                    val r = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                                     if (r != null) {
                                                         val ic = detectWhatsAppScreen(r) == WhatsAppScreen.INSIDE_CHAT
                                                         r.recycle()
@@ -1687,7 +1687,7 @@ class ScreenAgentTools @Inject constructor(
                         if (clicked) {
                             // Wait to verify we entered a chat
                             val inChat = waitForCondition(maxWaitMs = 2000) {
-                                val checkRoot = accessibilityService.getCurrentRootNode()
+                                val checkRoot = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                 if (checkRoot != null) {
                                     val screen = detectWhatsAppScreen(checkRoot)
                                     val isInChat = screen == WhatsAppScreen.INSIDE_CHAT
@@ -1902,7 +1902,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Wait to ensure we're in a chat
             waitForCondition(maxWaitMs = 1000) {
-                val rootNode = accessibilityService.getCurrentRootNode()
+                val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
                 if (rootNode != null) {
                     val isInChat = detectWhatsAppScreen(rootNode) == WhatsAppScreen.INSIDE_CHAT
                     rootNode.recycle()
@@ -2034,7 +2034,7 @@ class ScreenAgentTools @Inject constructor(
                     // Wait for the keyboard to open and input field to move up
                     // The input field should move significantly upward when keyboard opens
                     val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
-                        val currentRootNode = accessibilityService.getCurrentRootNode()
+                        val currentRootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
                         if (currentRootNode != null) {
                             val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
                             findWhatsAppMessageInput(currentRootNode, currentInputNodes, 0)
@@ -2280,7 +2280,7 @@ class ScreenAgentTools @Inject constructor(
                     
                     // Wait for text to be set and then find send button
                     val sendButtonFound = waitForCondition(maxWaitMs = 1000) {
-                        val currentRoot = accessibilityService.getCurrentRootNode()
+                        val currentRoot = accessibilityService.getRootNodeForPackage("com.whatsapp")
                         if (currentRoot != null) {
                             // Check if send button is now enabled/visible
                             val sendButton = currentRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
@@ -3045,7 +3045,7 @@ class ScreenAgentTools @Inject constructor(
                     // Wait for the keyboard to open and input field to move up
                     // The input field should move significantly upward when keyboard opens
                     val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
-                        val currentRootNode = accessibilityService.getCurrentRootNode()
+                        val currentRootNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                         if (currentRootNode != null) {
                             // Try to find EditText nodes first (traditional UI)
                             val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
@@ -3664,7 +3664,7 @@ class ScreenAgentTools @Inject constructor(
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
                         val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getCurrentRootNode()
+                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                             if (currentRoot != null) {
                                 val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
                                     "com.google.android.apps.messaging:id/zero_state_search_chat_results"
@@ -3692,7 +3692,7 @@ class ScreenAgentTools @Inject constructor(
 
                                 // Wait for results again
                                 val resultsAppearedAfterKeycode = waitForCondition(maxWaitMs = 3000) {
-                                    val currentRoot = accessibilityService.getCurrentRootNode()
+                                    val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                                     if (currentRoot != null) {
                                         val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
                                             "com.google.android.apps.messaging:id/zero_state_search_chat_results"
@@ -3763,7 +3763,7 @@ class ScreenAgentTools @Inject constructor(
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
                         val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getCurrentRootNode()
+                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                             if (currentRoot != null) {
                                 val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
                                     "com.google.android.apps.messaging:id/zero_state_search_chat_results"
@@ -4292,7 +4292,7 @@ class ScreenAgentTools @Inject constructor(
 
                 // Wait for screen to change from SEARCH_RESULTS_LIST
                 waitForCondition(maxWaitMs = 2000) {
-                    val node = accessibilityService.getCurrentRootNode()
+                    val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (node != null) {
                         val state = detectGoogleMapsScreenState(node)
                         node.recycle()
@@ -4318,7 +4318,7 @@ class ScreenAgentTools @Inject constructor(
                             Log.w(TAG, "Accidentally opened Filters screen - pressing Back to close")
                             accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                             waitForCondition(maxWaitMs = 1500) {
-                                val node = accessibilityService.getCurrentRootNode()
+                                val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                                 if (node != null) {
                                     val state = detectGoogleMapsScreenState(node)
                                     node.recycle()
@@ -4360,7 +4360,7 @@ class ScreenAgentTools @Inject constructor(
                         Log.w(TAG, "Still on Filters screen after retries - pressing Back")
                         accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                         waitForCondition(maxWaitMs = 1500) {
-                            val node = accessibilityService.getCurrentRootNode()
+                            val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                             if (node != null) {
                                 val state = detectGoogleMapsScreenState(node)
                                 node.recycle()
@@ -4604,7 +4604,7 @@ class ScreenAgentTools @Inject constructor(
 
                         // Wait for screen state to change from ACTIVE_NAVIGATION
                         exitedNavigation = waitForCondition(maxWaitMs = 2000) {
-                            val checkNode = accessibilityService.getCurrentRootNode()
+                            val checkNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                             if (checkNode != null) {
                                 val newState = detectGoogleMapsScreenState(checkNode)
                                 checkNode.recycle()
@@ -4651,7 +4651,7 @@ class ScreenAgentTools @Inject constructor(
                     rootNode.recycle()
                     accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     val reachedDirections = waitForCondition(maxWaitMs = 3000) {
-                        val checkNode = accessibilityService.getCurrentRootNode()
+                        val checkNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                         if (checkNode != null) {
                             val state = detectGoogleMapsScreenState(checkNode)
                             checkNode.recycle()
@@ -4714,7 +4714,7 @@ class ScreenAgentTools @Inject constructor(
                     rootNode.recycle()
                     accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     waitForCondition(maxWaitMs = 1500) {
-                        val node = accessibilityService.getCurrentRootNode()
+                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                         if (node != null) {
                             val state = detectGoogleMapsScreenState(node)
                             node.recycle()
@@ -4727,7 +4727,7 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Maps is loading, waiting for LOCATION_DETAILS or SEARCH_RESULTS_LIST")
                     rootNode.recycle()
                     val loaded = waitForCondition(maxWaitMs = 8000) {
-                        val node = accessibilityService.getCurrentRootNode()
+                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                         if (node != null) {
                             val state = detectGoogleMapsScreenState(node)
                             node.recycle()
@@ -4820,7 +4820,7 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode?.recycle()
                 accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 waitForCondition(maxWaitMs = 1500) {
-                    val node = accessibilityService.getCurrentRootNode()
+                    val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (node != null) {
                         val state = detectGoogleMapsScreenState(node)
                         node.recycle()
@@ -4837,7 +4837,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Maps still loading after handling - waiting for result")
                 currentRootNode?.recycle()
                 waitForCondition(maxWaitMs = 8000) {
-                    val node = accessibilityService.getCurrentRootNode()
+                    val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (node != null) {
                         val state = detectGoogleMapsScreenState(node)
                         node.recycle()
@@ -5043,7 +5043,7 @@ class ScreenAgentTools @Inject constructor(
                                     modeRootNode.recycle()
                                     modeRootNode = null
                                     waitForCondition(maxWaitMs = 5000) {
-                                        val node = accessibilityService.getCurrentRootNode()
+                                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                                         if (node != null) {
                                             val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
                                                 val match = n.isClickable && n.className == "android.widget.Button"
@@ -8485,45 +8485,16 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         Log.d(TAG, "Waiting for app $packageName to be ready...")
         return waitForCondition(maxWaitMs = maxWaitMs) {
-            // Primary check: existing rootInActiveWindow path (preserved for backwards compatibility)
-            val rootNode = accessibilityService.getCurrentRootNode()
+            val rootNode = accessibilityService.getRootNodeForPackage(packageName)
             if (rootNode != null) {
                 val isReady = rootNode.packageName?.toString() == packageName
                 rootNode.recycle()
                 if (isReady) {
-                    Log.d(TAG, "App $packageName is now in foreground")
+                    Log.d(TAG, "App $packageName is now ready")
                     return@waitForCondition true
                 }
             }
-            // Fallback: search all accessibility windows. The target app may have
-            // launched but Whiz's bubble overlay / IME / lingering Whiz MainActivity
-            // window can keep rootInActiveWindow pointing elsewhere even though the
-            // target app is visible and ready to receive UI interactions.
-            val targetWindowRoot = try {
-                val allWindows = accessibilityService.windows
-                if (allWindows != null) {
-                    var match: AccessibilityNodeInfo? = null
-                    for (window in allWindows) {
-                        val root = window.root ?: continue
-                        if (root.packageName?.toString() == packageName) {
-                            match = root
-                            break
-                        }
-                        root.recycle()
-                    }
-                    match
-                } else null
-            } catch (e: Exception) {
-                Log.w(TAG, "Error searching windows for $packageName: ${e.message}")
-                null
-            }
-            if (targetWindowRoot != null) {
-                targetWindowRoot.recycle()
-                Log.d(TAG, "App $packageName found in window list (not active window)")
-                true
-            } else {
-                false
-            }
+            false
         }
     }
     
@@ -8536,7 +8507,7 @@ class ScreenAgentTools @Inject constructor(
         maxWaitMs: Long = 2000
     ): Boolean {
         return waitForCondition(maxWaitMs = maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
+            val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
             if (rootNode != null) {
                 val currentScreen = detectWhatsAppScreen(rootNode)
                 rootNode.recycle()
@@ -8563,7 +8534,7 @@ class ScreenAgentTools @Inject constructor(
         maxWaitMs: Long = 2000
     ): Boolean {
         return waitForCondition(maxWaitMs = maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
+            val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
             if (rootNode != null) {
                 // Try text matching first
                 val chatNodes = findChatNodes(rootNode, searchQuery)
@@ -10107,7 +10078,7 @@ class ScreenAgentTools @Inject constructor(
             // Wait for a recognizable Fitbit screen to appear (handles loading/splash)
             var currentScreen = FitbitScreen.UNKNOWN
             val initialDetected = waitForCondition(maxWaitMs = 5000) {
-                val rootNode = accessibilityService.getCurrentRootNode()
+                val rootNode = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                 if (rootNode != null) {
                     currentScreen = detectFitbitScreen(rootNode)
                     rootNode.recycle()
@@ -10121,7 +10092,7 @@ class ScreenAgentTools @Inject constructor(
                     accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
 
                     val found = waitForCondition(maxWaitMs = 2000) {
-                        val rootNode = accessibilityService.getCurrentRootNode()
+                        val rootNode = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                         if (rootNode != null) {
                             currentScreen = detectFitbitScreen(rootNode)
                             rootNode.recycle()
@@ -10300,7 +10271,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Wait for Food detail page to load
         val foodPageReady = waitForCondition(maxWaitMs = 5000) {
-            val node = accessibilityService.getCurrentRootNode()
+            val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
                 node.recycle()
@@ -10382,7 +10353,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Wait for dropdown to appear (look for "Add Quick Calories" text)
         val dropdownReady = waitForCondition(maxWaitMs = 3000) {
-            val node = accessibilityService.getCurrentRootNode()
+            val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val addQuickCalNodes = node.findAccessibilityNodeInfosByText("Add Quick Calories")
                 val found = addQuickCalNodes != null && addQuickCalNodes.isNotEmpty()
@@ -10455,7 +10426,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Wait for Add Quick Calories screen
         val screenReady = waitForCondition(maxWaitMs = 5000) {
-            val node = accessibilityService.getCurrentRootNode()
+            val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
                 node.recycle()
@@ -10580,7 +10551,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Wait for the Add Quick Calories screen to go away (log saved)
         waitForCondition(maxWaitMs = 5000) {
-            val node = accessibilityService.getCurrentRootNode()
+            val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
                 node.recycle()
@@ -10592,7 +10563,7 @@ class ScreenAgentTools @Inject constructor(
         for (i in 0 until 2) {
             accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             waitForCondition(maxWaitMs = 2000) {
-                val node = accessibilityService.getCurrentRootNode()
+                val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                 if (node != null) {
                     val screen = detectFitbitScreen(node)
                     node.recycle()
