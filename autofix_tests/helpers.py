@@ -361,8 +361,10 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     for attempt in range(max_attempts):
         if check_screen_shows(
             tester,
-            "The WhizVoice app 'My Chats' page showing a list of chats "
-            "with a 'New Chat' button visible"
+            "The WhizVoice app 'My Chats' page with a 'New Chat' button "
+            "(a '+' icon at the bottom-right) visible. The page may show "
+            "either a list of chats OR a 'Loading chats...' indicator — "
+            "both are valid My Chats states."
         ):
             print("Successfully navigated to My Chats page")
             return True, ""
