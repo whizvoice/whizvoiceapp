@@ -193,6 +193,11 @@ class SpeechRecognitionService @Inject constructor(
                         RecognizerIntent.EXTRA_AUDIO_SOURCE
                     )
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    // Match the silence thresholds used by the fallback/standard branches so the
+                    // segmented endpointer waits for real pauses, not Google's shorter defaults.
+                    // May be ignored in segmented mode depending on device, but harmless if so.
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
                     useSegmentedSession = true
                     Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
                 } catch (e: Exception) {
