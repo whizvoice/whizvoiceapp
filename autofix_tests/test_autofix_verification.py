@@ -8,44 +8,49 @@ from helpers import (
 )
 
 
-def test_autofix_gmaps_search_results_timeout(tester):
-    """Verify fix for gmaps_search_results_timeout.
+def test_autofix_ytmusic_play_deeplink_no_result(tester):
+    """Verify fix for ytmusic_play_deeplink_no_result.
 
-    Tests that the screen agent correctly detects Google Maps search results
-    even when the Whiz app or IME becomes the active window during polling
-    (getRootNodeForPackage searches all windows, not just rootInActiveWindow).
+    YouTube Music's first-launch sign-in/onboarding screen swallows the deep
+    link search query, so the search results never load and the screen agent
+    times out. The fix detects the sign-in screen on the deep-link path,
+    dismisses it, and re-fires the deep link so the search runs.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_gmaps_search_results_timeout")
+    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_play_deeplink_no_result")
     assert success, f"Could not reach My Chats: {error}"
 
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # This query triggers searchGoogleMapsLocation which was failing with timeout
-    send_voice_command("find coffee shops near me")
+    send_voice_command("play Clean Bandit on YouTube Music")
     time.sleep(40)
 
-    tester.screenshot("/tmp/whiz_gmaps_search_results.png")
+    tester.screenshot("/tmp/whiz_ytmusic_deeplink_result.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_gmaps_search_results.png",
-        "Google Maps is open and showing either a list of search results for "
-        "coffee shops, or a location details page for a coffee shop"
+        "/tmp/whiz_ytmusic_deeplink_result.png",
+        "YouTube Music is open and showing either search results for "
+        "'Clean Bandit' (a list of songs/artists/albums), an artist page for "
+        "Clean Bandit, or a now-playing screen with a Clean Bandit track. "
+        "It should NOT be showing the YouTube Music sign-in/onboarding "
+        "screen with 'Over 100 million songs and counting' text and a "
+        "'Sign in' button."
     )
     if not result:
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_gmaps_search_chat_result.png")
+        tester.screenshot("/tmp/whiz_ytmusic_deeplink_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_gmaps_search_chat_result.png",
-            "The Whiz chat shows a message from the assistant about coffee shops "
-            "or a location found in Google Maps. It should NOT show an error about "
-            "search results not loading or timing out."
+            "/tmp/whiz_ytmusic_deeplink_chat_result.png",
+            "The Whiz chat shows a successful response from the assistant "
+            "about playing Clean Bandit on YouTube Music. It should NOT "
+            "show an error about being unable to find a search result or "
+            "YouTube Music not being ready."
         )
         if not result:
             save_failed_screenshot(
-                tester, "autofix_gmaps_search_results_timeout", "validation_failed"
+                tester, "autofix_ytmusic_play_deeplink_no_result", "validation_failed"
             )
     assert result, (
-        "Google Maps did not show search results — getRootNodeForPackage fix may "
-        "not be working correctly when Whiz/IME is the active window"
+        "YouTube Music deep-link search did not produce a result — the "
+        "sign-in screen dismissal fix may not be working correctly"
     )

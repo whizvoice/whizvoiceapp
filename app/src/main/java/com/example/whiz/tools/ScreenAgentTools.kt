@@ -3873,6 +3873,19 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // 3b. The first-launch sign-in/onboarding screen (sign_in_title "Over 100 million
+            //     songs and counting") swallows the deep link query, so the search never runs.
+            //     Detect it, dismiss it, and re-fire the deep link so the search actually loads.
+            if (dismissYouTubeMusicSignInScreenIfPresent(accessibilityService)) {
+                Log.d(TAG, "Re-firing YouTube Music deep link after dismissing sign-in screen")
+                context.startActivity(intent)
+                waitForAppReady(
+                    accessibilityService = accessibilityService,
+                    packageName = ytMusicPackage,
+                    maxWaitMs = 5000
+                )
+            }
+
             // 4. Wait for search results to load and click the first result
             //    Use a longer wait since the deep link needs to load the search page
             val clickResult = waitForAndClickPlayButton(
@@ -6793,6 +6806,59 @@ class ScreenAgentTools @Inject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Error dismissing YouTube Music pop-up", e)
             return false
+        }
+    }
+
+    /**
+     * Detects the YouTube Music first-launch sign-in/onboarding screen and dismisses it.
+     * The deep-link search path is silently broken when this screen is shown because the
+     * onboarding intercepts the search query, so callers should re-fire the deep link
+     * after this returns true.
+     *
+     * Returns true if the sign-in screen was detected and a dismiss action was attempted.
+     */
+    private suspend fun dismissYouTubeMusicSignInScreenIfPresent(
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        val rootNode = accessibilityService.getCurrentRootNode() ?: return false
+        try {
+            // Detection: the onboarding screen always has sign_in_title; in newer builds,
+            // the sign_in_button + skip_button pair (com.google...:id/sign_in_button /
+            // com.google...:id/skip_button "Device files only") are also present.
+            val signInTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/sign_in_title"
+            )
+            val signInButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/sign_in_button"
+            )
+            val skipButtonNodes = rootNode.findAccessibilityNodeInfosByViewId(
+                "com.google.android.apps.youtube.music:id/skip_button"
+            )
+            val signInScreenPresent =
+                !signInTitleNodes.isNullOrEmpty() ||
+                !signInButtonNodes.isNullOrEmpty() ||
+                !skipButtonNodes.isNullOrEmpty()
+            signInTitleNodes?.forEach { it.recycle() }
+            signInButtonNodes?.forEach { it.recycle() }
+            skipButtonNodes?.forEach { it.recycle() }
+
+            if (!signInScreenPresent) {
+                return false
+            }
+
+            Log.d(TAG, "YouTube Music sign-in screen detected on deep-link path; dismissing")
+            // Reuse the existing dismissal logic which prefers tapping "Sign in" so streaming
+            // search keeps working (vs. "Device files only" which forces offline-only mode).
+            val dismissed = dismissYouTubeMusicPopup(rootNode)
+            if (dismissed) {
+                // Give the sign-in flow a moment to settle (account auto-pick, redirect to home).
+                delay(2000)
+            } else {
+                Log.w(TAG, "Sign-in screen detected but dismiss action failed")
+            }
+            return dismissed
+        } finally {
+            rootNode.recycle()
         }
     }
 
