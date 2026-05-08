@@ -325,7 +325,7 @@ class WhizRepository @Inject constructor(
         // 🔧 SIMPLIFIED: Remove flatMapLatest to allow Room's automatic updates
         // Room will automatically emit when messages are inserted/updated/deleted
         Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId")
-        return messageDao.getMessagesForChatFlow(chatId)
+        return messageDao.getMessagesForChatFlowResolvingMigration(chatId)
             .catch { e ->
                 Log.e(TAG, "Error in getMessagesForChat flow", e)
                 emit(emptyList<MessageEntity>()) // Emit empty list on error
@@ -641,10 +641,13 @@ class WhizRepository @Inject constructor(
                     Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", debugError)
                 }
 
-                // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
-                // This tells all parts of the system to use the new chat ID immediately
-                registerChatMigration(fromChatId, toChatId)
-                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
+                // Register the routing mapping in CSM up front so any new messages route to the
+                // server chat ID. The UI-visible event (_chatMigrationEvents) is emitted later,
+                // AFTER the DB UPDATE moves the message rows — emitting it now would cause the
+                // ChatViewModel collector to flip _chatId.value to the server ID while the rows
+                // are still under the old chatId, blanking the messages flow for ~500ms.
+                connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                Log.d(TAG, "migrateChatMessages: ✅ Registered CSM mapping $fromChatId → $toChatId - new messages route to new chat")
             
                 // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
                 val targetChatExists = chatDao.getChatById(toChatId) != null
@@ -654,8 +657,11 @@ class WhizRepository @Inject constructor(
                     // Get the source chat to copy its title and metadata
                     val sourceChat = chatDao.getChatById(fromChatId)
                     if (sourceChat != null) {
+                        // Set optimisticChatId so getMessagesForChatFlow can resolve the migrated
+                        // rows when something is still subscribed to the optimistic ID.
                         val targetChat = sourceChat.copy(
                             id = toChatId,
+                            optimisticChatId = fromChatId,
                             lastMessageTime = System.currentTimeMillis()
                         )
                         chatDao.insertChat(targetChat)
@@ -704,6 +710,7 @@ class WhizRepository @Inject constructor(
                     }
                 } else {
                     Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
+                    repositoryScope.launch { _chatMigrationEvents.emit(fromChatId to toChatId) }
                     return@withLock true
                 }
                 val totalMigrated = messagesToMigrate.size
@@ -748,7 +755,12 @@ class WhizRepository @Inject constructor(
                 } else if (fromChatId == -1L) {
                     Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
                 }
-                
+
+                // Emit the UI-visible migration event now that messages are at the new chatId in the DB.
+                // ChatViewModel.kt:373-389 collects this and flips _chatId.value to toChatId; doing it
+                // here (rather than alongside CSM registration above) keeps the messages flow stable.
+                repositoryScope.launch { _chatMigrationEvents.emit(fromChatId to toChatId) }
+
                 return@withLock true
             } catch (e: Exception) {
                 Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)

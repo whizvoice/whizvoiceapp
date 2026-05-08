@@ -42,6 +42,14 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChatFlow(chatId: Long): Flow<List<MessageEntity>>
 
+    // UI-facing flow that also follows the chats.optimisticChatId link so the messages
+    // stay stable across an optimistic→server chat ID migration: when querying the
+    // optimistic ID, rows that have already been moved to the server chat are still
+    // found via the subquery, avoiding a blank emission between the DB UPDATE and the
+    // _chatId switch. Internal callers should use the strict getMessagesForChatFlow.
+    @Query("SELECT * FROM messages WHERE chatId = :chatId OR chatId IN (SELECT id FROM chats WHERE optimisticChatId = :chatId) ORDER BY timestamp ASC")
+    fun getMessagesForChatFlowResolvingMigration(chatId: Long): Flow<List<MessageEntity>>
+
     @Query("SELECT * FROM messages WHERE id = :messageId")
     suspend fun getMessageById(messageId: Long): MessageEntity?
 
