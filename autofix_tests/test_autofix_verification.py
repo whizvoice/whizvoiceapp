@@ -8,44 +8,43 @@ from helpers import (
 )
 
 
-def test_autofix_gmaps_search_results_timeout(tester):
-    """Verify fix for gmaps_search_results_timeout.
+def test_autofix_ytmusic_app_not_ready(tester):
+    """Verify fix for ytmusic_app_not_ready.
 
-    Tests that the screen agent correctly detects Google Maps search results
-    even when the Whiz app or IME becomes the active window during polling
-    (getRootNodeForPackage searches all windows, not just rootInActiveWindow).
+    Tests that the screen agent can detect YouTube Music as ready even when
+    the Whiz bubble overlay or another window has the active-window slot.
+    The fix adds a windows-list fallback to waitForAppReady so the target
+    app is detected as soon as its window appears anywhere in the window list.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_gmaps_search_results_timeout")
+    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
     assert success, f"Could not reach My Chats: {error}"
 
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # This query triggers searchGoogleMapsLocation which was failing with timeout
-    send_voice_command("find coffee shops near me")
+    send_voice_command("play Clean Bandit on YouTube Music")
     time.sleep(40)
 
-    tester.screenshot("/tmp/whiz_gmaps_search_results.png")
+    tester.screenshot("/tmp/whiz_ytmusic_play.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_gmaps_search_results.png",
-        "Google Maps is open and showing either a list of search results for "
-        "coffee shops, or a location details page for a coffee shop"
+        "/tmp/whiz_ytmusic_play.png",
+        "YouTube Music is open and showing search results, an artist/song page, "
+        "a now-playing screen with playback controls, or a sign-in / onboarding "
+        "screen with options to sign in or browse device files"
     )
     if not result:
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_gmaps_search_chat_result.png")
+        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_gmaps_search_chat_result.png",
-            "The Whiz chat shows a message from the assistant about coffee shops "
-            "or a location found in Google Maps. It should NOT show an error about "
-            "search results not loading or timing out."
+            "/tmp/whiz_ytmusic_chat_result.png",
+            "The Whiz chat shows an assistant message about playing music or about "
+            "YouTube Music. It should NOT show an error about YouTube Music not "
+            "becoming ready in time."
         )
         if not result:
-            save_failed_screenshot(
-                tester, "autofix_gmaps_search_results_timeout", "validation_failed"
-            )
+            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
     assert result, (
-        "Google Maps did not show search results — getRootNodeForPackage fix may "
-        "not be working correctly when Whiz/IME is the active window"
+        "YouTube Music did not reach a ready state after deep link launch — "
+        "ytmusic_app_not_ready may still be triggering"
     )
