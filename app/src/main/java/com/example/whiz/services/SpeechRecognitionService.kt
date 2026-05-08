@@ -174,10 +174,15 @@ class SpeechRecognitionService @Inject constructor(
         audioPipeRecorder?.cleanup()
         audioPipeRecorder = null
 
+        useSegmentedSession = false
+
         recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
 
             val isContinuous = continuousListeningCallback?.invoke() ?: false
             if (isContinuous && Build.VERSION.SDK_INT >= 33) {
@@ -192,29 +197,12 @@ class SpeechRecognitionService @Inject constructor(
                         RecognizerIntent.EXTRA_SEGMENTED_SESSION,
                         RecognizerIntent.EXTRA_AUDIO_SOURCE
                     )
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                    // Match the silence thresholds used by the fallback/standard branches so the
-                    // segmented endpointer waits for real pauses, not Google's shorter defaults.
-                    // May be ignored in segmented mode depending on device, but harmless if so.
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
                     useSegmentedSession = true
                     Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
                 } catch (e: Exception) {
                     Log.w(TAG, "🔄 SEGMENTED: AudioPipeRecorder failed, falling back to standard mode", e)
                     audioPipeRecorder = null
-                    useSegmentedSession = false
-                    // Fall back to standard extras
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
                 }
-            } else {
-                // API 31-32 or non-continuous: standard approach with silence timeouts
-                useSegmentedSession = false
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
         }
     }
