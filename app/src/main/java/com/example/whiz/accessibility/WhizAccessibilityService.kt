@@ -344,13 +344,8 @@ class WhizAccessibilityService : AccessibilityService() {
     /**
      * Gets the root node for a specific package, preferring the active window
      * when it already matches. Falls back to scanning `windows` only when the
-     * active window is something else (Whiz overlay, IME, system dialog) — that
-     * way the typical case stays as cheap as `rootInActiveWindow`.
-     *
-     * On the slow path, logs the full window list under tag [BUBBLE_FOCUS_DIAG]
-     * so we can identify which window is claiming the active-accessibility-window
-     * slot during external-app orchestration. Strip these logs once the
-     * architectural fix lands.
+     * active window is something else — that way the typical case stays as
+     * cheap as `rootInActiveWindow`.
      */
     fun getRootNodeForPackage(packageName: String): AccessibilityNodeInfo? {
         return try {
@@ -358,28 +353,17 @@ class WhizAccessibilityService : AccessibilityService() {
             if (active?.packageName?.toString() == packageName) {
                 return active
             }
-            val activePkg = active?.packageName?.toString() ?: "(null)"
             active?.recycle()
 
-            val all = windows
-            if (all == null) {
-                Log.d(TAG, "[BUBBLE_FOCUS_DIAG] active=$activePkg target=$packageName windows=null")
-                return rootInActiveWindow
-            }
-            Log.d(TAG, "[BUBBLE_FOCUS_DIAG] active=$activePkg target=$packageName n_windows=${all.size}")
-
-            var match: AccessibilityNodeInfo? = null
+            val all = windows ?: return rootInActiveWindow
             for (window in all) {
-                val root = window.root
-                val rootPkg = root?.packageName?.toString() ?: "(null)"
-                Log.d(TAG, "[BUBBLE_FOCUS_DIAG]   type=${window.type} active=${window.isActive} focused=${window.isFocused} title=\"${window.title}\" pkg=$rootPkg")
-                if (root != null && rootPkg == packageName && match == null) {
-                    match = root
-                } else {
-                    root?.recycle()
+                val root = window.root ?: continue
+                if (root.packageName?.toString() == packageName) {
+                    return root
                 }
+                root.recycle()
             }
-            match ?: rootInActiveWindow
+            rootInActiveWindow
         } catch (e: Exception) {
             Log.e(TAG, "Error getting root node for package $packageName", e)
             null
