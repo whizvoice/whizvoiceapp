@@ -8080,15 +8080,18 @@ class ScreenAgentTools @Inject constructor(
      * "play Clean Bandit" the user named an artist, not a song, so YT Music shows the
      * artist page with Shuffle/Mix instead of a "Play" button — and the regular row
      * matcher then fails to find a "Song •" row that matches the query. The artist
-     * card is identified by a "monthly audience" descendant somewhere on screen,
-     * which distinguishes it from Shuffle buttons in album/playlist contexts.
+     * card is identified either by a "monthly audience" descendant or by the
+     * "Shuffle play"+"Start mix" button pair (album/playlist Shuffle buttons don't
+     * pair with a Mix button), which distinguishes it from Shuffle buttons in
+     * album/playlist contexts.
      */
     private fun findArtistShufflePlayButton(rootNode: AccessibilityNodeInfo): Pair<AccessibilityNodeInfo, String>? {
         val allNodes = mutableListOf<AccessibilityNodeInfo>()
         collectAllNodes(rootNode, allNodes)
 
         var shuffleButton: AccessibilityNodeInfo? = null
-        var hasArtistSignature = false
+        var hasMonthlyAudience = false
+        var hasStartMixButton = false
         for (node in allNodes) {
             val text = node.text?.toString() ?: ""
             val desc = node.contentDescription?.toString() ?: ""
@@ -8097,10 +8100,18 @@ class ScreenAgentTools @Inject constructor(
             }
             if (text.contains("monthly audience", ignoreCase = true) ||
                 desc.contains("monthly audience", ignoreCase = true)) {
-                hasArtistSignature = true
+                hasMonthlyAudience = true
+            }
+            // "Start mix" sits next to "Shuffle play" only on the artist top-result
+            // card (album/playlist Shuffle buttons don't pair with a Mix button).
+            // Accept it as an additional artist signature so the matcher works
+            // before the "monthly audience" subtitle finishes loading.
+            if (node.isClickable && desc == "Start mix") {
+                hasStartMixButton = true
             }
         }
 
+        val hasArtistSignature = hasMonthlyAudience || hasStartMixButton
         if (shuffleButton == null || !hasArtistSignature) {
             allNodes.forEach { it.recycle() }
             return null
