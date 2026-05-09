@@ -761,40 +761,16 @@ class ChatViewModel @Inject constructor(
                             // Don't try to re-parse the response text as JSON since it's just the response content
                             effectiveConversationId = event.conversationId
                             
-                            // 🔧 CRITICAL FIX: Immediately update conversation ID when we receive a real ID for the CURRENT chat
-                            // This ensures reconnections use the correct ID even if they happen during migration
-                            val currentChatId = _chatId.value
-                            if (effectiveConversationId != null && effectiveConversationId > 0 && currentChatId < 0) {
-                                // We have an optimistic ID for the current chat and received a real ID
-                                // Check if this message is actually for our current chat (might be a broadcast from another session)
-                                val isForCurrentChat = event.clientConversationId == currentChatId || 
-                                                       event.requestId in pendingRequests
-                                
-                                if (isForCurrentChat) {
-                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Received real conversation ID $effectiveConversationId for current optimistic chat $currentChatId")
-                                    
-                                    // Migration will be registered when migrateChatMessages is called
-                                    // No need to register here
-                                    
-                                    // Update pendingRequests to use the new chat ID
-                                    val requestsToUpdate = pendingRequests.filter { it.value == currentChatId }
-                                    requestsToUpdate.forEach { (requestId, _) ->
-                                        pendingRequests[requestId] = effectiveConversationId
-                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $currentChatId to $effectiveConversationId")
-                                    }
-                                    
-                                    // Update the chat ID immediately so reconnections use the correct ID
-                                    _chatId.value = effectiveConversationId
-                                    
-                                    // Update ConnectionStateManager with the real conversation ID
-                                    connectionStateManager.setActiveConversation(effectiveConversationId)
-                                    
-                                    Log.d(TAG, "🔄 IMMEDIATE MIGRATION: Updated chat ID from $currentChatId to $effectiveConversationId BEFORE message migration")
-                                    
-                                    // Message migration will happen later in the flow if needed
-                                }
-                            }
-                            
+                            // Note: pendingRequests, _chatId, and CSM active conversation are all
+                            // updated together AFTER migrateChatMessages completes (the "Detected chat
+                            // migration via WebSocket" block below). Updating any of them earlier — in
+                            // particular pendingRequests — leaves the responding-state check
+                            // (updateRespondingStateForCurrentChat) finding no value matching
+                            // _chatId.value, which clears the loading indicator mid-response.
+                            // CSM routing mapping is already registered by WhizServerRepository before
+                            // this event was dispatched, so new outbound messages still route correctly.
+
+
                             // Only attempt JSON parsing for error handling if the text looks like JSON
                             try {
                                 if (event.text.trimStart().startsWith("{")) {

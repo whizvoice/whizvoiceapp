@@ -113,17 +113,9 @@ fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
     )
 }
 
-// Convert API MessageResponse to local MessageEntity  
+// Convert API MessageResponse to local MessageEntity
 fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
-    // Log the raw server response for debugging
-    android.util.Log.d("DatabaseEntities", "Converting server message to entity:")
-    android.util.Log.d("DatabaseEntities", "  Server timestamp: '${this.timestamp}'")
-    android.util.Log.d("DatabaseEntities", "  Request ID: '${this.request_id}'")
-    android.util.Log.d("DatabaseEntities", "  Content preview: '${this.content.take(50)}'")
-    android.util.Log.d("DatabaseEntities", "  Message type: '${this.message_type}'")
-
     val parsedTimestamp = parseTimestampToMillis(this.timestamp)
-    android.util.Log.d("DatabaseEntities", "  Parsed timestamp: $parsedTimestamp (${java.time.Instant.ofEpochMilli(parsedTimestamp)})")
 
     return MessageEntity(
         id = 0,  // Let Room auto-generate the ID - don't use server ID!
@@ -159,9 +151,7 @@ private fun parseTimestampToMillis(timestamp: String): Long {
     // First, try to parse as epoch millis if it's a number
     if (timestamp.all { it.isDigit() }) {
         try {
-            val millis = timestamp.toLong()
-            android.util.Log.d("DatabaseEntities", "Parsed timestamp '$timestamp' as epoch millis: $millis")
-            return millis
+            return timestamp.toLong()
         } catch (e: NumberFormatException) {
             android.util.Log.e("DatabaseEntities", "Failed to parse numeric timestamp '$timestamp': ${e.message}")
         }
@@ -173,17 +163,12 @@ private fun parseTimestampToMillis(timestamp: String): Long {
         // Instant.parse handles: "2023-12-15T10:30:00Z", "2023-12-15T10:30:00.123Z"
         // For +00:00 format, we need to normalize it
         val normalizedTimestamp = if (timestamp.contains("+00:00")) {
-            android.util.Log.d("DatabaseEntities", "Normalizing timestamp with +00:00 timezone: '$timestamp' -> '${timestamp.replace("+00:00", "Z")}'")
             timestamp.replace("+00:00", "Z")
         } else {
-            android.util.Log.d("DatabaseEntities", "Timestamp already in compatible format: '$timestamp'")
             timestamp
         }
-        
-        val instant = Instant.parse(normalizedTimestamp)
-        val millis = instant.toEpochMilli()
-        android.util.Log.d("DatabaseEntities", "Successfully parsed timestamp '$timestamp' (normalized: '$normalizedTimestamp') to $millis (${Instant.ofEpochMilli(millis)})")
-        millis
+
+        Instant.parse(normalizedTimestamp).toEpochMilli()
     } catch (e: DateTimeParseException) {
         android.util.Log.e("DatabaseEntities", "Failed to parse timestamp '$timestamp' as ISO format: ${e.message}")
         

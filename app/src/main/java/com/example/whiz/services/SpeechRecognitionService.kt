@@ -92,26 +92,13 @@ class SpeechRecognitionService @Inject constructor(
         get() = _isInitialized
 
     /**
-     * Returns true when AEC (Acoustic Echo Cancellation) is active.
-     * This is the case on API 33+ with continuous listening using AudioPipeRecorder,
-     * which auto-enables AcousticEchoCanceler.
+     * Returns true when AEC is active on the recognition audio path.
+     * AEC comes from the HAL chain attached to MediaRecorder.AudioSource.VOICE_COMMUNICATION
+     * inside AudioPipeRecorder; we no longer attach a software AcousticEchoCanceler on top.
+     * Used by VoiceManager.isFullDuplexAvailable to decide if simultaneous TTS + listening is OK.
      */
     fun isAECActive(): Boolean {
-        val legacy = audioPipeRecorder != null && useSegmentedSession
-        // Diagnostic only: surface cases where the legacy answer (which gates
-        // VoiceManager.isFullDuplexAvailable) disagrees with the actual AEC effect state.
-        // Do not change return value yet — see AEC investigation plan.
-        val realEnabled = audioPipeRecorder?.isAECEnabled == true
-        if (legacy != realEnabled) {
-            Log.w(
-                TAG,
-                "AEC_STATE: isAECActive disagreement — returning $legacy" +
-                        " (audioPipeRecorder=${audioPipeRecorder != null}," +
-                        " useSegmentedSession=$useSegmentedSession," +
-                        " isAECEnabled=$realEnabled)"
-            )
-        }
-        return legacy
+        return audioPipeRecorder != null && useSegmentedSession
     }
 
     // --- Continuous Listening State ---
@@ -187,10 +174,15 @@ class SpeechRecognitionService @Inject constructor(
         audioPipeRecorder?.cleanup()
         audioPipeRecorder = null
 
+        useSegmentedSession = false
+
         recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
 
             val isContinuous = continuousListeningCallback?.invoke() ?: false
             if (isContinuous && Build.VERSION.SDK_INT >= 33) {
@@ -205,24 +197,12 @@ class SpeechRecognitionService @Inject constructor(
                         RecognizerIntent.EXTRA_SEGMENTED_SESSION,
                         RecognizerIntent.EXTRA_AUDIO_SOURCE
                     )
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     useSegmentedSession = true
                     Log.d(TAG, "🔄 SEGMENTED: Enabled EXTRA_AUDIO_SOURCE pipe mode (API ${Build.VERSION.SDK_INT})")
                 } catch (e: Exception) {
                     Log.w(TAG, "🔄 SEGMENTED: AudioPipeRecorder failed, falling back to standard mode", e)
                     audioPipeRecorder = null
-                    useSegmentedSession = false
-                    // Fall back to standard extras
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
                 }
-            } else {
-                // API 31-32 or non-continuous: standard approach with silence timeouts
-                useSegmentedSession = false
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
         }
     }
@@ -677,10 +657,24 @@ class SpeechRecognitionService @Inject constructor(
                     // 🔧 BUG FIX (B4): For terminal errors (NETWORK, SERVER, AUDIO, RECOGNIZER_BUSY, etc.)
                     // that end listening without a restart, the in-flight partial would otherwise be
                     // silently lost. Deliver it via the callback before bailing.
+                    // Default to the latest partial (_transcriptionState.value) — it's the recognizer's
+                    // most-processed hypothesis and is usually more accurate than earlier partials.
+                    // Only prefer peakPartialText when it's *significantly* longer (>= 1.5x), which
+                    // signals a likely partial-buffer reset rather than a minor self-correction. The
+                    // existing buffer-reset flag at lines 505/611 uses a stricter 2x threshold for a
+                    // different downstream use (merge-vs-pick-longer in onResults); here we're just
+                    // picking which partial to deliver, so a moderate reset is worth catching too.
                     val currentPartial = _transcriptionState.value
-                    if (currentPartial.isNotBlank() && !manualStopInProgress) {
+                    val partialToDeliver = when {
+                        currentPartial.isBlank() -> peakPartialText.trim()
+                        // peakPartialText.length >= 1.5 * currentPartial.length, in integer arithmetic
+                        peakPartialText.length * 2 >= currentPartial.length * 3 -> peakPartialText.trim()
+                        else -> currentPartial
+                    }
+                    if (partialToDeliver.isNotBlank() && !manualStopInProgress) {
+                        Log.d(TAG, "[VOICE_TRACE] onError DELIVER_PARTIAL_ON_TERMINAL_ERROR text='$partialToDeliver' (current='$currentPartial', peak='$peakPartialText') error=$error")
                         try {
-                            recognitionCallback?.invoke(currentPartial)
+                            recognitionCallback?.invoke(partialToDeliver)
                         } catch (e: Exception) {
                             Log.e(TAG, "Error invoking recognition callback from onError terminal path", e)
                         }

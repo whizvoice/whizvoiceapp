@@ -31,7 +31,6 @@ class InactivityTimer(
             delay(durationMs)
             onTimeout()
         }
-        Log.d(TAG, "reset: $durationMs ms")
     }
 
     @Synchronized
@@ -78,7 +77,6 @@ class InactivityTimer(
         job?.cancel()
         job = null
         pauseSources.clear()
-        Log.d(TAG, "cancel")
     }
 
     companion object {

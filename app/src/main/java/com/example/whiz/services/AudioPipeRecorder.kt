@@ -3,7 +3,6 @@ package com.example.whiz.services
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.IOException
@@ -34,11 +33,6 @@ class AudioPipeRecorder {
 
     private val writeParcel: ParcelFileDescriptor
     private val audioRecord: AudioRecord
-    private var echoCanceler: AcousticEchoCanceler? = null
-
-    /** True when AEC is attached and enabled on this recorder. */
-    val isAECEnabled: Boolean
-        get() = echoCanceler?.enabled == true
     private val isRecording = AtomicBoolean(false)
     private val isStopped = AtomicBoolean(false)
     private var recordingThread: Thread? = null
@@ -79,30 +73,15 @@ class AudioPipeRecorder {
             throw IllegalStateException("AudioRecord failed to initialize (state=${audioRecord.state})")
         }
 
-        // Attach Acoustic Echo Canceler if available (non-fatal if it fails)
-        try {
-            if (AcousticEchoCanceler.isAvailable()) {
-                echoCanceler = AcousticEchoCanceler.create(audioRecord.audioSessionId)?.also {
-                    it.enabled = true
-                    Log.d(TAG, "AcousticEchoCanceler attached and enabled (sessionId=${audioRecord.audioSessionId})")
-                }
-            } else {
-                Log.d(TAG, "AcousticEchoCanceler not available on this device")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to attach AcousticEchoCanceler (non-fatal): ${e.message}")
-            echoCanceler = null
-        }
-
-        // Always-fire AEC state log so we can see silent failures in logcat (the success-branch
-        // log above only fires when create() returns non-null).
+        // VOICE_COMMUNICATION applies AEC + NS + AGC at the HAL level. We deliberately do NOT
+        // attach a software AcousticEchoCanceler effect on top — stacking the two over-suppresses
+        // the mic to silence whenever any speaker audio is present. AEC_LEVEL logs below are the
+        // verification surface: mean amplitude should stay > ~50 during user speech, even while
+        // Whiz's TTS is playing back through the speaker.
         Log.i(
             TAG,
-            "AEC_STATE: available=${AcousticEchoCanceler.isAvailable()}," +
-                    " attached=${echoCanceler != null}," +
-                    " enabled=${echoCanceler?.enabled}," +
-                    " sessionId=${audioRecord.audioSessionId}," +
-                    " source=VOICE_COMMUNICATION"
+            "AEC_STATE: source=VOICE_COMMUNICATION (HAL AEC), softwareCanceler=disabled," +
+                    " sessionId=${audioRecord.audioSessionId}"
         )
 
         Log.d(TAG, "AudioPipeRecorder created (bufferSize=$bufferSize)")
@@ -154,7 +133,7 @@ class AudioPipeRecorder {
                                     i += 2
                                 }
                                 val mean = if (count > 0) sum / count else 0L
-                                Log.d(TAG, "AEC_LEVEL: mean=$mean (samples=$count, aecEnabled=${echoCanceler?.enabled})")
+                                Log.d(TAG, "AEC_LEVEL: mean=$mean (samples=$count)")
                             }
                         }
                         bytesRead == AudioRecord.ERROR_DEAD_OBJECT -> {
@@ -202,12 +181,6 @@ class AudioPipeRecorder {
             audioRecord.stop()
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord: ${e.message}")
-        }
-        try {
-            echoCanceler?.release()
-            echoCanceler = null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error releasing AcousticEchoCanceler: ${e.message}")
         }
         try {
             audioRecord.release()

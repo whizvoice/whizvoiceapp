@@ -325,7 +325,7 @@ class WhizRepository @Inject constructor(
         // 🔧 SIMPLIFIED: Remove flatMapLatest to allow Room's automatic updates
         // Room will automatically emit when messages are inserted/updated/deleted
         Log.d(TAG, "🔥 REPOSITORY_DEBUG: getMessagesForChat called for chatId=$chatId")
-        return messageDao.getMessagesForChatFlow(chatId)
+        return messageDao.getMessagesForChatFlowResolvingMigration(chatId)
             .catch { e ->
                 Log.e(TAG, "Error in getMessagesForChat flow", e)
                 emit(emptyList<MessageEntity>()) // Emit empty list on error
@@ -641,10 +641,13 @@ class WhizRepository @Inject constructor(
                     Log.e(TAG, "migrateChatMessages: Error getting all messages for debug", debugError)
                 }
 
-                // CRITICAL FIX: Register migration FIRST to prevent any new messages being added to the old chat
-                // This tells all parts of the system to use the new chat ID immediately
-                registerChatMigration(fromChatId, toChatId)
-                Log.d(TAG, "migrateChatMessages: ✅ Registered migration $fromChatId → $toChatId - no new messages should be added to old chat")
+                // Register the routing mapping in CSM up front so any new messages route to the
+                // server chat ID. The UI-visible event (_chatMigrationEvents) is emitted later,
+                // AFTER the DB UPDATE moves the message rows — emitting it now would cause the
+                // ChatViewModel collector to flip _chatId.value to the server ID while the rows
+                // are still under the old chatId, blanking the messages flow for ~500ms.
+                connectionStateManager.registerChatMigration(fromChatId, toChatId)
+                Log.d(TAG, "migrateChatMessages: ✅ Registered CSM mapping $fromChatId → $toChatId - new messages route to new chat")
             
                 // 🔑 CRITICAL FIX: Ensure target chat exists before migrating messages
                 val targetChatExists = chatDao.getChatById(toChatId) != null
@@ -654,8 +657,11 @@ class WhizRepository @Inject constructor(
                     // Get the source chat to copy its title and metadata
                     val sourceChat = chatDao.getChatById(fromChatId)
                     if (sourceChat != null) {
+                        // Set optimisticChatId so getMessagesForChatFlow can resolve the migrated
+                        // rows when something is still subscribed to the optimistic ID.
                         val targetChat = sourceChat.copy(
                             id = toChatId,
+                            optimisticChatId = fromChatId,
                             lastMessageTime = System.currentTimeMillis()
                         )
                         chatDao.insertChat(targetChat)
@@ -704,6 +710,7 @@ class WhizRepository @Inject constructor(
                     }
                 } else {
                     Log.d(TAG, "migrateChatMessages: ✅ COMPLETED (no messages to migrate from chat $fromChatId)")
+                    repositoryScope.launch { _chatMigrationEvents.emit(fromChatId to toChatId) }
                     return@withLock true
                 }
                 val totalMigrated = messagesToMigrate.size
@@ -748,7 +755,12 @@ class WhizRepository @Inject constructor(
                 } else if (fromChatId == -1L) {
                     Log.d(TAG, "migrateChatMessages: skipping deletion of new chat placeholder (ID: $fromChatId)")
                 }
-                
+
+                // Emit the UI-visible migration event now that messages are at the new chatId in the DB.
+                // ChatViewModel.kt:373-389 collects this and flips _chatId.value to toChatId; doing it
+                // here (rather than alongside CSM registration above) keeps the messages flow stable.
+                repositoryScope.launch { _chatMigrationEvents.emit(fromChatId to toChatId) }
+
                 return@withLock true
             } catch (e: Exception) {
                 Log.e(TAG, "migrateChatMessages: ❌ DETAILED ERROR migrating messages from chat $fromChatId to $toChatId", e)
@@ -1318,14 +1330,10 @@ class WhizRepository @Inject constructor(
                         // This can happen after migration when messages from different contexts are compared
                         if (localMatch.content.trim() == serverMessage.content.trim()) {
                             // Found a local message with same request ID, type, AND content - it's a duplicate
-                            Log.d(TAG, "deduplicateMessages: Found duplicate by requestId - REPLACING local ${localMatch.type} message ${localMatch.id} with server ${serverMessage.type} message ${serverMessage.id} (requestId: ${serverMessage.requestId})")
-                            Log.d(TAG, "deduplicateMessages: TIMESTAMP DEBUG - Local message timestamp: ${localMatch.timestamp}, Server message timestamp: ${serverMessage.timestamp}")
-                            Log.d(TAG, "deduplicateMessages: TIMESTAMP DEBUG - Time difference: ${serverMessage.timestamp - localMatch.timestamp}ms")
                             messagesToRemove.add(localMatch.id)
                             // CRITICAL FIX: Always ensure the server message replaces the local duplicate
                             // This prevents messages from disappearing during sync
                             serverMessagesToInsert.add(serverMessage)
-                            Log.d(TAG, "deduplicateMessages: Server message ${serverMessage.id} will replace local message ${localMatch.id}")
                             foundDuplicate = true
                         } else {
                             // Same requestId and type but different content - not a duplicate!
@@ -1362,12 +1370,10 @@ class WhizRepository @Inject constructor(
                     }
                     
                     if (duplicateLocal != null) {
-                        Log.d(TAG, "deduplicateMessages: Found duplicate by content - REPLACING local message ${duplicateLocal.id} with server message ${serverMessage.id}")
                         messagesToRemove.add(duplicateLocal.id)
                         // CRITICAL FIX: Always ensure the server message replaces the local duplicate
                         // This prevents messages from disappearing during sync
                         serverMessagesToInsert.add(serverMessage)
-                        Log.d(TAG, "deduplicateMessages: Server message ${serverMessage.id} will replace local message ${duplicateLocal.id}")
                         foundDuplicate = true
                     }
                 }
@@ -1407,9 +1413,7 @@ class WhizRepository @Inject constructor(
             
             // Store new server messages in database
             for (message in serverMessagesToInsert) {
-                Log.d(TAG, "deduplicateMessages: INSERTING server message with timestamp: ${message.timestamp}, requestId: ${message.requestId}, content: '${message.content.take(50)}'")
-                val insertedId = messageDao.insertMessage(message)
-                Log.d(TAG, "deduplicateMessages: Inserted server message ${message.id} (ID: $insertedId) for chat ${message.chatId} with timestamp ${message.timestamp}")
+                messageDao.insertMessage(message)
             }
             
             // 🔧 CRITICAL FIX: Re-insert preserved local messages that might have been lost
