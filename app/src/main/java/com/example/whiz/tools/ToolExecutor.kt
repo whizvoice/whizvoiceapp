@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import com.example.whiz.services.BugReportSubmitter
 import com.example.whiz.services.RageShakeDetector
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -60,7 +61,8 @@ class ToolExecutor @Inject constructor(
     private val deviceControlTools: DeviceControlTools,
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
     private val authRepository: com.example.whiz.data.auth.AuthRepository,
-    private val rageShakeDetector: RageShakeDetector
+    private val rageShakeDetector: RageShakeDetector,
+    private val bugReportSubmitter: BugReportSubmitter
 ) {
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
@@ -285,6 +287,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_snooze_rage_shake" -> {
                         executeSnoozeRageShake(requestId)
+                    }
+                    "agent_submit_bug_report" -> {
+                        executeSubmitBugReport(requestId, params)
                     }
                     "agent_get_next_alarm" -> {
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.getNextAlarm() }
@@ -1865,6 +1870,47 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_snooze_rage_shake",
                     requestId = requestId,
                     error = "Failed to snooze rage shake: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSubmitBugReport(requestId: String, params: JSONObject) {
+        Log.i(TAG, "Executing agent_submit_bug_report")
+        val message = params.optString("message").takeIf { it.isNotBlank() }
+        if (message == null) {
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_submit_bug_report",
+                    requestId = requestId,
+                    error = "message is required."
+                )
+            )
+            return
+        }
+
+        val result = bugReportSubmitter.captureAndSubmit(message, source = "bug_button")
+        if (result.isSuccess) {
+            val resultJson = JSONObject().apply {
+                put("success", true)
+                put("message", "Bug report submitted.")
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_submit_bug_report result for requestId=$requestId: ${resultJson.toString(2)}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_submit_bug_report",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } else {
+            val err = result.exceptionOrNull()
+            Log.e(TAG, "Error executing agent_submit_bug_report", err)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_submit_bug_report",
+                    requestId = requestId,
+                    error = "Failed to submit bug report: ${err?.message ?: "unknown error"}"
                 )
             )
         }

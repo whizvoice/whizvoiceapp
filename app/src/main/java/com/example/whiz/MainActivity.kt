@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.app.KeyguardManager
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,7 +17,6 @@ import android.provider.Settings
 import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -45,10 +43,11 @@ import androidx.navigation.compose.rememberNavController
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
+import com.example.whiz.services.BugReportSnapshot
+import com.example.whiz.services.BugReportSubmitter
 import com.example.whiz.services.RageShakeDetector
 import com.example.whiz.util.INACTIVITY_TIMEOUT_MS
 import com.example.whiz.util.InactivityTimer
-import com.example.whiz.util.LogcatCapture
 import com.example.whiz.ui.navigation.Screen
 import com.example.whiz.ui.navigation.WhizNavHost
 import com.example.whiz.ui.theme.WhizTheme
@@ -59,13 +58,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import java.io.ByteArrayOutputStream
 import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStarted
 import androidx.lifecycle.Lifecycle
 import com.example.whiz.BuildConfig
-import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import org.json.JSONObject
@@ -121,10 +118,10 @@ class MainActivity : ComponentActivity() {
     lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
 
     @Inject
-    lateinit var apiService: ApiService
+    lateinit var rageShakeDetector: RageShakeDetector
 
     @Inject
-    lateinit var rageShakeDetector: RageShakeDetector
+    lateinit var bugReportSubmitter: BugReportSubmitter
 
     @Inject
     lateinit var toolExecutor: com.example.whiz.tools.ToolExecutor
@@ -139,13 +136,6 @@ class MainActivity : ComponentActivity() {
     private val isSubmittingRageShake = mutableStateOf(false)
     private var bugReportSource = "rage_shake" // "rage_shake" or "bug_button"
 
-    private data class BugReportSnapshot(
-        val uiHierarchy: String?,
-        val currentPackage: String?,
-        val screenshotBase64: String?,
-        val logcat: String?,
-        val audioBase64: String?
-    )
     private var pendingSnapshot: BugReportSnapshot? = null
 
     // ViewModel for creating new chats on assistant relaunch
@@ -1314,62 +1304,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Capture all diagnostic data at the moment the bug is triggered (before showing the dialog).
-     * This ensures the snapshot reflects the actual bug state, not the dialog.
-     */
     private fun captureBugReportSnapshot() {
-        Log.i(TAG, "Capturing bug report snapshot")
-
-        // Capture UI hierarchy and package name synchronously from accessibility service
-        val uiHierarchy = WhizAccessibilityService.getCurrentUiHierarchy()
-        val currentPackage = WhizAccessibilityService.getCurrentPackageName()
-
-        // Capture logcat synchronously
-        val logcat = LogcatCapture.capture()
-
-        // Capture audio snapshot from WakeWordService ring buffer
-        val audioBase64 = try {
-            com.example.whiz.services.WakeWordService.getAudioSnapshot()?.let { pcmData ->
-                val wavBytes = com.example.whiz.services.WakeWordService.pcmToWavBytes(pcmData)
-                Base64.encodeToString(wavBytes, Base64.NO_WRAP)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to capture audio snapshot", e)
-            null
-        }
-
-        // Take screenshot asynchronously, then store snapshot and show dialog
-        WhizAccessibilityService.takeScreenshotAsync { bitmap ->
-            val screenshotBase64 = bitmap?.let {
-                try {
-                    val softwareBitmap = it.copy(Bitmap.Config.ARGB_8888, false)
-                    val stream = ByteArrayOutputStream()
-                    softwareBitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
-                    softwareBitmap.recycle()
-                    it.recycle()
-                    Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to encode screenshot", e)
-                    null
-                }
-            }
-
-            pendingSnapshot = BugReportSnapshot(
-                uiHierarchy = uiHierarchy,
-                currentPackage = currentPackage,
-                screenshotBase64 = screenshotBase64,
-                logcat = logcat,
-                audioBase64 = audioBase64
-            )
-            Log.i(TAG, "Bug report snapshot captured, showing dialog")
+        lifecycleScope.launch {
+            pendingSnapshot = bugReportSubmitter.captureSnapshot()
             showRageShakeDialog.value = true
         }
     }
 
-    /**
-     * Submit a rage shake bug report using the pre-captured snapshot data.
-     */
     private fun submitRageShakeReport(description: String) {
         isSubmittingRageShake.value = true
         Log.i(TAG, "Submitting rage shake report")
@@ -1382,51 +1323,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val displayMetrics = resources.displayMetrics
-                val request = ApiService.UiDumpCreate(
-                    dumpReason = bugReportSource,
-                    errorMessage = description.ifBlank { null },
-                    uiHierarchy = snapshot.uiHierarchy,
-                    packageName = snapshot.currentPackage,
-                    deviceModel = Build.MODEL,
-                    deviceManufacturer = Build.MANUFACTURER,
-                    androidVersion = Build.VERSION.RELEASE,
-                    screenWidth = displayMetrics.widthPixels,
-                    screenHeight = displayMetrics.heightPixels,
-                    appVersion = BuildConfig.VERSION_NAME,
-                    conversationId = null,
-                    recentActions = null,
-                    screenAgentContext = buildMap {
-                        put("report_type", bugReportSource)
-                        if (snapshot.screenshotBase64 != null) {
-                            put("screenshot_base64", snapshot.screenshotBase64)
-                        }
-                        if (snapshot.logcat != null) {
-                            put("logcat", snapshot.logcat)
-                        }
-                        if (snapshot.audioBase64 != null) {
-                            put("audio_base64", snapshot.audioBase64)
-                        }
-                    }
-                )
-
-                apiService.uploadUiDump(request)
-                Log.i(TAG, "Rage shake report uploaded successfully")
-
-                launch(Dispatchers.Main) {
-                    isSubmittingRageShake.value = false
-                    showRageShakeDialog.value = false
-                    pendingSnapshot = null
-                    Toast.makeText(this@MainActivity, "Bug report submitted. Thank you!", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to upload rage shake report", e)
-                launch(Dispatchers.Main) {
-                    isSubmittingRageShake.value = false
-                    Toast.makeText(this@MainActivity, "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show()
-                }
+        lifecycleScope.launch {
+            val result = bugReportSubmitter.submit(snapshot, description.ifBlank { null }, bugReportSource)
+            isSubmittingRageShake.value = false
+            if (result.isSuccess) {
+                showRageShakeDialog.value = false
+                pendingSnapshot = null
+                Toast.makeText(this@MainActivity, "Bug report submitted. Thank you!", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@MainActivity, "Failed to submit report. Please try again.", Toast.LENGTH_SHORT).show()
             }
         }
     }
