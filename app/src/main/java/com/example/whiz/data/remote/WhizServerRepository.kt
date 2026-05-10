@@ -103,6 +103,23 @@ class WhizServerRepository @Inject constructor(
     // Track active (in-flight) request IDs for cancellation on bubble dismiss
     private val activeRequestIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
+    // Pending tool_result acks: in-memory at-least-once delivery for device→server tool_result
+    // messages. OkHttp's send() returns true on buffer-accept, not on peer receipt, so frames
+    // can be silently dropped during WS reconnect (e.g. lock→unlock). Server sends a
+    // tool_result_ack after processing; we resend on per-item timeout and on WS reconnect.
+    private data class PendingToolResult(
+        val jsonMessage: String,
+        val firstSentAtMs: Long,
+        val retryJob: Job,
+    )
+    private val pendingAcks: MutableMap<String, PendingToolResult> =
+        java.util.concurrent.ConcurrentHashMap()
+
+    private companion object {
+        const val ACK_TTL_MS = 5 * 60 * 1000L  // 5 minutes
+        const val ACK_RESEND_INTERVAL_MS = 10_000L
+    }
+
     // Debug: Track event history for troubleshooting
     private val eventHistory = mutableListOf<TimestampedEvent>()
     private val maxEventHistorySize = 100 // Keep last 100 events
@@ -603,6 +620,11 @@ class WhizServerRepository @Inject constructor(
                         // Process any queued messages when reconnected
                         processRetryQueue(conversationId)
 
+                        // Resend any tool_results still awaiting server ack — covers OkHttp
+                        // frames that were buffered onto a now-closed socket during the
+                        // previous WS lifetime and never reached the server.
+                        resendAllPendingAcks()
+
                         // Send timezone via API endpoint after connection is established
                         val timezone = java.util.TimeZone.getDefault().id
                         scope.launch {
@@ -659,12 +681,25 @@ class WhizServerRepository @Inject constructor(
                                 val cancelledRequestId = if (jsonObject.has("cancelled_request_id")) {
                                     jsonObject.getString("cancelled_request_id")
                                 } else null
-                                
+
                                 if (cancelledRequestId != null) {
                                     scope.launch { emitEvent(WebSocketEvent.Cancelled(cancelledRequestId, requestId)) }
                                 } else {
                                     Log.w(TAG, "Received cancellation confirmation without cancelled_request_id")
                                     scope.launch { emitEvent(WebSocketEvent.Cancelled("unknown", requestId)) }
+                                }
+                                messageHandled = true
+                            }
+                            // Tool result acknowledgment from server — clear pending-ack entry
+                            else if (jsonObject.has("type") && jsonObject.getString("type") == "tool_result_ack") {
+                                val ackedRequestId = if (jsonObject.has("request_id")) {
+                                    jsonObject.getString("request_id")
+                                } else null
+                                if (ackedRequestId != null) {
+                                    pendingAcks.remove(ackedRequestId)?.retryJob?.cancel()
+                                    Log.d(TAG, "Received tool_result_ack for $ackedRequestId")
+                                } else {
+                                    Log.w(TAG, "Received tool_result_ack without request_id")
                                 }
                                 messageHandled = true
                             }
@@ -1055,6 +1090,7 @@ class WhizServerRepository @Inject constructor(
                 val success = currentSocket.send(jsonMessage)
                 if (success) {
                     Log.i(TAG, "✅✅✅ TOOL RESULT SENT SUCCESSFULLY: requestId=$requestId, tool=$toolName")
+                    trackPendingAck(requestId, jsonMessage)
                     true
                 } else {
                     Log.e(TAG, "❌❌❌ TOOL RESULT SEND FAILED: requestId=$requestId - queueing for retry")
@@ -1485,4 +1521,51 @@ class WhizServerRepository @Inject constructor(
             }
         }
     }
-} 
+
+    // ─── Pending tool_result ack tracking ────────────────────────────────────
+    // After a tool_result is sent, we keep it in `pendingAcks` until the server
+    // sends back a tool_result_ack. If no ack arrives within ACK_RESEND_INTERVAL_MS
+    // we resend; on WS reconnect we resend everything outstanding. Entries older
+    // than ACK_TTL_MS are dropped (LLM has moved on; redelivery would be noise).
+
+    private fun trackPendingAck(requestId: String, jsonMessage: String) {
+        val now = System.currentTimeMillis()
+        pendingAcks[requestId] = PendingToolResult(
+            jsonMessage = jsonMessage,
+            firstSentAtMs = now,
+            retryJob = scope.launch {
+                delay(ACK_RESEND_INTERVAL_MS)
+                if (pendingAcks.containsKey(requestId)) {
+                    Log.w(TAG, "tool_result $requestId not acked in ${ACK_RESEND_INTERVAL_MS}ms; resending")
+                    resendPendingAck(requestId)
+                }
+            },
+        )
+    }
+
+    private fun resendPendingAck(requestId: String) {
+        val pending = pendingAcks[requestId] ?: return
+        if (System.currentTimeMillis() - pending.firstSentAtMs > ACK_TTL_MS) {
+            Log.w(TAG, "tool_result $requestId expired after ${ACK_TTL_MS}ms without ack; dropping")
+            pendingAcks.remove(requestId)?.retryJob?.cancel()
+            return
+        }
+        val socket = webSocket ?: return  // onOpen will retry on next reconnect
+        if (connectionState != ConnectionState.CONNECTED) return
+        val sent = socket.send(pending.jsonMessage)
+        if (!sent) {
+            Log.w(TAG, "tool_result $requestId resend send() returned false; will retry on next tick or reconnect")
+        }
+        // Re-arm the timer; preserve firstSentAtMs so TTL is measured from first send
+        pending.retryJob.cancel()
+        pendingAcks[requestId] = pending.copy(retryJob = scope.launch {
+            delay(ACK_RESEND_INTERVAL_MS)
+            if (pendingAcks.containsKey(requestId)) resendPendingAck(requestId)
+        })
+    }
+
+    private fun resendAllPendingAcks() {
+        // Snapshot keys so iteration is safe against concurrent ack callbacks mutating the map
+        pendingAcks.keys.toList().forEach { resendPendingAck(it) }
+    }
+}
