@@ -119,6 +119,11 @@ class ChatViewModel @Inject constructor(
     // Track multiple pending WebSocket requests by request ID
     private val pendingRequests = mutableMapOf<String, Long>() // requestId -> chatId
 
+    // RequestIds successfully written to the WebSocket (OkHttp buffer-accepted). Distinct from
+    // pendingRequests (cleared on every disconnect): durable across reconnects so orphan-retry
+    // doesn't re-send a message the server already has. Cleared in onCleared().
+    private val sentRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     // Most recently sent user requestId — used to skip TTS for stale responses
     // (when user has sent a newer message before the prior response arrives)
     private var latestUserRequestId: String? = null
@@ -1969,8 +1974,10 @@ class ChatViewModel @Inject constructor(
                 // 🔧 CRITICAL LOGGING: Log what we're sending to the server
                 Log.d(TAG, "📤 CALLING whizServerRepository.sendMessage: requestId=$nonNullRequestId, content='$trimmedText', chatId=$chatIdForWebSocket, timestamp=$messageTimestamp")
                 val success = whizServerRepository.sendMessage(trimmedText, nonNullRequestId, chatIdForWebSocket, timestamp = messageTimestamp)
-                
-                if (!success) {
+
+                if (success) {
+                    sentRequestIds.add(nonNullRequestId)
+                } else {
                     // Message was queued for retry, don't clear the request tracking yet
                     // The retry mechanism will handle this transparently
                     Log.d(TAG, "Message queued for retry")
@@ -2048,7 +2055,9 @@ class ChatViewModel @Inject constructor(
                     timestamp = System.currentTimeMillis(),
                     hidden = true
                 )
-                if (!success) {
+                if (success) {
+                    sentRequestIds.add(requestId)
+                } else {
                     Log.d(TAG, "Hidden system message queued for retry")
                 }
             } catch (e: Exception) {
@@ -2170,6 +2179,7 @@ class ChatViewModel @Inject constructor(
             pendingRequests.clear()
             Log.w(TAG, "🔥 onCleared: Pending requests map after clearing: $pendingRequests")
         }
+        sentRequestIds.clear()
         
         // VoiceManager is a singleton that manages its own cleanup.
         // Don't shutdown() the singleton TTSManager here — VoiceManager (also singleton)
@@ -2593,6 +2603,12 @@ class ChatViewModel @Inject constructor(
                     continue
                 }
 
+                // Check if it was already successfully sent to the server (durable across disconnects)
+                if (sentRequestIds.contains(requestId)) {
+                    Log.d(TAG, "Message ${message.id} (requestId: $requestId) already sent to server, skipping orphan retry")
+                    continue
+                }
+
                 // This message needs to be retried
                 Log.d(TAG, "Retrying orphaned message ${message.id} (requestId: $requestId): ${message.content.take(50)}...")
                 
@@ -2613,6 +2629,7 @@ class ChatViewModel @Inject constructor(
                 if (!success) {
                     Log.d(TAG, "Message ${message.id} queued for retry (requestId: $requestId)")
                 } else {
+                    sentRequestIds.add(requestId)
                     Log.d(TAG, "Message ${message.id} sent successfully (requestId: $requestId)")
                 }
                 
