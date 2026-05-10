@@ -484,7 +484,20 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "✅ Mode indicator is visible on bubble (showing speaker icon for TTS_WITH_LISTENING)")
-        
+
+        // Recognizer was explicitly stopped in MIC_OFF; spinning it back up takes longer than at launch
+        runBlocking {
+            val vmStartTime = System.currentTimeMillis()
+            val vmTimeoutMs = 3000L
+            while (System.currentTimeMillis() - vmStartTime < vmTimeoutMs) {
+                if (voiceManager.isListening.value) {
+                    Log.d(TAG, "VoiceManager started listening in TTS_WITH_LISTENING after ${System.currentTimeMillis() - vmStartTime}ms")
+                    break
+                }
+                delay(100)
+            }
+        }
+
         // Verify TTS is enabled in TTS_WITH_LISTENING mode
         val ttsListeningState = voiceManager.isListening.value
         val ttsModeEnabled = voiceManager.shouldEnableTTS()
@@ -561,6 +574,19 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
             Log.w(TAG, "⚠️ 'Listening Mode' message not found - it may have already disappeared")
         }
         
+        // Recognizer restarts on every mode change; give it time to flip isListening back to true
+        runBlocking {
+            val vmStartTime = System.currentTimeMillis()
+            val vmTimeoutMs = 3000L
+            while (System.currentTimeMillis() - vmStartTime < vmTimeoutMs) {
+                if (voiceManager.isListening.value) {
+                    Log.d(TAG, "VoiceManager resumed listening after cycling back to CONTINUOUS_LISTENING in ${System.currentTimeMillis() - vmStartTime}ms")
+                    break
+                }
+                delay(100)
+            }
+        }
+
         // Verify listening is active and TTS is off after cycling back to CONTINUOUS_LISTENING
         val finalListeningState = voiceManager.isListening.value
         val finalTTSEnabled = voiceManager.shouldEnableTTS()
