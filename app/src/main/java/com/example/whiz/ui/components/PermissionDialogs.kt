@@ -69,14 +69,13 @@ internal fun InlineDialog(
                     }
                     Spacer(Modifier.height(24.dp))
                 }
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (dismissButton != null) {
                         dismissButton()
-                        Spacer(Modifier.width(8.dp))
                     }
                     confirmButton()
                 }
