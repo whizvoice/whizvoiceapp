@@ -21,6 +21,28 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
+fun gitOutput(vararg args: String): String? = try {
+    val proc = ProcessBuilder(listOf("git") + args.toList())
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(false)
+        .start()
+    val out = proc.inputStream.bufferedReader().readText().trim()
+    if (proc.waitFor() == 0 && out.isNotEmpty()) out else null
+} catch (_: Exception) {
+    null
+}
+
+val gitShortSha = gitOutput("rev-parse", "--short", "HEAD")
+val gitIsDirty = !gitOutput("status", "--porcelain").isNullOrEmpty()
+val gitCommitCount = gitOutput("rev-list", "--count", "HEAD")?.toIntOrNull()
+
+val computedVersionName = when {
+    gitShortSha == null -> "1.0-unknown"
+    gitIsDirty -> "1.0-$gitShortSha-dirty"
+    else -> "1.0-$gitShortSha"
+}
+val computedVersionCode = gitCommitCount ?: 1
+
 android {
     namespace = "com.example.whiz"
     compileSdk = 36
@@ -29,8 +51,8 @@ android {
         applicationId = "com.example.whiz"
         minSdk = 31
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = computedVersionCode
+        versionName = computedVersionName
 
         testInstrumentationRunner = "com.example.whiz.HiltTestRunner"
         vectorDrawables {
