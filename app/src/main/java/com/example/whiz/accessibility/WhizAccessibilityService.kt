@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 
@@ -33,6 +34,13 @@ class WhizAccessibilityService : AccessibilityService() {
     private val TAG = "WhizAccessibilityService"
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var dumpReceiver: BroadcastReceiver? = null
+
+    // Tracks the most recent TYPE_WINDOW_STATE_CHANGED timestamp per package.
+    // Used as a fallback when an app launches and closes (or transitions out of the
+    // active-window slot) faster than the windows list polling can pick it up —
+    // e.g. YouTube Music deep-link bouncing back to the launcher on Android 36
+    // before the screen agent's waitForAppReady poll sees it in `windows`.
+    private val recentWindowStateTimestamps = ConcurrentHashMap<String, Long>()
 
     companion object {
         const val ACTION_DUMP_UI = "com.example.whiz.DUMP_UI"
@@ -246,6 +254,9 @@ class WhizAccessibilityService : AccessibilityService() {
             when (it.eventType) {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                     Log.v(TAG, "Window state changed: ${it.packageName}")
+                    it.packageName?.toString()?.let { pkg ->
+                        recentWindowStateTimestamps[pkg] = System.currentTimeMillis()
+                    }
                 }
                 AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                     Log.v(TAG, "View clicked in: ${it.packageName}")
@@ -255,6 +266,17 @@ class WhizAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /**
+     * Returns the timestamp (System.currentTimeMillis) of the most recent
+     * TYPE_WINDOW_STATE_CHANGED event observed for [packageName], or 0 if none
+     * has ever been seen. Caller can compare against a captured "wait start"
+     * timestamp to detect a brief foreground visit that the windows list may
+     * have missed.
+     */
+    fun getLastWindowStateChangeTime(packageName: String): Long {
+        return recentWindowStateTimestamps[packageName] ?: 0L
     }
     
     override fun onInterrupt() {

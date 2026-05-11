@@ -8484,6 +8484,9 @@ class ScreenAgentTools @Inject constructor(
         maxWaitMs: Long = 3000
     ): Boolean {
         Log.d(TAG, "Waiting for app $packageName to be ready...")
+        // Snapshot the pre-wait timestamp so we only honor TYPE_WINDOW_STATE_CHANGED
+        // events that fire *during* this wait, not stale ones from earlier launches.
+        val waitStartTime = System.currentTimeMillis()
         return waitForCondition(maxWaitMs = maxWaitMs) {
             val rootNode = accessibilityService.getRootNodeForPackage(packageName)
             if (rootNode != null) {
@@ -8493,6 +8496,18 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "App $packageName is now ready")
                     return@waitForCondition true
                 }
+            }
+            // Fallback: on Android 36+ we've seen target apps (e.g. YouTube Music
+            // launched via deep link) briefly hold the foreground without ever
+            // appearing in the accessibility windows list polled above — the
+            // bubble overlay/launcher reclaims the active-window slot before our
+            // poll lands. Treat a fresh TYPE_WINDOW_STATE_CHANGED event for the
+            // target package (fired since this wait started) as proof the app
+            // reached foreground, so downstream steps can proceed.
+            val lastStateChange = accessibilityService.getLastWindowStateChangeTime(packageName)
+            if (lastStateChange >= waitStartTime) {
+                Log.d(TAG, "App $packageName window state changed since wait start (${lastStateChange - waitStartTime}ms in); treating as ready")
+                return@waitForCondition true
             }
             false
         }
