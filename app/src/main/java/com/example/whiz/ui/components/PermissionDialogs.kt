@@ -22,6 +22,7 @@ import androidx.compose.ui.zIndex
  * AlertDialog creates a separate window that doesn't inherit
  * setShowWhenLocked(true), making buttons untappable on the lock screen.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun InlineDialog(
     onDismissRequest: () -> Unit,
