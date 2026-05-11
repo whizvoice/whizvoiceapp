@@ -7,7 +7,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-const val INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000L
+const val INACTIVITY_TIMEOUT_MS = 3 * 60 * 1000L
 
 class InactivityTimer(
     private val scope: CoroutineScope,

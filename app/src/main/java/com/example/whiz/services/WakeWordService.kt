@@ -1,6 +1,5 @@
 package com.example.whiz.services
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +18,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.whiz.AssistantActivity
 import com.example.whiz.R
+import com.example.whiz.accessibility.AccessibilityManager
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import dagger.hilt.android.AndroidEntryPoint
@@ -161,6 +161,9 @@ class WakeWordService : Service() {
 
     @Inject
     lateinit var apiService: ApiService
+
+    @Inject
+    lateinit var accessibilityManager: AccessibilityManager
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var audioRingBuffer: AudioRingBuffer? = null
@@ -570,7 +573,7 @@ class WakeWordService : Service() {
             }
 
             Log.d(TAG, "Launching AssistantActivity")
-            collapseStatusBar()
+            accessibilityManager.dismissNotificationShade()
             val assistantIntent = Intent(this, AssistantActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -580,18 +583,6 @@ class WakeWordService : Service() {
             startActivity(assistantIntent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch AssistantActivity", e)
-        }
-    }
-
-    @SuppressLint("WrongConstant")
-    private fun collapseStatusBar() {
-        try {
-            val service = getSystemService("statusbar")
-            val clazz = Class.forName("android.app.StatusBarManager")
-            val method = clazz.getMethod("collapsePanels")
-            method.invoke(service)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not collapse status bar", e)
         }
     }
 

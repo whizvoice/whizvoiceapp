@@ -71,4 +71,9 @@ class AccessibilityManager @Inject constructor(
         val service = WhizAccessibilityService.getInstance()
         return service?.performGlobalActionSafely(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS) ?: false
     }
+
+    fun dismissNotificationShade(): Boolean {
+        val service = WhizAccessibilityService.getInstance()
+        return service?.performGlobalActionSafely(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE) ?: false
+    }
 }
