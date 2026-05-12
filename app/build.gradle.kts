@@ -22,12 +22,13 @@ if (localPropertiesFile.exists()) {
 }
 
 fun gitOutput(vararg args: String): String? = try {
-    val proc = ProcessBuilder(listOf("git") + args.toList())
-        .directory(rootProject.projectDir)
-        .redirectErrorStream(false)
-        .start()
-    val out = proc.inputStream.bufferedReader().readText().trim()
-    if (proc.waitFor() == 0 && out.isNotEmpty()) out else null
+    val execOutput = providers.exec {
+        commandLine(listOf("git") + args.toList())
+        workingDir = rootProject.projectDir
+        isIgnoreExitValue = true
+    }
+    if (execOutput.result.get().exitValue != 0) null
+    else execOutput.standardOutput.asText.get().trim().ifEmpty { null }
 } catch (_: Exception) {
     null
 }
