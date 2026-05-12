@@ -25,6 +25,7 @@ import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.auth.TokenAuthenticator
 import com.example.whiz.data.preferences.UserPreferences
 import com.example.whiz.data.preferences.WakeWordPreferences
+import com.example.whiz.network.ServerErrorReportInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.GsonBuilder
@@ -34,6 +35,9 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.whiz.accessibility.AccessibilityChecker
 import com.example.whiz.accessibility.AccessibilityCheckerImpl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -85,13 +89,21 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideApplicationCoroutineScope(): CoroutineScope {
+        return CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+
+    @Provides
+    @Singleton
     fun provideOkHttpClient(
         authRepositoryProvider: Provider<AuthRepository>,
-        tokenAuthenticator: TokenAuthenticator
+        tokenAuthenticator: TokenAuthenticator,
+        serverErrorReportInterceptor: ServerErrorReportInterceptor
     ): OkHttpClient {
         return OkHttpClient.Builder()
             .authenticator(tokenAuthenticator)
             .addInterceptor(AuthInterceptor(authRepositoryProvider))
+            .addInterceptor(serverErrorReportInterceptor)
             .readTimeout(30, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)

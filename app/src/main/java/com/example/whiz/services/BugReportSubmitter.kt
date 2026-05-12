@@ -84,7 +84,8 @@ class BugReportSubmitter @Inject constructor(
     suspend fun submit(
         snapshot: BugReportSnapshot,
         description: String?,
-        source: String
+        source: String,
+        extraContext: Map<String, Any> = emptyMap()
     ): Result<Unit> = withContext(Dispatchers.IO) {
         Log.i(TAG, "Submitting bug report (source=$source)")
         try {
@@ -113,6 +114,7 @@ class BugReportSubmitter @Inject constructor(
                     if (snapshot.audioBase64 != null) {
                         put("audio_base64", snapshot.audioBase64)
                     }
+                    putAll(extraContext)
                 }
             )
 
@@ -125,8 +127,12 @@ class BugReportSubmitter @Inject constructor(
         }
     }
 
-    suspend fun captureAndSubmit(message: String, source: String): Result<Unit> {
+    suspend fun captureAndSubmit(
+        message: String,
+        source: String,
+        extraContext: Map<String, Any> = emptyMap()
+    ): Result<Unit> {
         val snapshot = captureSnapshot()
-        return submit(snapshot, description = message, source = source)
+        return submit(snapshot, description = message, source = source, extraContext = extraContext)
     }
 }
