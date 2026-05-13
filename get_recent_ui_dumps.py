@@ -185,10 +185,28 @@ def main():
         print(format_dump(dump, show_full=args.full))
 
         if args.save:
-            filename = f"ui_dump_{dump['id']}_{dump['dump_reason']}.txt"
-            with open(filename, 'w') as f:
+            base = f"ui_dump_{dump['id']}_{dump['dump_reason']}"
+            hier_path = f"{base}.txt"
+            with open(hier_path, 'w') as f:
                 f.write(dump.get('ui_hierarchy', ''))
-            print(f"\nSaved to: {filename}")
+            print(f"\nSaved hierarchy to: {hier_path}")
+
+            ctx = dump.get('screen_agent_context') or {}
+            if isinstance(ctx, str):
+                import json
+                try:
+                    ctx = json.loads(ctx)
+                except json.JSONDecodeError:
+                    ctx = {}
+            b64 = ctx.get('screenshot_base64') if isinstance(ctx, dict) else None
+            if b64:
+                import base64
+                img_path = f"{base}.jpg"
+                with open(img_path, 'wb') as f:
+                    f.write(base64.b64decode(b64))
+                print(f"Saved screenshot to: {img_path}")
+            else:
+                print("(no screenshot available for this dump)")
         return
 
     since = None
