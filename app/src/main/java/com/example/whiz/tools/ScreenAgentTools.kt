@@ -154,6 +154,15 @@ class ScreenAgentTools @Inject constructor(
         val error: String? = null
     )
 
+    data class PeekResult(
+        val success: Boolean,
+        val dump: String,
+        val nodeCount: Int,
+        val peekedPackage: String? = null,
+        val restoredPackage: String? = null,
+        val error: String? = null
+    )
+
     data class ClickResult(
         val success: Boolean,
         val elementId: Int? = null,
@@ -1202,6 +1211,144 @@ class ScreenAgentTools @Inject constructor(
             dump = sb.toString().trimEnd(),
             nodeCount = signatures.size
         )
+    }
+
+    /**
+     * Peek the UI of a target app even if it's backgrounded. Brings the app to the
+     * foreground, dumps its accessibility tree, then fire-and-forget restores whatever
+     * was foreground before. The internal launch uses enableOverlay=false so the bubble
+     * overlay isn't (re)started; an already-running bubble persists across the peek
+     * since it's a system overlay independent of foreground app state.
+     *
+     * Default scope is "full" (not "interactable") because peek is a read, so the LLM
+     * usually wants all the on-screen text, not just clickable nodes.
+     */
+    suspend fun peekApp(appName: String, scope: String = "full"): PeekResult {
+        Log.i(TAG, "peekApp called, appName=$appName, scope=$scope")
+        trackAction("peekApp: $appName")
+
+        if (WhizAccessibilityService.getInstance() == null) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        }
+
+        val originPackage = WhizAccessibilityService.getCurrentPackageName()
+        Log.d(TAG, "peekApp: originPackage=$originPackage")
+
+        val launchResult = launchApp(appName, enableOverlay = false)
+        if (!launchResult.success || launchResult.packageName == null) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = launchResult.error ?: "Failed to launch $appName for peek"
+            )
+        }
+        val targetPackage = launchResult.packageName
+
+        if (targetPackage != originPackage) {
+            val reached = waitForForegroundPackage(targetPackage, maxAttempts = 20, intervalMs = 50)
+            if (!reached) {
+                Log.w(TAG, "peekApp: $targetPackage never reached foreground within 1s")
+                if (originPackage != null) scheduleRestore(originPackage)
+                return PeekResult(
+                    success = false,
+                    dump = "",
+                    nodeCount = 0,
+                    peekedPackage = targetPackage,
+                    error = "peek_timeout: $targetPackage did not reach foreground within 1s"
+                )
+            }
+        }
+
+        val dumpResult = getUi(scope)
+        if (originPackage != null && originPackage != targetPackage) {
+            scheduleRestore(originPackage)
+        }
+        if (!dumpResult.success) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                peekedPackage = targetPackage,
+                restoredPackage = if (originPackage != null && originPackage != targetPackage) originPackage else null,
+                error = dumpResult.error ?: "Failed to dump $targetPackage"
+            )
+        }
+
+        return PeekResult(
+            success = true,
+            dump = dumpResult.dump,
+            nodeCount = dumpResult.nodeCount,
+            peekedPackage = targetPackage,
+            restoredPackage = if (originPackage != null && originPackage != targetPackage) originPackage else null
+        )
+    }
+
+    private suspend fun waitForForegroundPackage(
+        targetPackage: String,
+        maxAttempts: Int,
+        intervalMs: Long
+    ): Boolean {
+        for (i in 0 until maxAttempts) {
+            val current = WhizAccessibilityService.getCurrentPackageName()
+            if (current == targetPackage) return true
+            delay(intervalMs)
+        }
+        return false
+    }
+
+    private fun scheduleRestore(originPackage: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                restoreToPackage(originPackage)
+            } catch (e: Exception) {
+                Log.e(TAG, "scheduleRestore: failed to restore to $originPackage", e)
+            }
+        }
+    }
+
+    private fun restoreToPackage(originPackage: String) {
+        if (isWhizApp(originPackage)) {
+            restoreFullScreenWhiz()
+            return
+        }
+        val homePackage = try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            context.packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+        } catch (_: Exception) {
+            null
+        }
+        if (originPackage == homePackage) {
+            WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_HOME
+            )
+            return
+        }
+        val intent = try {
+            context.packageManager.getLaunchIntentForPackage(originPackage)
+        } catch (_: Exception) {
+            null
+        }
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+                Log.i(TAG, "restoreToPackage: launched $originPackage")
+            } catch (e: Exception) {
+                Log.e(TAG, "restoreToPackage: failed to launch $originPackage", e)
+            }
+        } else {
+            Log.w(TAG, "restoreToPackage: no launch intent for $originPackage, falling back to HOME")
+            WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_HOME
+            )
+        }
     }
 
     /**

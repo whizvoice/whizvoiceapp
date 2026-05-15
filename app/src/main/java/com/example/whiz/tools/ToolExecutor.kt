@@ -83,7 +83,8 @@ class ToolExecutor @Inject constructor(
         "agent_delete_alarm",
         "agent_close_other_app",
         "agent_click",
-        "agent_insert_text"
+        "agent_insert_text",
+        "agent_peek_app"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -362,6 +363,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_get_ui" -> {
                         executeGetUi(requestId, params)
+                    }
+                    "agent_peek_app" -> {
+                        executePeekApp(requestId, params)
                     }
                     "agent_click" -> {
                         executeClick(requestId, params)
@@ -2106,6 +2110,40 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_get_ui",
                     requestId = requestId,
                     error = "Failed to get UI: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executePeekApp(requestId: String, params: JSONObject) {
+        try {
+            val appName = params.getString("app_name")
+            val scope = if (params.has("scope")) params.getString("scope") else "full"
+            Log.i(TAG, "agent_peek_app invoked, app_name=$appName, scope=$scope")
+            val result = screenAgentTools.peekApp(appName, scope)
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("dump", result.dump)
+                put("node_count", result.nodeCount)
+                result.peekedPackage?.let { put("peeked_package", it) }
+                result.restoredPackage?.let { put("restored_package", it) }
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_peek_app result for requestId=$requestId: success=${result.success}, peeked=${result.peekedPackage}, nodes=${result.nodeCount}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_peek_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing peek app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_peek_app",
+                    requestId = requestId,
+                    error = "Failed to peek app: ${e.message}"
                 )
             )
         }
