@@ -5020,51 +5020,76 @@ class ScreenAgentTools @Inject constructor(
                             directionsScreenFound = true
                             Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")
                             break
-                        } else {
-                            // Non-transit mode - Start button should exist, keep waiting for it to render
-                            Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
-
-                            // Check if Maps is showing "Choose start location" — this means
-                            // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
-                            // "Home" from the suggestions to set an origin so directions can load.
-                            val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
-                            if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
-                                Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
-                                chooseOriginNodes.forEach { it.recycle() }
-                                val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
-                                if (homeNodes != null && homeNodes.isNotEmpty()) {
-                                    val homeNode = homeNodes[0]
-                                    val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
-                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                        Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
-                                    }
-                                    if (target != null && target !== homeNode) target.recycle()
-                                    homeNodes.forEach { it.recycle() }
-                                    modeRootNode.recycle()
-                                    modeRootNode = null
-                                    waitForCondition(maxWaitMs = 5000) {
-                                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
-                                        if (node != null) {
-                                            val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
-                                                val match = n.isClickable && n.className == "android.widget.Button"
-                                                n.recycle()
-                                                match
-                                            }
-                                            node.recycle()
-                                            startVisible
-                                        } else false
-                                    }
-                                    continue
-                                }
-                                homeNodes?.forEach { it.recycle() }
-                            } else {
-                                chooseOriginNodes?.forEach { it.recycle() }
-                            }
-
-                            // Don't break - continue the loop to wait for Start button
-                            modeRootNode.recycle()
-                            modeRootNode = null
                         }
+
+                        // Newer Google Maps versions sometimes hide the Start button entirely
+                        // on the directions screen (e.g. very long cross-country routes where
+                        // turn-by-turn navigation isn't supported). The trip is fully loaded —
+                        // mode tabs, summary header, and Preview/Add stops/Share/Save action
+                        // buttons are shown instead. Detect this via trip_details_summary_header
+                        // (or details_cardlist) and treat as success.
+                        val tripSummaryNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_details_summary_header")
+                        val hasTripSummary = tripSummaryNodes != null && tripSummaryNodes.isNotEmpty()
+                        tripSummaryNodes?.forEach { it.recycle() }
+
+                        val hasTripDetails = if (hasTripSummary) {
+                            true
+                        } else {
+                            val detailsListNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/details_cardlist")
+                            val found = detailsListNodes != null && detailsListNodes.isNotEmpty()
+                            detailsListNodes?.forEach { it.recycle() }
+                            found
+                        }
+
+                        if (hasTripDetails) {
+                            directionsScreenFound = true
+                            Log.d(TAG, "Found directions mode tabs + trip details on attempt $attempt (mode: $currentMode, no Start button in new Maps UI variant) - treating as success")
+                            break
+                        }
+
+                        // Non-transit mode - Start button should exist, keep waiting for it to render
+                        Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
+
+                        // Check if Maps is showing "Choose start location" — this means
+                        // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
+                        // "Home" from the suggestions to set an origin so directions can load.
+                        val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
+                        if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
+                            Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
+                            chooseOriginNodes.forEach { it.recycle() }
+                            val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
+                            if (homeNodes != null && homeNodes.isNotEmpty()) {
+                                val homeNode = homeNodes[0]
+                                val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
+                                if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
+                                }
+                                if (target != null && target !== homeNode) target.recycle()
+                                homeNodes.forEach { it.recycle() }
+                                modeRootNode.recycle()
+                                modeRootNode = null
+                                waitForCondition(maxWaitMs = 5000) {
+                                    val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
+                                    if (node != null) {
+                                        val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
+                                            val match = n.isClickable && n.className == "android.widget.Button"
+                                            n.recycle()
+                                            match
+                                        }
+                                        node.recycle()
+                                        startVisible
+                                    } else false
+                                }
+                                continue
+                            }
+                            homeNodes?.forEach { it.recycle() }
+                        } else {
+                            chooseOriginNodes?.forEach { it.recycle() }
+                        }
+
+                        // Don't break - continue the loop to wait for Start button
+                        modeRootNode.recycle()
+                        modeRootNode = null
                     }
 
                     modeRootNode?.recycle()
@@ -5995,6 +6020,34 @@ class ScreenAgentTools @Inject constructor(
         }
 
         Log.w(TAG, "Could not find or click Start button")
+
+        // Newer Google Maps versions sometimes hide the Start button entirely on the
+        // directions screen (e.g. very long routes). If the trip is fully loaded
+        // (mode tabs + summary header present), treat that as success — the user has
+        // reached the directions screen even though we can't start turn-by-turn.
+        val verifyRoot = accessibilityService.getCurrentRootNode()
+        if (verifyRoot != null) {
+            try {
+                val modeTabsNodes = verifyRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+                val hasModeTabs = modeTabsNodes != null && modeTabsNodes.isNotEmpty()
+                modeTabsNodes?.forEach { it.recycle() }
+
+                val tripSummaryNodes = verifyRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_details_summary_header")
+                val hasTripSummary = tripSummaryNodes != null && tripSummaryNodes.isNotEmpty()
+                tripSummaryNodes?.forEach { it.recycle() }
+
+                val detailsListNodes = verifyRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/details_cardlist")
+                val hasDetailsList = detailsListNodes != null && detailsListNodes.isNotEmpty()
+                detailsListNodes?.forEach { it.recycle() }
+
+                if (hasModeTabs && (hasTripSummary || hasDetailsList) && mode?.lowercase() != "transit") {
+                    Log.d(TAG, "No Start button but directions are loaded (mode tabs + trip details visible) - treating as success for new Maps UI variant")
+                    return true
+                }
+            } finally {
+                verifyRoot.recycle()
+            }
+        }
 
         // For transit mode, we need to click a route first, then find the Start button
         if (mode?.lowercase() == "transit") {
