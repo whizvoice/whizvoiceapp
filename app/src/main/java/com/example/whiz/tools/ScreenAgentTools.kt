@@ -8596,6 +8596,59 @@ class ScreenAgentTools @Inject constructor(
      * @param maxIntervalMs Maximum interval between checks
      * @return true if condition was met within timeout
      */
+    /**
+     * Click the given input node to open the keyboard, then poll until the IME is
+     * visible (or the input has moved up far enough to imply it). Used by all draft
+     * flows so they share one keyboard-open detection path.
+     *
+     * Primary signal: WhizAccessibilityService.getImeWindowBounds() != null
+     *   — works on modern devices/IMEs that surface the TYPE_INPUT_METHOD window.
+     *
+     * Fallback: input moved up by >300px (the existing heuristic used by the
+     * per-app draft flows). Re-resolves the input via [refetchInput] each tick
+     * because the original node reference may go stale across window updates.
+     *
+     * Uses ACTION_CLICK only (not ACTION_FOCUS || ACTION_CLICK): some apps
+     * (WhatsApp) auto-focus the input on chat entry, so ACTION_FOCUS would
+     * succeed without raising the keyboard and short-circuit the ||.
+     *
+     * On success, adds the same 300ms post-open delay the per-app flows used
+     * to let keyboard animation settle before reading new bounds.
+     */
+    private suspend fun openKeyboardAndWaitForIme(
+        inputNode: AccessibilityNodeInfo,
+        refetchInput: () -> AccessibilityNodeInfo?,
+        maxWaitMs: Long = 2000,
+    ): Boolean {
+        val service = WhizAccessibilityService.getInstance() ?: return false
+        val initialRect = Rect().also { inputNode.getBoundsInScreen(it) }
+
+        val clicked = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        Log.d(TAG, "openKeyboardAndWaitForIme: ACTION_CLICK=$clicked, initialRect=$initialRect")
+        if (!clicked) {
+            return false
+        }
+
+        val opened = waitForCondition(maxWaitMs = maxWaitMs, initialDelayMs = 100) {
+            if (service.getImeWindowBounds() != null) {
+                return@waitForCondition true
+            }
+            val fresh = refetchInput() ?: return@waitForCondition false
+            val rect = Rect().also { fresh.getBoundsInScreen(it) }
+            val movedUp = initialRect.top - rect.top > 300
+            fresh.recycle()
+            movedUp
+        }
+
+        if (opened) {
+            delay(300)
+            Log.d(TAG, "openKeyboardAndWaitForIme: keyboard open, IME bounds=${service.getImeWindowBounds()}")
+        } else {
+            Log.w(TAG, "openKeyboardAndWaitForIme: timed out waiting for keyboard")
+        }
+        return opened
+    }
+
     private suspend fun waitForCondition(
         maxWaitMs: Long = 2000,
         initialDelayMs: Long = 50,

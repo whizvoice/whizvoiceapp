@@ -50,16 +50,26 @@ class MessageDraftOverlayService : Service() {
         private const val EXTRA_BOUNDS = "bounds"
         private const val EXTRA_MESSAGE = "message"
         private const val EXTRA_PREVIOUS_TEXT = "previous_text"
-        
+        private const val EXTRA_KEYBOARD_TOP = "keyboard_top"
+        private const val KEYBOARD_TOP_UNSET = Int.MIN_VALUE
+
         @Volatile
         var isActive: Boolean = false
             private set
-        
+
         @Volatile
         var currentDraftMessage: String? = null
             private set
-        
-        fun show(context: Context, bounds: Rect, message: String, previousText: String? = null): Boolean {
+
+        /**
+         * Show the draft overlay over the given bounds.
+         *
+         * @param keyboardTop if non-null, the overlay covers only the region from
+         *   this y-coordinate down (used when the input EditText floats above the
+         *   keyboard with a visible gap). If null, the overlay covers from
+         *   bounds.top to the screen bottom (existing behavior).
+         */
+        fun show(context: Context, bounds: Rect, message: String, previousText: String? = null, keyboardTop: Int? = null): Boolean {
             return try {
                 // Don't stop existing instance - just send new intent to update it
                 // This ensures the auto-dismiss timer gets properly reset
@@ -67,6 +77,7 @@ class MessageDraftOverlayService : Service() {
                     putExtra(EXTRA_BOUNDS, bounds)
                     putExtra(EXTRA_MESSAGE, message)
                     previousText?.let { putExtra(EXTRA_PREVIOUS_TEXT, it) }
+                    putExtra(EXTRA_KEYBOARD_TOP, keyboardTop ?: KEYBOARD_TOP_UNSET)
                 }
                 context.startService(intent)
                 true
@@ -98,9 +109,11 @@ class MessageDraftOverlayService : Service() {
             val bounds = it.getParcelableExtra<Rect>(EXTRA_BOUNDS)
             val message = it.getStringExtra(EXTRA_MESSAGE)
             val previousText = it.getStringExtra(EXTRA_PREVIOUS_TEXT)
-            
+            val keyboardTopRaw = it.getIntExtra(EXTRA_KEYBOARD_TOP, KEYBOARD_TOP_UNSET)
+            val keyboardTop = if (keyboardTopRaw == KEYBOARD_TOP_UNSET) null else keyboardTopRaw
+
             if (bounds != null && message != null) {
-                createDraftOverlay(bounds, message, previousText)
+                createDraftOverlay(bounds, message, previousText, keyboardTop)
             } else {
                 Log.e(TAG, "Missing required extras: bounds=$bounds, message=$message")
                 stopSelf()
@@ -114,8 +127,8 @@ class MessageDraftOverlayService : Service() {
     }
     
     @SuppressLint("InflateParams")
-    private fun createDraftOverlay(bounds: Rect, message: String, previousText: String?) {
-        Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message, previousText: $previousText")
+    private fun createDraftOverlay(bounds: Rect, message: String, previousText: String?, keyboardTop: Int?) {
+        Log.d(TAG, "Creating draft overlay at bounds: $bounds with message: $message, previousText: $previousText, keyboardTop: $keyboardTop")
         
         // Store the draft message for later use by confirm_send
         currentDraftMessage = message
@@ -188,13 +201,19 @@ class MessageDraftOverlayService : Service() {
             if (resourceId > 0) resources.getDimensionPixelSize(resourceId) else 0
         }
 
-        // Calculate height from the input field position to actual bottom of screen
-        val overlayHeight = realScreenHeight - bounds.top
+        // The effective top edge of the overlay. When keyboardTop is provided
+        // (adaptive sizing, input floats well above the keyboard), the overlay
+        // covers only the keyboard region. Otherwise it covers from the input
+        // container top down to the screen bottom (existing behavior).
+        val effectiveTop = keyboardTop ?: bounds.top
+
+        // Calculate height from the effective top to actual bottom of screen
+        val overlayHeight = realScreenHeight - effectiveTop
 
         // Create layout parameters to position the overlay below the input field with app width
         val params = WindowManager.LayoutParams(
             overlayWidth,  // Use app width from bounds
-            overlayHeight,  // Extend from input field to bottom of screen
+            overlayHeight,  // Extend from effectiveTop to bottom of screen
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -208,10 +227,10 @@ class MessageDraftOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.left  // Start from app's left edge
-            y = bounds.top - statusBarHeight  // Compensate for FLAG_LAYOUT_NO_LIMITS offset
+            y = effectiveTop - statusBarHeight  // Compensate for FLAG_LAYOUT_NO_LIMITS offset
         }
 
-        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${bounds.top - statusBarHeight}, width=$overlayWidth (app width), height=$overlayHeight, statusBarHeight=$statusBarHeight, realScreenHeight=$realScreenHeight")
+        Log.d(TAG, "Setting overlay position: x=${bounds.left}, y=${effectiveTop - statusBarHeight}, width=$overlayWidth (app width), height=$overlayHeight, effectiveTop=$effectiveTop, statusBarHeight=$statusBarHeight, realScreenHeight=$realScreenHeight")
 
         try {
             windowManager.addView(overlayView, params)
@@ -222,7 +241,7 @@ class MessageDraftOverlayService : Service() {
             overlayView?.post {
                 val loc = IntArray(2)
                 overlayView?.getLocationOnScreen(loc)
-                val correction = loc[1] - bounds.top
+                val correction = loc[1] - effectiveTop
                 if (correction != 0) {
                     params.y -= correction
                     try {
@@ -235,7 +254,7 @@ class MessageDraftOverlayService : Service() {
             }
 
             // Add dismiss button overlay
-            createDismissButton(bounds)
+            createDismissButton(bounds, effectiveTop)
 
             // Schedule auto-dismiss
             scheduleAutoDismiss()
@@ -246,7 +265,7 @@ class MessageDraftOverlayService : Service() {
         }
     }
     
-    private fun createDismissButton(bounds: Rect) {
+    private fun createDismissButton(bounds: Rect, effectiveTop: Int) {
         val density = resources.displayMetrics.density
         val buttonSize = (48 * density).toInt() // 48dp touch target
         val padding = (12 * density).toInt() // 12dp padding around 24dp icon
@@ -279,7 +298,7 @@ class MessageDraftOverlayService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.right - buttonSize - inset
-            y = bounds.top + inset // Initial guess; corrected after layout
+            y = effectiveTop + inset // Initial guess; corrected after layout
         }
 
         try {
