@@ -72,6 +72,7 @@ class ToolExecutor @Inject constructor(
         "agent_launch_app",
         "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
         "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
+        "agent_draft_message", "agent_send_message",
         "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
         "agent_search_google_maps_location", "agent_search_google_maps_phrase",
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
@@ -223,6 +224,12 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_sms_send_message" -> {
                         executeSMSSendMessage(requestId, params)
+                    }
+                    "agent_draft_message" -> {
+                        executeDraftMessage(requestId, params)
+                    }
+                    "agent_send_message" -> {
+                        executeSendMessage(requestId)
                     }
                     "agent_disable_continuous_listening" -> {
                         executeDisableContinuousListening(requestId, voiceManager)
@@ -498,7 +505,23 @@ class ToolExecutor @Inject constructor(
                         }
                     )
                 } else {
-                    emptyList()
+                    // Generic draft/send for any other foreground app. The tool
+                    // description tells the agent what it's for; the tool
+                    // itself returns a clean error when there's no text input.
+                    // We don't allowlist by package because that would exclude
+                    // legitimate but unenumerable surfaces (Signal, Messenger,
+                    // Telegram, Instagram, Discord, Slack, Twitter/X compose,
+                    // GitHub comments, email compose, Reddit DMs, etc.).
+                    listOf(
+                        JSONObject().apply {
+                            put("name", "agent_draft_message")
+                            put("description", "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.")
+                        },
+                        JSONObject().apply {
+                            put("name", "agent_send_message")
+                            put("description", "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually.")
+                        }
+                    )
                 }
             }
         }
@@ -780,6 +803,78 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_sms_send_message",
                     requestId = requestId,
                     error = "Failed to send SMS message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    // ========== Generic Draft/Send Tool Execution Methods ==========
+
+    private suspend fun executeDraftMessage(requestId: String, params: JSONObject) {
+        try {
+            val message = params.getString("message")
+            val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+            Log.d(TAG, "Drafting generic message: message='${message.take(80)}', previousText='$previousText'")
+
+            val result = screenAgentTools.draftGenericMessage(message, previousText)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.message?.let { put("message", it) }
+                result.error?.let { put("error", it) }
+                put("overlay_shown", result.overlayShown)
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Generic draft message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_draft_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing generic draft message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_draft_message",
+                    requestId = requestId,
+                    error = "Failed to draft message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSendMessage(requestId: String) {
+        try {
+            Log.d(TAG, "Sending generic drafted message")
+
+            val result = screenAgentTools.sendGenericMessage()
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("sent", result.sent)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Generic send message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_send_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing generic send message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_send_message",
+                    requestId = requestId,
+                    error = "Failed to send message: ${e.message}"
                 )
             )
         }

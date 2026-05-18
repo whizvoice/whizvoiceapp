@@ -3125,6 +3125,150 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    // ========== Generic Draft/Send Functions ==========
+
+    /**
+     * Draft a message in the currently-foreground app's text input. Used when
+     * the user is already inside a chat thread in an app we don't have
+     * specific tooling for (Signal, Messenger, Telegram, Instagram, Discord,
+     * Slack, email compose, etc.). No contact navigation, no app launch — the
+     * user is assumed to be in the conversation already.
+     *
+     * Same draft pipeline as WhatsApp/SMS via [draftMessageCore]; lookups are
+     * generic ([genericFindInput] for the input field, no per-app container
+     * lookup so the overlay top sits at the input's top edge).
+     */
+    suspend fun draftGenericMessage(message: String, previousText: String? = null): DraftResult {
+        Log.d(TAG, "draftGenericMessage: message='${message.take(60)}...', previousText=$previousText")
+        trackAction("draftGenericMessage: ${message.take(30)}...")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return DraftResult(success = false, message = message, error = "Accessibility service not enabled")
+
+            val currentRoot = accessibilityService.getCurrentRootNode()
+                ?: return DraftResult(success = false, message = message, error = "No foreground app")
+            val targetPackage = currentRoot.packageName?.toString()
+            currentRoot.recycle()
+
+            if (targetPackage.isNullOrEmpty()) {
+                return DraftResult(success = false, message = message, error = "Could not determine foreground package")
+            }
+
+            Log.d(TAG, "draftGenericMessage: targeting package $targetPackage")
+
+            return draftMessageCore(DraftCoreInput(
+                targetPackage = targetPackage,
+                findInput = { root -> genericFindInput(root) },
+                // No per-app container lookup. Core falls back to inputRect.top,
+                // and adaptive sizing covers the keyboard-only case when the
+                // input floats above the keyboard with a visible gap.
+                findContainerTop = null,
+                message = message,
+                previousText = previousText,
+                onInputNotFound = { root ->
+                    Log.w(TAG, "draftGenericMessage: no text input found in $targetPackage")
+                    dumpUIHierarchy(root, "generic_input_not_found", "Could not find text input in $targetPackage")
+                },
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error drafting generic message", e)
+            return DraftResult(success = false, message = message, error = "Error drafting message: ${e.message}")
+        }
+    }
+
+    /**
+     * Send the previously-drafted message (stored in [MessageDraftOverlayService.currentDraftMessage])
+     * in the currently-foreground app. Best-effort: looks for the send button
+     * via [findSendButtonByPeekingWindow] (clickable near the input row,
+     * preferring "send"/"submit" content descriptions). If no plausible button
+     * is found, returns a partial-success result — the text stays in the input
+     * for the user to send manually rather than risk a wrong tap.
+     */
+    suspend fun sendGenericMessage(): SendResult {
+        Log.d(TAG, "sendGenericMessage")
+        trackAction("sendGenericMessage")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return SendResult(success = false, error = "Accessibility service not enabled")
+
+            val draftMessage = MessageDraftOverlayService.currentDraftMessage
+                ?: return SendResult(success = false, error = "No active draft to send")
+
+            val currentRoot = accessibilityService.getCurrentRootNode()
+                ?: return SendResult(success = false, error = "No foreground app")
+            val targetPackage = currentRoot.packageName?.toString()
+            currentRoot.recycle()
+
+            if (targetPackage.isNullOrEmpty()) {
+                return SendResult(success = false, error = "Could not determine foreground package")
+            }
+
+            Log.d(TAG, "sendGenericMessage: targeting $targetPackage, draft length=${draftMessage.length}")
+
+            return sendDraftedMessageCore(SendCoreInput(
+                targetPackage = targetPackage,
+                findInput = { root -> genericFindInput(root) },
+                findSendButton = { root, input -> findSendButtonByPeekingWindow(root, input) },
+                message = draftMessage,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "generic_send_input_not_found", "Could not find text input in $targetPackage during send")
+                },
+                onSendButtonNotFound = { root ->
+                    Log.w(TAG, "sendGenericMessage: peek heuristic found no send button in $targetPackage; text drafted in input")
+                },
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending generic message", e)
+            return SendResult(success = false, error = "Error sending message: ${e.message}")
+        }
+    }
+
+    /**
+     * Generic input finder for unknown messaging apps. Prefers a focused
+     * EditText; falls back to the bottommost EditText (typical for chat
+     * inputs); falls back to a Compose-style heuristic (wide clickable view
+     * in the bottom half) so apps using non-EditText inputs still work.
+     */
+    private fun genericFindInput(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findEditTextNodes(root, editTexts)
+        if (editTexts.isNotEmpty()) {
+            val focused = editTexts.firstOrNull { it.isFocused }
+            val best = focused ?: editTexts.maxByOrNull { node ->
+                val rect = Rect().also { node.getBoundsInScreen(it) }
+                rect.top
+            }
+            editTexts.filter { it !== best }.forEach { it.recycle() }
+            return best
+        }
+
+        // No EditText found. Try the Compose-style heuristic: a wide clickable
+        // view in the bottom half of the screen. openKeyboardAndWaitForIme
+        // will detect this isn't an EditText and use the focus+click+delay+click
+        // pattern automatically.
+        val clickables = mutableListOf<AccessibilityNodeInfo>()
+        findClickableChildren(root, clickables)
+        val screenHeight = context.resources.displayMetrics.heightPixels
+        val screenWidth = context.resources.displayMetrics.widthPixels
+        val bottomHalfStart = (screenHeight * 0.5).toInt()
+        val composeCandidates = clickables.filter { node ->
+            val rect = Rect().also { node.getBoundsInScreen(it) }
+            val width = rect.right - rect.left
+            rect.top > bottomHalfStart &&
+                width > (screenWidth * 0.4) &&
+                (rect.bottom - rect.top) < 400
+        }
+        if (composeCandidates.isNotEmpty()) {
+            val best = composeCandidates.first()
+            clickables.filter { it !== best }.forEach { it.recycle() }
+            return best
+        }
+        clickables.forEach { it.recycle() }
+        return null
+    }
+
     // ========== SMS Helper Functions ==========
 
     /**
@@ -9872,55 +10016,6 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    private fun clickSendButton(rootNode: AccessibilityNodeInfo): Boolean {
-        try {
-            // Look for send button by content description
-            val sendDescriptions = listOf("Send", "send", "Send button")
-            
-            for (desc in sendDescriptions) {
-                val sendNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
-                if (sendNodes != null && sendNodes.isNotEmpty()) {
-                    val success = sendNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    sendNodes.forEach { it.recycle() }
-                    if (success) return true
-                }
-            }
-            
-            // Try to find by traversing the tree
-            return findAndClickSendButton(rootNode)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clicking send button", e)
-            return false
-        }
-    }
-    
-    private fun findAndClickSendButton(node: AccessibilityNodeInfo): Boolean {
-        try {
-            // Check if this node is a send button
-            val contentDesc = node.contentDescription?.toString()?.lowercase()
-            if (contentDesc != null && contentDesc.contains("send") && node.isClickable) {
-                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            }
-            
-            // Check children
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i)
-                if (child != null) {
-                    if (findAndClickSendButton(child)) {
-                        child.recycle()
-                        return true
-                    }
-                    child.recycle()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in findAndClickSendButton", e)
-        }
-        
-        return false
-    }
-    
     // ========== Fitbit Functions ==========
 
     /**
