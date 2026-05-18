@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.cardview.widget.CardView
+import androidx.core.content.ContextCompat
 import android.view.ContextThemeWrapper
 import com.example.whiz.R
 import com.google.android.material.color.DynamicColors
@@ -359,12 +360,12 @@ class MessageDraftOverlayService : Service() {
                     // Deleted text - red with strikethrough
                     Log.d(TAG, "Applying DELETE spans to text: '${diff.text}' (positions $start-$end)")
                     result.setSpan(StrikethroughSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    result.setSpan(ForegroundColorSpan(Color.RED), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    result.setSpan(ForegroundColorSpan(ContextCompat.getColor(this@MessageDraftOverlayService, R.color.diff_removed)), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 DiffMatchPatch.Operation.INSERT -> {
                     // Inserted text - blue
                     Log.d(TAG, "Applying INSERT span to text: '${diff.text}' (positions $start-$end)")
-                    result.setSpan(ForegroundColorSpan(Color.BLUE), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    result.setSpan(ForegroundColorSpan(ContextCompat.getColor(this@MessageDraftOverlayService, R.color.diff_added)), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 DiffMatchPatch.Operation.EQUAL -> {
                     // Unchanged text - black (no styling needed)
