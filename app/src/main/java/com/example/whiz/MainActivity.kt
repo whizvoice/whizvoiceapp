@@ -81,12 +81,9 @@ class MainActivity : ComponentActivity() {
         @Volatile
         var finishAndRemoveTaskCallback: (() -> Unit)? = null
 
-        // Callback for on-demand unlock when screen agent tools need the device unlocked.
-        // Returns a cancel handle the caller can invoke if it timed out and no longer cares
-        // about the result — tears down the keep-screen-on hold and restores `showWhenLocked`.
-        // Returns null if already unlocked (onSuccess fires synchronously).
+        // Callback for on-demand unlock when screen agent tools need the device unlocked
         @Volatile
-        var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> (() -> Unit)?)? = null
+        var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
 
         // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
         @Volatile
@@ -133,13 +130,6 @@ class MainActivity : ComponentActivity() {
     lateinit var devPreferences: com.example.whiz.data.preferences.DevPreferences
 
     private lateinit var inactivityTimer: InactivityTimer
-
-    // Active unlock-prompt cleanups, invoked from onDestroy as a safety net so overlay
-    // windows / wake locks don't leak past the activity if neither the dismiss callback
-    // nor an external cancel ever fires.
-    private val activeUnlockCleanups = java.util.Collections.newSetFromMap(
-        java.util.concurrent.ConcurrentHashMap<() -> Unit, Boolean>()
-    )
 
     // Bug report state
     private val showRageShakeDialog = mutableStateOf(false)
@@ -328,11 +318,51 @@ class MainActivity : ComponentActivity() {
         // Set up static callback for on-demand unlock (used by screen agent tools on lock screen)
         requestUnlockCallback = { onSuccess, onCancelled ->
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-            if (!km.isKeyguardLocked) {
-                onSuccess() // Already unlocked
-                null
+            if (km.isKeyguardLocked) {
+                // Hold the screen on while the keyguard prompt is up. We must use a
+                // PowerManager wake lock here, NOT FLAG_KEEP_SCREEN_ON: setShowWhenLocked(false)
+                // pauses our activity, and window flags are only honored on the foreground
+                // window. Once paused, the keyguard window's activityTimeoutWM (typically
+                // 10s) takes effect and the screen turns off before the user can reach the
+                // fingerprint sensor / PIN entry.
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                @Suppress("DEPRECATION")
+                val unlockWakeLock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
+                    "whiz:unlock_prompt"
+                )
+                // Built-in 65s timeout (slightly longer than ToolExecutor's 60s) so the
+                // wake lock auto-releases even if neither dismiss callback is invoked.
+                unlockWakeLock.acquire(65_000L)
+                Log.d(TAG, "Unlock wake lock acquired (SCREEN_BRIGHT, 65s timeout)")
+                val releaseUnlockWakeLock = {
+                    if (unlockWakeLock.isHeld) {
+                        try {
+                            unlockWakeLock.release()
+                            Log.d(TAG, "Unlock wake lock released")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Unlock wake lock release failed", e)
+                        }
+                    }
+                }
+
+                // Must clear showWhenLocked so the keyguard PIN entry can appear
+                // (otherwise our activity occludes the keyguard, causing a deadlock)
+                setShowWhenLocked(false)
+                km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() {
+                        releaseUnlockWakeLock()
+                        onSuccess()
+                    }
+                    override fun onDismissCancelled() {
+                        releaseUnlockWakeLock()
+                        // User cancelled — restore showWhenLocked so the activity stays visible
+                        setShowWhenLocked(true)
+                        onCancelled()
+                    }
+                })
             } else {
-                startKeyguardUnlockPrompt(km, onSuccess, onCancelled)
+                onSuccess() // Already unlocked
             }
         }
 
@@ -997,123 +1027,6 @@ class MainActivity : ComponentActivity() {
             action()
         }
     }
-
-    /**
-     * Show the keyguard unlock prompt while keeping the screen on. Returns a cancel
-     * handle the caller (e.g., ToolExecutor on timeout) can invoke to actively tear
-     * down the screen-on hold and restore `showWhenLocked`.
-     *
-     * Screen-on path: a TYPE_APPLICATION_OVERLAY window with FLAG_KEEP_SCREEN_ON.
-     * SCREEN_BRIGHT_WAKE_LOCK is deprecated and unreliable once setShowWhenLocked(false)
-     * pauses the activity (window flags only apply to the foreground window). An overlay
-     * window is independent of activity pause state. Fall back to the deprecated wake
-     * lock only when SYSTEM_ALERT_WINDOW hasn't been granted.
-     *
-     * On the cancel path (explicit cancel, timeout, or no-response), `showWhenLocked` is
-     * restored to its original value (true only for wake-word launches via FROM_WAKE_WORD),
-     * so a regular launch doesn't leak the "show over lockscreen" flag onto later sessions.
-     */
-    private fun startKeyguardUnlockPrompt(
-        km: KeyguardManager,
-        onSuccess: () -> Unit,
-        onCancelled: () -> Unit,
-    ): () -> Unit {
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        var keepScreenOnView: android.view.View? = null
-        var wakeLock: PowerManager.WakeLock? = null
-        val finished = java.util.concurrent.atomic.AtomicBoolean(false)
-
-        // Preferred: invisible overlay window with FLAG_KEEP_SCREEN_ON. Survives the
-        // activity pause caused by setShowWhenLocked(false).
-        if (android.provider.Settings.canDrawOverlays(this)) {
-            try {
-                val params = WindowManager.LayoutParams(
-                    1, 1,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                    android.graphics.PixelFormat.TRANSPARENT,
-                )
-                keepScreenOnView = android.view.View(this)
-                wm.addView(keepScreenOnView, params)
-                Log.d(TAG, "Unlock keep-screen-on overlay attached")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to attach keep-screen-on overlay; falling back to wake lock", e)
-                keepScreenOnView = null
-            }
-        }
-
-        if (keepScreenOnView == null) {
-            // Fallback when SYSTEM_ALERT_WINDOW is missing or addView failed.
-            // SCREEN_BRIGHT_WAKE_LOCK is deprecated but still the best option without overlay.
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            @Suppress("DEPRECATION")
-            val wl = pm.newWakeLock(
-                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
-                "whiz:unlock_prompt",
-            )
-            // 65s built-in timeout is slightly longer than ToolExecutor's 60s, so the
-            // wake lock auto-releases even if neither dismiss callback nor external cancel fires.
-            wl.acquire(65_000L)
-            wakeLock = wl
-            Log.d(TAG, "Unlock wake lock acquired (fallback, SCREEN_BRIGHT, 65s)")
-        }
-
-        // Track the original showWhenLocked state so we only restore it on cancel if
-        // the activity actually had it set coming in (wake-word launches do; regular ones don't).
-        val originalShowWhenLocked = intent?.getBooleanExtra("FROM_WAKE_WORD", false) == true
-
-        // Must clear so the keyguard PIN entry can come forward (an activity with
-        // showWhenLocked=true would otherwise occlude the keyguard).
-        setShowWhenLocked(false)
-
-        val cleanup: (restoreShowWhenLocked: Boolean) -> Unit = { restoreShowWhenLocked ->
-            if (finished.compareAndSet(false, true)) {
-                runOnUiThread {
-                    keepScreenOnView?.let { v ->
-                        try { wm.removeView(v) } catch (e: Exception) {
-                            Log.w(TAG, "Failed to remove keep-screen-on overlay", e)
-                        }
-                    }
-                    wakeLock?.let { wl ->
-                        if (wl.isHeld) {
-                            try { wl.release() } catch (e: Exception) {
-                                Log.w(TAG, "Wake lock release failed", e)
-                            }
-                        }
-                    }
-                    if (restoreShowWhenLocked && originalShowWhenLocked) {
-                        try { setShowWhenLocked(true) } catch (e: Exception) {
-                            Log.w(TAG, "setShowWhenLocked(true) restore failed", e)
-                        }
-                    }
-                }
-            }
-        }
-
-        // Register a no-arg variant for onDestroy fallback (treat as cancel: restore showWhenLocked).
-        // The set entry is also referenced as the return value so callers can invoke it directly.
-        val externalCancel: () -> Unit = { cleanup(true) }
-        activeUnlockCleanups.add(externalCancel)
-
-        km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-            override fun onDismissSucceeded() {
-                // After a successful unlock, ACTION_USER_PRESENT clears showWhenLocked
-                // via userPresentReceiver — don't restore it here.
-                cleanup(false)
-                activeUnlockCleanups.remove(externalCancel)
-                onSuccess()
-            }
-            override fun onDismissCancelled() {
-                cleanup(true)
-                activeUnlockCleanups.remove(externalCancel)
-                onCancelled()
-            }
-        })
-
-        return externalCancel
-    }
     
     override fun onUserInteraction() {
         super.onUserInteraction()
@@ -1228,11 +1141,6 @@ class MainActivity : ComponentActivity() {
         if (::inactivityTimer.isInitialized) {
             inactivityTimer.cancel()
         }
-
-        // Tear down any in-flight unlock prompts so their overlay / wake lock don't outlive the activity.
-        val pending = activeUnlockCleanups.toList()
-        activeUnlockCleanups.clear()
-        pending.forEach { runCatching { it() } }
 
         // Release any held audio focus as a safety net
         audioFocusManager.abandonDuckingFocus()

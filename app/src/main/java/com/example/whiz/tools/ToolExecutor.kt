@@ -167,13 +167,9 @@ class ToolExecutor @Inject constructor(
                     // If the user unlocks AFTER the timeout, the dismiss callback still fires;
                     // in that case, send a hidden user message so the server can decide whether
                     // to retry. (No effect on the visible chat — see ChatViewModel.sendHiddenSystemMessage.)
-                    // On timeout / coroutine cancellation, invoke the cancel handle returned by
-                    // the unlock callback to tear down the keep-screen-on hold and reset
-                    // showWhenLocked — Android ≥26 does NOT auto-fire onDismissCancelled when
-                    // the user simply walks away from the prompt, so we have to clean up actively.
                     val unlocked = withTimeoutOrNull(60_000L) {
                         suspendCancellableCoroutine<Boolean> { cont ->
-                            val cancelPrompt = unlockCallback(
+                            unlockCallback(
                                 { // onSuccess
                                     Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
                                     if (cont.isActive) {
@@ -188,10 +184,6 @@ class ToolExecutor @Inject constructor(
                                     if (cont.isActive) cont.resume(false)
                                 }
                             )
-                            cont.invokeOnCancellation {
-                                Log.i(TAG, "🔒 Unlock wait cancelled for $toolName — tearing down prompt state")
-                                cancelPrompt?.invoke()
-                            }
                         }
                     }
 
