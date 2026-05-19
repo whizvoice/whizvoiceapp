@@ -21,6 +21,11 @@ import com.example.whiz.R
 import com.example.whiz.accessibility.AccessibilityManager
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
+import com.example.whiz.wakeword.WakeWordEngine
+import com.example.whiz.wakeword.audio.SelfEchoGate
+import com.example.whiz.wakeword.detection.ScoreSmoother
+import com.example.whiz.wakeword.detection.SileroOrtScorer
+import com.example.whiz.wakeword.detection.VadGate
 import dagger.hilt.android.AndroidEntryPoint
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -33,9 +38,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
@@ -51,13 +53,11 @@ class WakeWordService : Service() {
         const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val SAMPLE_RATE = 16000
         private const val DETECTION_COOLDOWN_MS = 5000L
-        // Classifier threshold: probability above which a Vosk candidate is accepted
-        private const val CLASSIFIER_THRESHOLD = 0.8f
 
         // Ring buffer: 25 seconds of 16kHz mono 16-bit PCM = 800000 bytes
         private const val RING_BUFFER_SECONDS = 25
         private const val RING_BUFFER_SIZE = RING_BUFFER_SECONDS * SAMPLE_RATE * 2
-        // Wake word detection clips are trimmed to 3 seconds
+        // Wake word detection clips are trimmed to 3 seconds for upload
         private const val WAKE_WORD_CLIP_SECONDS = 3
         private const val WAKE_WORD_CLIP_SIZE = WAKE_WORD_CLIP_SECONDS * SAMPLE_RATE * 2
         private const val MAX_AUDIO_FILES = 500
@@ -65,8 +65,25 @@ class WakeWordService : Service() {
 
         private const val RESUME_DEBOUNCE_MS = 500L
         private const val EXTERNAL_RECORDER_RECHECK_MS = 1000L
-        private const val MODEL_VERSION_KEY = "vosk_model_version"
-        private const val MODEL_VERSION = "en-us-0.22-lgraph"
+
+        // openWakeWord engine frame size (80 ms @ 16 kHz, PCM16 → 2560 bytes per frame).
+        private const val FRAME_BYTES = WakeWordEngine.FRAME_SAMPLES * 2
+
+        // ScoreSmoother defaults — tuned on the prototype's Pixel 10 Pro Fold + Samsung
+        // S25 Ultra against the openWakeWord TTS-synth eval. May need re-tuning against
+        // whiz's deployed mic chain; surface as prefs in commit 6.
+        private const val SMOOTHER_WINDOW = 3
+        private const val SMOOTHER_ENTER_THRESHOLD = 0.92f
+        private const val SMOOTHER_HYSTERESIS = 0.20f
+        private const val SMOOTHER_REFRACTORY_MS = 1000
+
+        // VAD gate defaults.
+        private const val VAD_SPEECH_THRESHOLD = 0.5f
+        private const val VAD_SILENCE_WINDOWS_BEFORE_SKIP = 50  // ~1.6 s @ 32 ms/window
+        private const val VAD_PRE_WINDOW_LOOKBACK_MS = 2000L
+
+        // Self-echo gate tail (matches prototype Phase A default).
+        private const val SELF_ECHO_TAIL_MS = 300
 
         @Volatile
         var isRunning = false
@@ -120,11 +137,9 @@ class WakeWordService : Service() {
             val byteRate = SAMPLE_RATE * channels * bitsPerSample / 8
 
             val header = ByteArray(44)
-            // RIFF header
             "RIFF".toByteArray().copyInto(header, 0)
             intToByteArrayLE(totalDataLen).copyInto(header, 4)
             "WAVE".toByteArray().copyInto(header, 8)
-            // fmt sub-chunk
             "fmt ".toByteArray().copyInto(header, 12)
             intToByteArrayLE(16).copyInto(header, 16)
             shortToByteArrayLE(1).copyInto(header, 20) // PCM format
@@ -133,7 +148,6 @@ class WakeWordService : Service() {
             intToByteArrayLE(byteRate).copyInto(header, 28)
             shortToByteArrayLE((channels * bitsPerSample / 8).toShort()).copyInto(header, 32)
             shortToByteArrayLE(bitsPerSample.toShort()).copyInto(header, 34)
-            // data sub-chunk
             "data".toByteArray().copyInto(header, 36)
             intToByteArrayLE(pcmData.size).copyInto(header, 40)
 
@@ -168,10 +182,11 @@ class WakeWordService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var audioRingBuffer: AudioRingBuffer? = null
     private var detectionJob: Job? = null
+    private var detectionEventsJob: Job? = null
     private var audioRecord: AudioRecord? = null
-    private var voskModel: Model? = null
-    private var recognizer: Recognizer? = null
-    private var wakeWordClassifier: WakeWordClassifier? = null
+    private var engine: WakeWordEngine? = null
+    private var sileroScorer: SileroOrtScorer? = null
+    private var selfEchoGate: SelfEchoGate? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
     private var isAudioOnly = false
@@ -277,25 +292,66 @@ class WakeWordService : Service() {
 
         detectionJob = serviceScope.launch {
             try {
-                val model = ensureModelReady() ?: run {
-                    Log.e(TAG, "Failed to load Vosk model")
+                // Build wake-word engine. Verifier is wired in commit 4; null here means
+                // stage-1 only (no voice match). VAD + smoother + self-echo gate enabled.
+                val scorer = try {
+                    SileroOrtScorer(this@WakeWordService).also { sileroScorer = it }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Silero VAD init failed; running without VAD gate", e)
+                    null
+                }
+                val vad = scorer?.let {
+                    VadGate(
+                        scorer = it,
+                        speechThreshold = VAD_SPEECH_THRESHOLD,
+                        silenceWindowsBeforeSkip = VAD_SILENCE_WINDOWS_BEFORE_SKIP,
+                        preWindowLookbackMs = VAD_PRE_WINDOW_LOOKBACK_MS,
+                    )
+                }
+                val smoother = ScoreSmoother(
+                    windowSize = SMOOTHER_WINDOW,
+                    enterThreshold = SMOOTHER_ENTER_THRESHOLD,
+                    hysteresis = SMOOTHER_HYSTERESIS,
+                    refractoryMs = SMOOTHER_REFRACTORY_MS,
+                )
+                selfEchoGate = SelfEchoGate(tailMs = SELF_ECHO_TAIL_MS)
+
+                engine = try {
+                    WakeWordEngine(
+                        context = this@WakeWordService,
+                        smoother = smoother,
+                        vad = vad,
+                        selfEchoGate = selfEchoGate,
+                        verifier = null,  // wired in commit 4
+                        baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
+                        adaptiveThreshold = null,  // Phase C, out of scope
+                    )
+                } catch (e: Exception) {
+                    Log.e(TAG, "WakeWordEngine init failed — stopping detection", e)
                     return@launch
                 }
-                voskModel = model
+                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD)")
 
-                // Initialize ONNX classifier
-                if (wakeWordClassifier == null) {
-                    try {
-                        wakeWordClassifier = WakeWordClassifier(this@WakeWordService)
-                        Log.d(TAG, "Wake word ONNX classifier loaded")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to load ONNX classifier, falling back to Vosk-only", e)
+                // Detection events flow → activity launch
+                detectionEventsJob = launch {
+                    engine?.detections?.collect { event ->
+                        val now = System.currentTimeMillis()
+                        if (now - lastDetectionTime < DETECTION_COOLDOWN_MS) {
+                            Log.d(TAG, "Cooldown active, ignoring detection (score=${event.confidence})")
+                            return@collect
+                        }
+                        lastDetectionTime = now
+                        Log.d(TAG, "Wake word detected: score=${event.confidence}")
+                        val score = event.confidence.toDouble()
+                        wakeWordPreferences.recordDetection("hey_whiz", score, true, "{}", score)
+                        val stats = wakeWordPreferences.getStats("hey_whiz")
+                        Log.d(TAG, "Stats[hey_whiz]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.3f".format(stats.mean)}")
+                        captureDetectionAudio("hey_whiz", score, true, "{}", score)
+                        // Pin buffer "warm" so a follow-up utterance doesn't get swallowed by
+                        // a fresh 2 s buffer-fill deadzone. Inference resumes immediately.
+                        engine?.softReset()
+                        onWakeWordDetected()
                     }
-                }
-
-                val grammar = "[\"hey whiz\", \"[unk]\"]"
-                recognizer = Recognizer(model, SAMPLE_RATE.toFloat(), grammar).apply {
-                    setMaxAlternatives(1)
                 }
 
                 val bufferSize = maxOf(
@@ -317,14 +373,17 @@ class WakeWordService : Service() {
                 audioRingBuffer = AudioRingBuffer(RING_BUFFER_SIZE)
 
                 val buffer = ByteArray(bufferSize)
+                // Frame accumulator: PCM16 bytes are read in arbitrary chunks; the engine
+                // requires fixed FRAME_BYTES (80 ms = 2560 bytes) per feed().
+                val frameBytes = ByteArray(FRAME_BYTES)
+                var frameFill = 0
+                val frameFloats = FloatArray(WakeWordEngine.FRAME_SAMPLES)
+
                 var frameCount = 0L
                 var lastHeartbeatTime = System.currentTimeMillis()
                 var lastExternalRecheckTime = System.currentTimeMillis()
 
                 while (true) {
-                    // Belt-and-suspenders: if AudioRecordingCallback ever misses an
-                    // end-event, we'd be stranded paused forever. Re-derive the flag
-                    // from the live config list every EXTERNAL_RECORDER_RECHECK_MS.
                     val nowRecheck = System.currentTimeMillis()
                     if (nowRecheck - lastExternalRecheckTime >= EXTERNAL_RECORDER_RECHECK_MS) {
                         val freshConfigs = audioManager?.activeRecordingConfigurations
@@ -332,7 +391,6 @@ class WakeWordService : Service() {
                         lastExternalRecheckTime = nowRecheck
                     }
 
-                    // Pause while main speech recognizer or external recorder is active
                     val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
                     if (shouldPause) {
                         audioRecord?.let { rec ->
@@ -346,20 +404,16 @@ class WakeWordService : Service() {
                             } catch (e: Exception) {
                                 Log.w(TAG, "Error stopping AudioRecord on pause", e)
                             }
-                            // Full release frees the audio HAL slot for the other app.
-                            // stop() alone keeps the AudioFlinger client and (on some
-                            // Android versions) the audio policy's claim on the input port.
                             rec.release()
                             audioRecord = null
+                            // Audio gap will desync the engine ring buffer; reset on resume.
+                            frameFill = 0
                             Log.d(TAG, "Paused (released): $reason")
                         }
                         delay(200)
                         continue
                     }
 
-                    // Resume after pause source stops (with debounce). createAudioRecord()
-                    // may return null if the other app hasn't fully released the input port
-                    // yet; the loop retries on the next iteration.
                     if (audioRecord == null) {
                         delay(RESUME_DEBOUNCE_MS)
                         if (speechRecognitionService.isListening.value || isExternalRecorderActive) continue
@@ -370,13 +424,8 @@ class WakeWordService : Service() {
                         }
                         audioRecord = fresh
                         fresh.startRecording()
+                        engine?.reset()  // hard reset: buffer was discontinuous across pause
                         Log.d(TAG, "Resumed: created fresh AudioRecord")
-                    }
-
-                    // Cooldown after detection
-                    if (System.currentTimeMillis() - lastDetectionTime < DETECTION_COOLDOWN_MS) {
-                        delay(200)
-                        continue
                     }
 
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
@@ -385,21 +434,36 @@ class WakeWordService : Service() {
                         continue
                     }
 
-                    // Feed audio to ring buffer for detection clip capture
+                    // Existing: feed audio to ring buffer for detection-clip upload.
                     audioRingBuffer?.write(buffer, 0, bytesRead)
+
+                    // New: chunk raw PCM16 bytes into FRAME_BYTES-sized frames, convert to
+                    // float32 in [-1, 1], and feed engine. Partial frames carry over to
+                    // the next read.
+                    var srcOff = 0
+                    while (srcOff < bytesRead) {
+                        val take = minOf(FRAME_BYTES - frameFill, bytesRead - srcOff)
+                        System.arraycopy(buffer, srcOff, frameBytes, frameFill, take)
+                        srcOff += take
+                        frameFill += take
+                        if (frameFill == FRAME_BYTES) {
+                            for (i in 0 until WakeWordEngine.FRAME_SAMPLES) {
+                                val lo = frameBytes[i * 2].toInt() and 0xFF
+                                val hi = frameBytes[i * 2 + 1].toInt()  // signed
+                                val s16 = (hi shl 8) or lo
+                                frameFloats[i] = s16 / 32768f
+                            }
+                            engine?.feed(frameFloats)
+                            frameFill = 0
+                        }
+                    }
 
                     frameCount++
                     val now = System.currentTimeMillis()
                     if (now - lastHeartbeatTime >= 10_000) {
-                        Log.d(TAG, "Heartbeat: processed $frameCount audio frames, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}")
+                        Log.d(TAG, "Heartbeat: processed $frameCount audio chunks, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}")
                         lastHeartbeatTime = now
                         frameCount = 0
-                    }
-
-                    val rec = recognizer ?: continue
-                    if (rec.acceptWaveForm(buffer, bytesRead)) {
-                        val result = rec.result
-                        checkForWakeWord(result)
                     }
                 }
             } catch (e: Exception) {
@@ -437,13 +501,12 @@ class WakeWordService : Service() {
     }
 
     /**
-     * Audio-only mode: record audio into ring buffer without Vosk recognition.
+     * Audio-only mode: record audio into ring buffer without wake-word inference.
      * Used for bug report audio capture when wake word detection is off.
      */
     private fun startAudioOnlyCapture() {
         if (detectionJob?.isActive == true) return
 
-        // Acquire partial wake lock to keep CPU alive
         if (wakeLock == null) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "whiz:wake_word_detection")
@@ -500,73 +563,11 @@ class WakeWordService : Service() {
         }
     }
 
-    private fun checkForWakeWord(jsonResult: String) {
-        try {
-            val json = JSONObject(jsonResult)
-            val alternatives = json.optJSONArray("alternatives") ?: return
-            if (alternatives.length() == 0) return
-
-            val best = alternatives.getJSONObject(0)
-            val text = best.optString("text", "").lowercase()
-            val voskConfidence = best.optDouble("confidence", 0.0)
-
-            val phraseKey = when {
-                text.contains("hey whiz") -> "hey_whiz"
-                text.contains("hey") && text.contains("[unk]") -> "hey_unk"
-                else -> return
-            }
-
-            // "hey [unk]" — always reject, but log and capture audio for training
-            if (phraseKey == "hey_unk") {
-                Log.d(TAG, "Rejected 'hey [unk]': '$text' (vosk_confidence=$voskConfidence)")
-                wakeWordPreferences.recordDetection(phraseKey, voskConfidence, false, jsonResult, -1.0)
-                captureDetectionAudio(phraseKey, voskConfidence, false, jsonResult, -1.0)
-                return
-            }
-
-            // Run ONNX classifier on ring buffer audio if available
-            val classifier = wakeWordClassifier
-            val pcmClip = audioRingBuffer?.snapshot()
-            val classifierScore: Float
-            val accepted: Boolean
-
-            if (classifier != null && pcmClip != null && pcmClip.isNotEmpty()) {
-                // Two-stage detection: Vosk detected candidate, classifier decides
-                classifierScore = classifier.classify(pcmClip)
-                accepted = classifierScore >= CLASSIFIER_THRESHOLD
-                Log.d(TAG, "Classifier score=$classifierScore (threshold=$CLASSIFIER_THRESHOLD), vosk_confidence=$voskConfidence, accepted=$accepted")
-            } else {
-                // Fallback: no classifier available, use Vosk confidence at a lower threshold
-                classifierScore = -1.0f
-                accepted = voskConfidence >= 90.0
-                Log.d(TAG, "No classifier available, using vosk confidence=$voskConfidence, accepted=$accepted")
-            }
-
-            wakeWordPreferences.recordDetection(phraseKey, voskConfidence, accepted, jsonResult, classifierScore.toDouble())
-            val stats = wakeWordPreferences.getStats(phraseKey)
-            Log.d(TAG, "Stats[$phraseKey]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.1f".format(stats.mean)}, stdDev=${"%.1f".format(stats.stdDev)}, last=${"%.1f".format(stats.lastConfidence)}")
-
-            // Capture audio clip for this detection (both accepted and rejected, for training)
-            captureDetectionAudio(phraseKey, voskConfidence, accepted, jsonResult, classifierScore.toDouble())
-
-            if (accepted) {
-                Log.d(TAG, "Wake word detected: '$text' (classifier=$classifierScore, vosk=$voskConfidence)")
-                lastDetectionTime = System.currentTimeMillis()
-                recognizer?.reset()
-                onWakeWordDetected()
-            } else {
-                Log.d(TAG, "Wake word rejected: '$text' (classifier=$classifierScore, vosk=$voskConfidence)")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error parsing recognizer result", e)
-        }
-    }
-
     private fun onWakeWordDetected() {
         try {
-            // Set BEFORE launching activity — prevents race with ACTION_SCREEN_ON
+            // Set BEFORE launching activity — prevents race with ACTION_SCREEN_ON.
             // setTurnScreenOn(true) in AssistantActivity triggers ACTION_SCREEN_ON before
-            // Hilt injects voiceManager, so isWakeWordActiveSession must already be true
+            // Hilt injects voiceManager, so isWakeWordActiveSession must already be true.
             com.example.whiz.ui.viewmodels.VoiceManager.instance?.let {
                 it.isWakeWordActiveSession = true
                 Log.d(TAG, "Set isWakeWordActiveSession=true before launching activity")
@@ -590,6 +591,8 @@ class WakeWordService : Service() {
         audioManager?.unregisterAudioRecordingCallback(recordingCallback)
         val job = detectionJob
         detectionJob = null
+        detectionEventsJob?.cancel()
+        detectionEventsJob = null
         audioRingBuffer = null
         job?.cancel()
         try {
@@ -601,11 +604,6 @@ class WakeWordService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping AudioRecord", e)
         }
-        // Wait for the detection coroutine to fully exit before any subsequent native
-        // resource cleanup (releaseResources -> recognizer.close / voskModel.close).
-        // acceptWaveForm and Recognizer.result are synchronous native calls that
-        // cancellation can't interrupt; closing the recognizer while one is in flight
-        // SIGABRTs in Vosk's CuSubMatrix. Bounded so onDestroy never hangs.
         if (job != null) {
             try {
                 kotlinx.coroutines.runBlocking {
@@ -616,7 +614,6 @@ class WakeWordService : Service() {
                 Log.w(TAG, "Error joining detection coroutine", e)
             }
         }
-        // Release wake lock
         wakeLock?.let {
             if (it.isHeld) {
                 it.release()
@@ -626,7 +623,6 @@ class WakeWordService : Service() {
     }
 
     private fun releaseResources() {
-        // Defensive unregister in case stopDetection wasn't called
         try {
             audioManager?.unregisterAudioRecordingCallback(recordingCallback)
             audioManager = null
@@ -640,24 +636,18 @@ class WakeWordService : Service() {
             Log.w(TAG, "Error releasing AudioRecord", e)
         }
         try {
-            recognizer?.close()
-            recognizer = null
+            engine?.close()
+            engine = null
         } catch (e: Exception) {
-            Log.w(TAG, "Error closing recognizer", e)
+            Log.w(TAG, "Error closing WakeWordEngine", e)
         }
         try {
-            voskModel?.close()
-            voskModel = null
+            sileroScorer?.close()
+            sileroScorer = null
         } catch (e: Exception) {
-            Log.w(TAG, "Error closing model", e)
+            Log.w(TAG, "Error closing Silero scorer", e)
         }
-        try {
-            wakeWordClassifier?.close()
-            wakeWordClassifier = null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing ONNX classifier", e)
-        }
-        // Release wake lock
+        selfEchoGate = null
         try {
             wakeLock?.let {
                 if (it.isHeld) {
@@ -729,13 +719,13 @@ class WakeWordService : Service() {
         rawVoskJson: String,
         classifierScore: Double = -1.0
     ) {
-        // Trim to last 3 seconds for wake word clips (not the full 10s buffer)
+        // Trim to last 3 seconds for wake word clips
         val pcmSnapshot = audioRingBuffer?.snapshot(WAKE_WORD_CLIP_SIZE)
         if (pcmSnapshot == null || pcmSnapshot.isEmpty()) return
 
         try {
             val timestamp = System.currentTimeMillis()
-            val confStr = "%.0f".format(confidence)
+            val confStr = "%.0f".format(confidence * 100)  // engine score is [0,1]; scale for filename
             val audioDir = File(getExternalFilesDir(null), "wake_word_audio")
             audioDir.mkdirs()
             val wavFile = File(audioDir, "detection_${timestamp}_${confStr}.wav")
@@ -771,6 +761,8 @@ class WakeWordService : Service() {
                 )
                 val textType = "text/plain".toMediaType()
 
+                // raw_vosk_json: legacy field name (Vosk pipeline removed). Server contract
+                // unchanged; sending "{}" until the endpoint can drop or rename the field.
                 apiService.uploadWakeWordAudio(
                     file = filePart,
                     phrase = phrase.toRequestBody(textType),
@@ -807,66 +799,6 @@ class WakeWordService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error enforcing audio storage cap", e)
-        }
-    }
-
-    private fun ensureModelReady(): Model? {
-        val modelDir = File(filesDir, "vosk-model")
-        val prefs = getSharedPreferences("vosk_prefs", Context.MODE_PRIVATE)
-        val storedVersion = prefs.getString(MODEL_VERSION_KEY, null)
-
-        if (modelDir.exists() && storedVersion == MODEL_VERSION) {
-            Log.d(TAG, "Model already extracted, loading from ${modelDir.absolutePath}")
-            return try {
-                Model(modelDir.absolutePath)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load existing model, re-extracting", e)
-                modelDir.deleteRecursively()
-                extractAndLoadModel(modelDir, prefs)
-            }
-        }
-
-        return extractAndLoadModel(modelDir, prefs)
-    }
-
-    private fun extractAndLoadModel(
-        modelDir: File,
-        prefs: android.content.SharedPreferences
-    ): Model? {
-        return try {
-            Log.d(TAG, "Extracting Vosk model from assets to ${modelDir.absolutePath}")
-            modelDir.deleteRecursively()
-            modelDir.mkdirs()
-            copyAssetDir("model-en-us", modelDir)
-            prefs.edit().putString(MODEL_VERSION_KEY, MODEL_VERSION).apply()
-            Log.d(TAG, "Model extraction complete")
-            Model(modelDir.absolutePath)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract/load Vosk model", e)
-            null
-        }
-    }
-
-    private fun copyAssetDir(assetPath: String, targetDir: File) {
-        val assetManager = assets
-        val files = assetManager.list(assetPath) ?: return
-
-        targetDir.mkdirs()
-
-        for (file in files) {
-            val srcPath = "$assetPath/$file"
-            val targetFile = File(targetDir, file)
-            val subFiles = assetManager.list(srcPath)
-
-            if (subFiles != null && subFiles.isNotEmpty()) {
-                copyAssetDir(srcPath, targetFile)
-            } else {
-                assetManager.open(srcPath).use { input ->
-                    FileOutputStream(targetFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-            }
         }
     }
 

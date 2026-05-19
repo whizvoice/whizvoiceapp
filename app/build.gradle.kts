@@ -224,10 +224,7 @@ dependencies {
     // Markdown parsing (CommonMark)
     implementation("org.commonmark:commonmark:0.24.0")
 
-    // Wake word detection (Vosk offline speech recognition)
-    implementation("com.alphacephei:vosk-android:0.3.75")
-
-    // ONNX Runtime for wake word classifier
+    // ONNX Runtime for wake-word detection (mel + embedding + classifier + Silero VAD + CAM++)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 
     // Networking
