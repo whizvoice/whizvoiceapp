@@ -4798,122 +4798,127 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode.recycle()
             }
 
-            // Wait for directions screen to be fully loaded
-            // Look for Start button OR directions_mode_tabs (for transit mode which has no Start button initially)
+            // Wait for the directions screen to be ready. Ceiling 10s — well under the 25s
+            // server timeout for this tool (whizvoice/maps_tools.py:563) — so a slow bicycle
+            // route calc (the Palace-of-Fine-Arts bug, dumps 1314/1315) has room to finish.
             var modeRootNode: AccessibilityNodeInfo? = null
-            var directionsScreenFound = false
-            var hasStartButton = false
-            for (attempt in 1..5) {
-                modeRootNode = accessibilityService.getCurrentRootNode()
-                if (modeRootNode != null) {
-                    // Check for Start button using built-in search (no depth limit - Start button is at depth ~22)
-                    val startNodes = modeRootNode.findAccessibilityNodeInfosByText("Start")
-                    hasStartButton = startNodes.any { node ->
-                        if (node.isClickable && node.className == "android.widget.Button") {
-                            true
-                        } else {
-                            // The Start button may have text="" with desc="Start", and its child View
-                            // has text="Start" but is not clickable. Check if the parent is a clickable Button.
-                            val parent = node.parent
-                            val parentMatch = parent != null && parent.isClickable &&
-                                parent.className == "android.widget.Button" &&
-                                parent.contentDescription?.toString()?.equals("Start") == true
-                            parent?.recycle()
-                            parentMatch
-                        }
-                    }
-                    startNodes.forEach { it.recycle() }
+            var terminalFailureReason: String? = null
+            var clickedHomeForOrigin = false
 
-                    if (hasStartButton) {
-                        directionsScreenFound = true
-                        Log.d(TAG, "Found Start button on attempt $attempt")
-                        break
-                    }
+            val waitSucceeded = waitForCondition(maxWaitMs = 10_000, maxIntervalMs = 500) {
+                val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
 
-                    // If no Start button, check for mode tabs using built-in search (no depth limit)
-                    val modeTabNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
-                    val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
-                    modeTabNodes?.forEach { it.recycle() }
-
-                    if (hasModeTabs) {
-                        // Check what mode we're in using built-in search (no depth limit)
-                        var currentMode: String? = null
-                        val allModeCheckNodes = modeRootNode.findAccessibilityNodeInfosByText("mode")
-                        for (modeNode in allModeCheckNodes) {
-                            val desc = modeNode.contentDescription?.toString()
-                            if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
-                                currentMode = desc.substringBefore(":").trim()
-                                break
-                            }
-                        }
-                        allModeCheckNodes.forEach { it.recycle() }
-                        val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
-
-                        if (isTransitMode) {
-                            // Transit mode genuinely doesn't have Start button until route is selected
-                            directionsScreenFound = true
-                            Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")
-                            break
-                        } else {
-                            // Non-transit mode - Start button should exist, keep waiting for it to render
-                            Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
-
-                            // Check if Maps is showing "Choose start location" — this means
-                            // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
-                            // "Home" from the suggestions to set an origin so directions can load.
-                            val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
-                            if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
-                                Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
-                                chooseOriginNodes.forEach { it.recycle() }
-                                val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
-                                if (homeNodes != null && homeNodes.isNotEmpty()) {
-                                    val homeNode = homeNodes[0]
-                                    val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
-                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                        Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
-                                    }
-                                    if (target != null && target !== homeNode) target.recycle()
-                                    homeNodes.forEach { it.recycle() }
-                                    modeRootNode.recycle()
-                                    modeRootNode = null
-                                    waitForCondition(maxWaitMs = 5000) {
-                                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
-                                        if (node != null) {
-                                            val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
-                                                val match = n.isClickable && n.className == "android.widget.Button"
-                                                n.recycle()
-                                                match
-                                            }
-                                            node.recycle()
-                                            startVisible
-                                        } else false
-                                    }
-                                    continue
-                                }
-                                homeNodes?.forEach { it.recycle() }
-                            } else {
-                                chooseOriginNodes?.forEach { it.recycle() }
-                            }
-
-                            // Don't break - continue the loop to wait for Start button
-                            modeRootNode.recycle()
-                            modeRootNode = null
-                        }
-                    }
-
-                    modeRootNode?.recycle()
-                    modeRootNode = null
+                val pkg = root.packageName?.toString()
+                if (pkg != null && pkg != "com.google.android.apps.maps") {
+                    terminalFailureReason = "User navigated away from Google Maps (now in $pkg)"
+                    Log.d(TAG, "Directions wait aborted: $terminalFailureReason")
+                    root.recycle()
+                    return@waitForCondition true
                 }
-                Log.d(TAG, "Directions screen indicators not found, waiting... (attempt $attempt/5)")
-                delay(1000)
+
+                val startNodes = root.findAccessibilityNodeInfosByText("Start")
+                val hasStart = startNodes.any { node ->
+                    if (node.isClickable && node.className == "android.widget.Button") {
+                        true
+                    } else {
+                        val parent = node.parent
+                        val parentMatch = parent != null && parent.isClickable &&
+                            parent.className == "android.widget.Button" &&
+                            parent.contentDescription?.toString()?.equals("Start") == true
+                        parent?.recycle()
+                        parentMatch
+                    }
+                }
+                startNodes.forEach { it.recycle() }
+                if (hasStart) {
+                    Log.d(TAG, "Found Start button")
+                    modeRootNode = root
+                    return@waitForCondition true
+                }
+
+                val modeTabNodes = root.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.maps:id/directions_mode_tabs"
+                )
+                val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
+                modeTabNodes?.forEach { it.recycle() }
+
+                if (hasModeTabs) {
+                    var currentMode: String? = null
+                    val allModeCheckNodes = root.findAccessibilityNodeInfosByText("mode")
+                    for (modeNode in allModeCheckNodes) {
+                        val desc = modeNode.contentDescription?.toString()
+                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                            currentMode = desc.substringBefore(":").trim()
+                            break
+                        }
+                    }
+                    allModeCheckNodes.forEach { it.recycle() }
+
+                    if (currentMode?.contains("Transit", ignoreCase = true) == true) {
+                        Log.d(TAG, "Found mode tabs in transit mode (no Start button expected)")
+                        modeRootNode = root
+                        return@waitForCondition true
+                    }
+
+                    if (!clickedHomeForOrigin) {
+                        // No origin auto-filled (e.g. no GPS on emulator) — pick "Home" once to unblock.
+                        val chooseOriginNodes = root.findAccessibilityNodeInfosByText("Choose start location")
+                        val originMissing = chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()
+                        chooseOriginNodes?.forEach { it.recycle() }
+                        if (originMissing) {
+                            val homeNodes = root.findAccessibilityNodeInfosByText("Home")
+                            if (homeNodes != null && homeNodes.isNotEmpty()) {
+                                val homeNode = homeNodes[0]
+                                val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
+                                if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.d(TAG, "Clicked 'Home' to set origin")
+                                    clickedHomeForOrigin = true
+                                }
+                                if (target != null && target !== homeNode) target.recycle()
+                            }
+                            homeNodes?.forEach { it.recycle() }
+                        }
+                    }
+                }
+
+                for (errText in listOf("Can't find route", "Directions are not available", "No route found")) {
+                    val errNodes = root.findAccessibilityNodeInfosByText(errText)
+                    if (errNodes != null && errNodes.isNotEmpty()) {
+                        errNodes.forEach { it.recycle() }
+                        terminalFailureReason = "Maps could not find a route: $errText"
+                        Log.d(TAG, "Directions wait aborted: $terminalFailureReason")
+                        root.recycle()
+                        return@waitForCondition true
+                    }
+                    errNodes?.forEach { it.recycle() }
+                }
+
+                root.recycle()
+                false
             }
 
-            if (!directionsScreenFound || modeRootNode == null) {
-                Log.w(TAG, "Directions screen did not fully load - neither Start button nor mode tabs found after 5 attempts")
-                // UI dump for Start button not found
+            if (terminalFailureReason != null) {
+                val reason = terminalFailureReason!!
+                Log.w(TAG, "Directions wait failed terminally: $reason")
                 val dumpRoot = accessibilityService.getCurrentRootNode()
                 if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", "Neither Start button nor mode tabs found after 5 attempts on directions screen")
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", reason)
+                    dumpRoot.recycle()
+                }
+                modeRootNode?.recycle()
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = reason
+                )
+            }
+
+            if (!waitSucceeded || modeRootNode == null) {
+                Log.w(TAG, "Directions screen did not fully load within 10s - neither Start button nor mode tabs found")
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", "Neither Start button nor mode tabs found within 10s on directions screen")
                     dumpRoot.recycle()
                 }
                 modeRootNode?.recycle()
