@@ -107,7 +107,7 @@ class AudioFocusManager @Inject constructor(
     }
 
     override fun onAudioFocusChange(focusChange: Int) {
-        Log.d(TAG, "Audio focus changed: ${focusChangeToString(focusChange)}")
+        Log.d(TAG, "Audio focus changed: ${focusChangeToString(focusChange)}, isMusicActive=${audioManager.isMusicActive}")
 
         when (focusChange) {
             AudioManager.AUDIOFOCUS_GAIN -> {
@@ -116,19 +116,18 @@ class AudioFocusManager @Inject constructor(
                 duckingRetryCount = 0
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                Log.d(TAG, "Audio focus lost transiently (ignored for ducking)")
-            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
             AudioManager.AUDIOFOCUS_LOSS -> {
-                Log.d(TAG, "Ducking focus lost")
                 val wasDuckingActive = _isDuckingActive.value
                 _isDuckingActive.value = false
-                duckingFocusRequest = null
+                // For permanent LOSS we drop the request; for transient losses we keep it
+                // so the existing AudioFocusRequest can be reused by attemptDuckingReRequest.
+                if (focusChange == AudioManager.AUDIOFOCUS_LOSS) {
+                    duckingFocusRequest = null
+                }
 
-                // If ducking was active and we didn't intentionally abandon it,
-                // another app stole focus — try to re-request ducking
                 if (wasDuckingActive && !intentionalDuckingAbandon) {
-                    Log.d(TAG, "Ducking focus was stolen externally, attempting re-request")
+                    Log.d(TAG, "Ducking focus lost (${focusChangeToString(focusChange)}), attempting re-request")
                     attemptDuckingReRequest()
                 } else if (intentionalDuckingAbandon) {
                     Log.d(TAG, "Ducking focus loss was intentional, not re-requesting")
