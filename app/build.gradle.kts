@@ -227,6 +227,9 @@ dependencies {
     // ONNX Runtime for wake-word detection (mel + embedding + classifier + Silero VAD + CAM++)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
 
+    // Encrypted file storage for voice-match enrollment PCM clips
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.retrofit2:retrofit:2.9.0")

@@ -77,6 +77,41 @@ class SettingsViewModel @Inject constructor(
     val isProcessingSubscription: StateFlow<Boolean> = _isProcessingSubscription.asStateFlow()
 
     val isWakeWordEnabled: StateFlow<Boolean> = wakeWordPreferences.isEnabled
+    val isVoiceMatchEnabled: StateFlow<Boolean> = wakeWordPreferences.isVoiceMatchEnabled
+
+    private val _isVoiceEnrolled = MutableStateFlow(checkVoiceEnrolledOnce())
+    val isVoiceEnrolled: StateFlow<Boolean> = _isVoiceEnrolled.asStateFlow()
+
+    /** Re-read enrollment state from disk. Call from Settings screen onResume. */
+    fun refreshVoiceEnrollmentState() {
+        _isVoiceEnrolled.value = checkVoiceEnrolledOnce()
+        // If user just deleted enrollment, force voice-match off to keep prefs consistent.
+        if (!_isVoiceEnrolled.value && wakeWordPreferences.isVoiceMatchEnabledOnce()) {
+            wakeWordPreferences.setVoiceMatchEnabled(false)
+        }
+    }
+
+    private fun checkVoiceEnrolledOnce(): Boolean {
+        val sidecar = java.io.File(context.filesDir, "wake_word/enrollment/enrollment.json")
+        val embeddings = java.io.File(context.filesDir, "wake_word/embeddings.bin")
+        return sidecar.exists() && embeddings.exists() && embeddings.length() > 8
+    }
+
+    fun setVoiceMatchEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                wakeWordPreferences.setVoiceMatchEnabled(enabled)
+                // Restart the wake-word service so the new pref takes effect.
+                if (wakeWordPreferences.isEnabledOnce()) {
+                    WakeWordService.stop(context)
+                    WakeWordService.start(context)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error setting voice match enabled=$enabled", e)
+                _errorMessage.value = "Failed to update voice match setting: ${e.message}"
+            }
+        }
+    }
 
     val isDeveloperMode: StateFlow<Boolean> = devPreferences.isDeveloperMode
 

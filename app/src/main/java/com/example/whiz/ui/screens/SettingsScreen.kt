@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
 import com.example.whiz.ui.navigation.Screen
@@ -196,7 +197,7 @@ fun SettingsScreen(
             )
             HorizontalDivider(thickness = Dp.Hairline)
 
-            WakeWordSection(viewModel = viewModel)
+            WakeWordSection(viewModel = viewModel, navController = navController)
 
             // Subscription Section
             Spacer(modifier = Modifier.height(16.dp))
@@ -922,43 +923,124 @@ fun BenefitRow(text: String) {
 }
 
 @Composable
-fun WakeWordSection(viewModel: SettingsViewModel) {
+fun WakeWordSection(viewModel: SettingsViewModel, navController: NavController) {
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
+    val isVoiceMatchEnabled by viewModel.isVoiceMatchEnabled.collectAsState()
+    val isVoiceEnrolled by viewModel.isVoiceEnrolled.collectAsState()
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = "Wake Word Detection content" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Always-on Wake Word",
-                style = MaterialTheme.typography.bodyLarge
-            )
-            Text(
-                text = "Say \"Hey Whiz\" to open the app",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (isWakeWordEnabled) {
+    // Re-check enrollment state when returning from the enrollment screen.
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    LaunchedEffect(currentBackStackEntry?.destination?.route) {
+        if (currentBackStackEntry?.destination?.route == Screen.Settings.routeWithArgs) {
+            viewModel.refreshVoiceEnrollmentState()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Wake Word Detection content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "A green dot in the status bar indicates microphone access",
+                    text = "Always-on Wake Word",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = "Say \"Hey Whiz\" to open the app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isWakeWordEnabled) {
+                    Text(
+                        text = "A green dot in the status bar indicates microphone access",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Switch(
+                checked = isWakeWordEnabled,
+                onCheckedChange = { enabled ->
+                    viewModel.setWakeWordEnabled(enabled)
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Always-on Wake Word switch"
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Enroll your voice
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Enroll your voice content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Enroll your voice",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = if (isVoiceEnrolled) "Voice fingerprint saved on this device"
+                    else "Save a voice fingerprint so wake word only triggers for you",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-        Switch(
-            checked = isWakeWordEnabled,
-            onCheckedChange = { enabled ->
-                viewModel.setWakeWordEnabled(enabled)
-            },
-            modifier = Modifier.semantics {
-                contentDescription = "Always-on Wake Word switch"
+            TextButton(
+                onClick = { navController.navigate(Screen.WakeWordEnrollment.route) },
+                modifier = Modifier.semantics {
+                    contentDescription = "Enroll voice button"
+                }
+            ) {
+                Text(if (isVoiceEnrolled) "Re-enroll" else "Enroll")
             }
-        )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Match my voice only
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Match my voice only content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Match my voice only",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isVoiceEnrolled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (isVoiceEnrolled)
+                        "Suppress wake word triggers that don't match your voice fingerprint"
+                    else "Enroll your voice first to enable",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = isVoiceMatchEnabled,
+                enabled = isVoiceEnrolled,
+                onCheckedChange = { enabled ->
+                    viewModel.setVoiceMatchEnabled(enabled)
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Match my voice only switch"
+                }
+            )
+        }
     }
 }
 

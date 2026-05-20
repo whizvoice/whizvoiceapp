@@ -23,9 +23,12 @@ import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.wakeword.WakeWordEngine
 import com.example.whiz.wakeword.audio.SelfEchoGate
+import com.example.whiz.wakeword.detection.CamPlusOrtEmbedder
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SileroOrtScorer
+import com.example.whiz.wakeword.detection.SpeakerVerifier
 import com.example.whiz.wakeword.detection.VadGate
+import com.example.whiz.wakeword.enrollment.EnrolledEmbeddingStore
 import dagger.hilt.android.AndroidEntryPoint
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -187,6 +190,7 @@ class WakeWordService : Service() {
     private var engine: WakeWordEngine? = null
     private var sileroScorer: SileroOrtScorer? = null
     private var selfEchoGate: SelfEchoGate? = null
+    private var camPlusEmbedder: CamPlusOrtEmbedder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
     private var isAudioOnly = false
@@ -294,12 +298,15 @@ class WakeWordService : Service() {
             try {
                 // Build wake-word engine. Verifier is wired in commit 4; null here means
                 // stage-1 only (no voice match). VAD + smoother + self-echo gate enabled.
-                val scorer = try {
-                    SileroOrtScorer(this@WakeWordService).also { sileroScorer = it }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Silero VAD init failed; running without VAD gate", e)
-                    null
-                }
+                val vadEnabled = wakeWordPreferences.isVadEnabledOnce()
+                val scorer = if (vadEnabled) {
+                    try {
+                        SileroOrtScorer(this@WakeWordService).also { sileroScorer = it }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Silero VAD init failed; running without VAD gate", e)
+                        null
+                    }
+                } else null
                 val vad = scorer?.let {
                     VadGate(
                         scorer = it,
@@ -316,13 +323,19 @@ class WakeWordService : Service() {
                 )
                 selfEchoGate = SelfEchoGate(tailMs = SELF_ECHO_TAIL_MS)
 
+                // Voice match: construct CAM++ verifier iff the user enrolled AND turned the toggle on.
+                val verifier = if (wakeWordPreferences.isVoiceMatchEnabledOnce()) {
+                    buildSpeakerVerifier()
+                } else null
+                if (verifier != null) Log.d(TAG, "Voice match enabled — CAM++ verifier active")
+
                 engine = try {
                     WakeWordEngine(
                         context = this@WakeWordService,
                         smoother = smoother,
                         vad = vad,
                         selfEchoGate = selfEchoGate,
-                        verifier = null,  // wired in commit 4
+                        verifier = verifier,
                         baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
                         adaptiveThreshold = null,  // Phase C, out of scope
                     )
@@ -330,7 +343,7 @@ class WakeWordService : Service() {
                     Log.e(TAG, "WakeWordEngine init failed — stopping detection", e)
                     return@launch
                 }
-                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD)")
+                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD${if (verifier != null) " + CAM++" else ""})")
 
                 // Detection events flow → activity launch
                 detectionEventsJob = launch {
@@ -470,6 +483,38 @@ class WakeWordService : Service() {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Detection loop error", e)
             }
+        }
+    }
+
+    /**
+     * Build the CAM++ speaker verifier if the user has enrolled (sidecar + embeddings file exist).
+     * Returns null on any failure so the engine falls back to stage-1-only detection.
+     */
+    private fun buildSpeakerVerifier(): SpeakerVerifier? {
+        return try {
+            val wakeWordDir = File(filesDir, "wake_word").apply { mkdirs() }
+            val sidecar = File(wakeWordDir, "enrollment/enrollment.json")
+            val embeddingsFile = File(wakeWordDir, "embeddings.bin")
+            if (!sidecar.exists() || !embeddingsFile.exists() || embeddingsFile.length() <= 8) {
+                Log.w(TAG, "Voice match toggle ON but no enrollment found — skipping verifier")
+                return null
+            }
+            val embedder = CamPlusOrtEmbedder(this).also { camPlusEmbedder = it }
+            val store = EnrolledEmbeddingStore(
+                dir = wakeWordDir,
+                dim = CamPlusOrtEmbedder.EMBEDDING_DIM,
+                cap = 50,
+                protectedCap = 5,
+            )
+            SpeakerVerifier(
+                embedder = embedder,
+                store = store,
+                threshold = wakeWordPreferences.verifierThresholdOnce(),
+                enforceGate = true,
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build SpeakerVerifier — falling back to stage-1 only", e)
+            null
         }
     }
 
@@ -646,6 +691,12 @@ class WakeWordService : Service() {
             sileroScorer = null
         } catch (e: Exception) {
             Log.w(TAG, "Error closing Silero scorer", e)
+        }
+        try {
+            camPlusEmbedder?.close()
+            camPlusEmbedder = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error closing CAM++ embedder", e)
         }
         selfEchoGate = null
         try {

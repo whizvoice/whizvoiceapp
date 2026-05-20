@@ -34,6 +34,33 @@ class WakeWordPreferences @Inject constructor(
         return prefs.getBoolean(KEY_ENABLED, false)
     }
 
+    // --- Voice match (CAM++ speaker verifier) ---
+
+    private val _isVoiceMatchEnabled = MutableStateFlow(prefs.getBoolean(KEY_VOICE_MATCH_ENABLED, false))
+    val isVoiceMatchEnabled: StateFlow<Boolean> = _isVoiceMatchEnabled
+
+    fun setVoiceMatchEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VOICE_MATCH_ENABLED, enabled).apply()
+        _isVoiceMatchEnabled.value = enabled
+    }
+
+    fun isVoiceMatchEnabledOnce(): Boolean = prefs.getBoolean(KEY_VOICE_MATCH_ENABLED, false)
+
+    /** CAM++ cosine threshold for sync-gate acceptance. */
+    fun verifierThresholdOnce(): Float =
+        Float.fromBits(prefs.getInt(KEY_VERIFIER_THRESHOLD_BITS, DEFAULT_VERIFIER_THRESHOLD.toBits()))
+
+    fun setVerifierThreshold(threshold: Float) {
+        prefs.edit().putInt(KEY_VERIFIER_THRESHOLD_BITS, threshold.toBits()).apply()
+    }
+
+    /** Silero VAD gate toggle. Defaults ON (battery savings). */
+    fun isVadEnabledOnce(): Boolean = prefs.getBoolean(KEY_VAD_ENABLED, true)
+
+    fun setVadEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VAD_ENABLED, enabled).apply()
+    }
+
     // --- Wake word detection metrics (Welford's online algorithm) ---
 
     private fun metricsKey(phrase: String, field: String): String =
@@ -245,5 +272,9 @@ class WakeWordPreferences @Inject constructor(
 
     companion object {
         private const val KEY_ENABLED = "wake_word_enabled"
+        private const val KEY_VOICE_MATCH_ENABLED = "voice_match_enabled"
+        private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
+        private const val KEY_VAD_ENABLED = "vad_enabled"
+        const val DEFAULT_VERIFIER_THRESHOLD = 0.45f
     }
 }
