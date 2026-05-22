@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,13 +37,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -145,11 +147,7 @@ fun EnrollmentScreen(navController: NavController) {
                 is EnrollmentState.Recording -> RecordingContent(
                     clipIndex = s.clipIndex,
                     total = EnrollmentViewModel.TARGET_CLIPS,
-                    onRecord = {
-                        scope.launch {
-                            recordAndScore(viewModel)
-                        }
-                    },
+                    onClipPcm = { pcm -> viewModel.onClipRecorded(pcm) },
                 )
                 is EnrollmentState.Confirming -> ConfirmingContent(
                     clipIndex = s.clipIndex,
@@ -232,13 +230,13 @@ private fun NotEnrolledContent(
 }
 
 @Composable
-private fun RecordingContent(clipIndex: Int, total: Int, onRecord: () -> Unit) {
+private fun RecordingContent(
+    clipIndex: Int,
+    total: Int,
+    onClipPcm: (ShortArray) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
     var isRecording by remember { mutableStateOf(false) }
-    var level by remember { mutableFloatStateOf(0f) }
-    // 'level' is unused for now (recording is invoked from the lambda), kept
-    // as state hook so future builds can drive a live waveform without an API
-    // change. Discarding the receiver to silence "never used".
-    @Suppress("UNUSED_VARIABLE") val _level = level
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
@@ -247,7 +245,7 @@ private fun RecordingContent(clipIndex: Int, total: Int, onRecord: () -> Unit) {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Say \"Hey Whiz\" when you tap the mic.",
+            "Press and hold the mic, say \"Hey Whiz\", then release.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(24.dp))
@@ -255,7 +253,34 @@ private fun RecordingContent(clipIndex: Int, total: Int, onRecord: () -> Unit) {
             shape = CircleShape,
             color = if (isRecording) MaterialTheme.colorScheme.error
             else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(96.dp),
+            modifier = Modifier
+                .size(96.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            if (isRecording) {
+                                tryAwaitRelease()
+                                return@detectTapGestures
+                            }
+                            val released = AtomicBoolean(false)
+                            isRecording = true
+                            scope.launch {
+                                val pcm = withContext(Dispatchers.IO) {
+                                    EnrollmentRecorder().recordHeldClip(
+                                        shouldStop = { released.get() }
+                                    )
+                                }
+                                isRecording = false
+                                onClipPcm(pcm)
+                            }
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                released.set(true)
+                            }
+                        }
+                    )
+                },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 if (isRecording) {
@@ -264,21 +289,12 @@ private fun RecordingContent(clipIndex: Int, total: Int, onRecord: () -> Unit) {
                         modifier = Modifier.size(40.dp),
                     )
                 } else {
-                    IconButton(
-                        onClick = {
-                            isRecording = true
-                            level = 0f
-                            onRecord()
-                        },
-                        modifier = Modifier.size(96.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Mic,
-                            contentDescription = "Record",
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                        )
-                    }
+                    Icon(
+                        Icons.Filled.Mic,
+                        contentDescription = "Record",
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
                 }
             }
         }
@@ -411,11 +427,3 @@ private fun buildStore(context: Context): EnrolledEmbeddingStore =
         protectedCap = 5,
     )
 
-/** Run the AudioRecord capture on IO, then hand the PCM back to the ViewModel. */
-@Suppress("MissingPermission")  // gated by hasMicPermission upstream
-private suspend fun recordAndScore(viewModel: EnrollmentViewModel) {
-    val pcm = withContext(Dispatchers.IO) {
-        EnrollmentRecorder().recordOneClip()
-    }
-    viewModel.onClipRecorded(pcm)
-}
