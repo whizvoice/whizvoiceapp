@@ -75,7 +75,7 @@ class WakeWordService : Service() {
         // ScoreSmoother defaults — tuned on the prototype's Pixel 10 Pro Fold + Samsung
         // S25 Ultra against the openWakeWord TTS-synth eval. May need re-tuning against
         // whiz's deployed mic chain; surface as prefs in commit 6.
-        private const val SMOOTHER_WINDOW = 3
+        private const val SMOOTHER_WINDOW = 1
         private const val SMOOTHER_ENTER_THRESHOLD = 0.92f
         private const val SMOOTHER_HYSTERESIS = 0.20f
         private const val SMOOTHER_REFRACTORY_MS = 1000
