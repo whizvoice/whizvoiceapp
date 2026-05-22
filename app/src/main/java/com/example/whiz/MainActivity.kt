@@ -24,6 +24,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.health.connect.client.PermissionController
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -92,6 +93,17 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
         @Volatile
         var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand Health Connect permission when agent_log_health_data needs a write perm.
+        // `permissions` is the set of HC permission strings to request; callback receives the granted subset.
+        @Volatile
+        var requestHealthConnectPermissionCallback: ((permissions: Set<String>, onResult: (Set<String>) -> Unit) -> Unit)? = null
+
+        // Callback for opening a health app so the user can wire it up as a Health Connect data source.
+        // Shows an in-app confirmation dialog first; on confirm, launches the target app. `onResult`
+        // receives true if the user accepted (and the launch was attempted), false if they dismissed.
+        @Volatile
+        var openHealthAppSettingsCallback: ((onResult: (Boolean) -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -210,6 +222,73 @@ class MainActivity : ComponentActivity() {
         }
         calendarPermissionOnGranted = null
         calendarPermissionOnDenied = null
+    }
+
+    // Health Connect permission launcher (on-demand, triggered by agent_log_health_data)
+    private var healthConnectPermissionOnResult: ((Set<String>) -> Unit)? = null
+    private var healthConnectPermissionsToRequest: Set<String> = emptySet()
+    private val showHealthConnectPermissionDialog = mutableStateOf(false)
+
+    private val requestHealthConnectPermissionLauncher = registerForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) { granted: Set<String> ->
+        Log.d(TAG, "Health Connect permission result: $granted (requested: $healthConnectPermissionsToRequest)")
+        showHealthConnectPermissionDialog.value = false
+        healthConnectPermissionOnResult?.invoke(granted)
+        healthConnectPermissionOnResult = null
+        healthConnectPermissionsToRequest = emptySet()
+    }
+
+    // "Open a health app to set up its Health Connect connection" dialog state.
+    private var connectHealthAppOnResult: ((Boolean) -> Unit)? = null
+    private val showConnectHealthAppDialog = mutableStateOf(false)
+
+    /**
+     * Open Health Connect's main page (the "Your health apps" list at
+     * com.google.android.healthconnect.controller/...MainActivity). From there the
+     * user taps the row for any "Not connected" app to wire it up to HC.
+     *
+     * We try public actions first; if the standard Settings action somehow lands on
+     * a Settings search activity instead of the HC controller (observed on some
+     * builds), we fall back to launching the HC controller package directly.
+     */
+    private fun openHealthConnectSettings(): Boolean {
+        // Try the Android 14+ public Settings action; verify it resolves to the HC
+        // controller package, not the Settings app's generic search activity.
+        val settingsAction = "android.settings.HEALTH_CONNECT_SETTINGS"
+        val candidate = Intent(settingsAction).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val resolved = candidate.resolveActivity(packageManager)
+        val hcController = "com.google.android.healthconnect.controller"
+        if (resolved != null && resolved.packageName == hcController) {
+            return try {
+                startActivity(candidate)
+                Log.i(TAG, "Opened Health Connect settings via $settingsAction (resolved to ${resolved.flattenToShortString()})")
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "$settingsAction resolved but startActivity failed", e)
+                false
+            }
+        } else {
+            Log.d(TAG, "$settingsAction did not resolve to HC controller (got ${resolved?.flattenToShortString()}); falling back to direct package launch")
+        }
+
+        // Fallback: launch the HC controller's main activity directly.
+        val direct = packageManager.getLaunchIntentForPackage(hcController)
+            ?: Intent().apply {
+                component = android.content.ComponentName(
+                    hcController,
+                    "com.android.healthconnect.controller.MainActivity",
+                )
+            }
+        direct.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(direct)
+            Log.i(TAG, "Opened Health Connect settings via direct package launch ($hcController)")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open Health Connect settings — direct launch failed", e)
+            false
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -380,6 +459,21 @@ class MainActivity : ComponentActivity() {
             calendarPermissionOnGranted = onGranted
             calendarPermissionOnDenied = onDenied
             showCalendarPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand Health Connect permission (used by agent_log_health_data)
+        requestHealthConnectPermissionCallback = { permissions, onResult ->
+            Log.d(TAG, "requestHealthConnectPermissionCallback invoked for: $permissions")
+            healthConnectPermissionsToRequest = permissions
+            healthConnectPermissionOnResult = onResult
+            showHealthConnectPermissionDialog.value = true
+        }
+
+        // Set up static callback for "open a health app so the user can connect it to HC".
+        openHealthAppSettingsCallback = { onResult ->
+            Log.d(TAG, "openHealthAppSettingsCallback invoked")
+            connectHealthAppOnResult = onResult
+            showConnectHealthAppDialog.value = true
         }
 
         setContent {
@@ -593,6 +687,45 @@ class MainActivity : ComponentActivity() {
                                         Manifest.permission.READ_CALENDAR,
                                         Manifest.permission.WRITE_CALENDAR
                                     ))
+                                }
+                            }
+                        )
+                    }
+
+                    // On-demand "open health app to connect it to HC" dialog
+                    if (showConnectHealthAppDialog.value) {
+                        com.example.whiz.ui.components.ConnectHealthAppDialog(
+                            onDismiss = {
+                                showConnectHealthAppDialog.value = false
+                                connectHealthAppOnResult?.invoke(false)
+                                connectHealthAppOnResult = null
+                            },
+                            onOpen = {
+                                showConnectHealthAppDialog.value = false
+                                val opened = openHealthConnectSettings()
+                                connectHealthAppOnResult?.invoke(opened)
+                                connectHealthAppOnResult = null
+                            }
+                        )
+                    }
+
+                    // On-demand Health Connect permission dialog (triggered by agent_log_health_data)
+                    if (showHealthConnectPermissionDialog.value) {
+                        com.example.whiz.ui.components.HealthConnectPermissionDialog(
+                            onDismiss = {
+                                showHealthConnectPermissionDialog.value = false
+                                healthConnectPermissionOnResult?.invoke(emptySet())
+                                healthConnectPermissionOnResult = null
+                                healthConnectPermissionsToRequest = emptySet()
+                            },
+                            onGrantPermission = {
+                                val perms = healthConnectPermissionsToRequest
+                                if (perms.isEmpty()) {
+                                    Log.w(TAG, "HealthConnect grant tapped but no permissions to request; ignoring")
+                                } else {
+                                    executeWithUnlock {
+                                        requestHealthConnectPermissionLauncher.launch(perms)
+                                    }
                                 }
                             }
                         )
@@ -1150,6 +1283,8 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
+        requestHealthConnectPermissionCallback = null
+        openHealthAppSettingsCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {

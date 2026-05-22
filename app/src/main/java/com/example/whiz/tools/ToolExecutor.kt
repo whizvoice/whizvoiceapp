@@ -82,6 +82,7 @@ class ToolExecutor @Inject constructor(
         "agent_press_call_button",
         "agent_save_calendar_event", "agent_draft_calendar_event",
         "agent_log_health_data",
+        "agent_open_health_app_settings",
         "agent_delete_alarm",
         "agent_close_other_app",
         "agent_click",
@@ -365,6 +366,9 @@ class ToolExecutor @Inject constructor(
                     }
                     "agent_log_health_data" -> {
                         executeLogHealthData(requestId, params)
+                    }
+                    "agent_open_health_app_settings" -> {
+                        executeOpenHealthAppSettings(requestId, params)
                     }
                     "agent_press_back" -> {
                         executePressBack(requestId)
@@ -2089,11 +2093,86 @@ class ToolExecutor @Inject constructor(
             val value = params.getDouble("value")
             Log.i(TAG, "Logging health data: type=$dataType value=$value")
 
-            val hcResult = when (dataType) {
+            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
                 "calories" -> healthConnectManager.logCalories(value.toInt())
                 "weight" -> healthConnectManager.logWeight(value)
                 else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
             }
+
+            // Upfront permission top-up: if we're missing ANY HC permission Whiz uses
+            // (write OR read — reads are needed for the connection-status check), JIT
+            // request the full bundle so the user grants everything in one dialog. We
+            // don't gate on the result here — the write itself re-checks write perms
+            // separately, so this is a soft "ensure all four are asked for" pass.
+            val desiredPerms = healthConnectManager.allHealthConnectPermissions()
+            val alreadyGranted = healthConnectManager.grantedPermissions()
+            val missingPerms = desiredPerms - alreadyGranted
+            if (missingPerms.isNotEmpty()) {
+                val topUpCallback = MainActivity.requestHealthConnectPermissionCallback
+                if (topUpCallback != null) {
+                    Log.i(TAG, "🏥 Missing HC perms (${missingPerms.size}/${desiredPerms.size}); requesting full bundle upfront")
+                    _toolResults.emit(
+                        ToolExecutionResult.Status(
+                            toolName = "agent_log_health_data",
+                            requestId = requestId,
+                            status = "waiting_for_health_connect_permission",
+                            message = "Health Connect permission required. Waiting for user to grant.",
+                        )
+                    )
+                    withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Set<String>> { cont ->
+                            topUpCallback(desiredPerms) { result ->
+                                if (cont.isActive) cont.resume(result)
+                            }
+                        }
+                    }
+                } else {
+                    Log.w(TAG, "🏥 Missing HC perms but no permission callback registered (MainActivity not in foreground?)")
+                }
+            }
+
+            val initialHcResult = attemptHcWrite()
+
+            // If write was denied due to missing permission, request the permission JIT
+            // (mirrors the contacts pattern at agent_lookup_phone_contacts) and retry.
+            val hcResult: com.example.whiz.health.HealthConnectManager.Result =
+                if (initialHcResult is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing) {
+                    val permCallback = MainActivity.requestHealthConnectPermissionCallback
+                    if (permCallback != null) {
+                        Log.i(TAG, "🏥 HC permission missing (${initialHcResult.permission}); showing permission dialog")
+                        _toolResults.emit(
+                            ToolExecutionResult.Status(
+                                toolName = "agent_log_health_data",
+                                requestId = requestId,
+                                status = "waiting_for_health_connect_permission",
+                                message = "Health Connect permission required. Waiting for user to grant.",
+                            )
+                        )
+                        val granted = withTimeoutOrNull(60_000L) {
+                            suspendCancellableCoroutine<Set<String>> { cont ->
+                                // Request the full set of HC permissions Whiz uses so the
+                                // user grants once and covers calories + weight (write) plus
+                                // the reads we need for connection detection together.
+                                permCallback(healthConnectManager.allHealthConnectPermissions()) { result ->
+                                    if (cont.isActive) cont.resume(result)
+                                }
+                            }
+                        }
+                        if (granted != null && initialHcResult.permission in granted) {
+                            Log.i(TAG, "🏥 HC permission granted; retrying write")
+                            attemptHcWrite()
+                        } else {
+                            val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                            Log.i(TAG, "🏥 $reason for Health Connect")
+                            initialHcResult
+                        }
+                    } else {
+                        Log.w(TAG, "🏥 HC permission missing but no permission callback registered (MainActivity not in foreground?)")
+                        initialHcResult
+                    }
+                } else {
+                    initialHcResult
+                }
 
             val result: ScreenAgentTools.HealthDataResult = when (hcResult) {
                 is com.example.whiz.health.HealthConnectManager.Result.Success -> ScreenAgentTools.HealthDataResult(
@@ -2141,6 +2220,28 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
 
+            // The HC write itself succeeded, but if no other health app is reading
+            // from Health Connect the user won't see this data in any app's UI.
+            // Flip success to false with reason=requires_connection so the assistant
+            // cannot silently move on; include the unconnected apps' names so it can
+            // mention them when offering to open agent_open_health_app_settings.
+            if (result.success && result.source == "health_connect") {
+                val unconnected = healthConnectManager.unconnectedHealthApps()
+                if (unconnected.isNotEmpty()) {
+                    val arr = org.json.JSONArray()
+                    unconnected.forEach { app ->
+                        arr.put(JSONObject().apply {
+                            put("package_name", app.packageName)
+                            put("name", app.name)
+                        })
+                    }
+                    resultJson.put("unconnected_health_apps", arr)
+                    resultJson.put("success", false)
+                    resultJson.put("reason", "requires_connection")
+                    Log.i(TAG, "🏥 Detected ${unconnected.size} unconnected health app(s): ${unconnected.joinToString { it.name }}")
+                }
+            }
+
             Log.i(TAG, "[TOOL_RESULT] agent_log_health_data result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
@@ -2157,6 +2258,58 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_log_health_data",
                     requestId = requestId,
                     error = "Failed to log health data: ${e.message}",
+                )
+            )
+        }
+    }
+
+    private suspend fun executeOpenHealthAppSettings(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Opening Health Connect settings")
+
+            val callback = MainActivity.openHealthAppSettingsCallback
+            val opened = if (callback != null) {
+                _toolResults.emit(
+                    ToolExecutionResult.Status(
+                        toolName = "agent_open_health_app_settings",
+                        requestId = requestId,
+                        status = "waiting_for_user_confirmation",
+                        message = "Asking the user whether to open Health Connect settings.",
+                    )
+                )
+                withTimeoutOrNull(60_000L) {
+                    suspendCancellableCoroutine<Boolean> { cont ->
+                        callback { result ->
+                            if (cont.isActive) cont.resume(result)
+                        }
+                    }
+                } ?: false
+            } else {
+                Log.w(TAG, "openHealthAppSettingsCallback not registered (MainActivity not in foreground?)")
+                false
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", opened)
+                if (!opened) put("message", "User did not open Health Connect settings, or it could not be launched.")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_open_health_app_settings result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_open_health_app_settings",
+                    requestId = requestId,
+                    result = resultJson,
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_open_health_app_settings", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_open_health_app_settings",
+                    requestId = requestId,
+                    error = "Failed to open health app settings: ${e.message}",
                 )
             )
         }

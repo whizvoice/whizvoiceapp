@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -147,14 +146,9 @@ fun EnrollmentScreen(navController: NavController) {
                 is EnrollmentState.Recording -> RecordingContent(
                     clipIndex = s.clipIndex,
                     total = EnrollmentViewModel.TARGET_CLIPS,
+                    lastAcceptedScore = s.lastAcceptedScore,
                     onClipPcm = { pcm -> viewModel.onClipRecorded(pcm) },
-                )
-                is EnrollmentState.Confirming -> ConfirmingContent(
-                    clipIndex = s.clipIndex,
-                    total = EnrollmentViewModel.TARGET_CLIPS,
-                    score = s.score,
-                    onAccept = { viewModel.acceptClip() },
-                    onRedo = { viewModel.redoCurrentClip() },
+                    onRedoPrevious = { viewModel.redoPreviousClip() },
                 )
                 is EnrollmentState.RetryClip -> RetryContent(
                     clipIndex = s.clipIndex,
@@ -233,7 +227,9 @@ private fun NotEnrolledContent(
 private fun RecordingContent(
     clipIndex: Int,
     total: Int,
+    lastAcceptedScore: Float?,
     onClipPcm: (ShortArray) -> Unit,
+    onRedoPrevious: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var isRecording by remember { mutableStateOf(false) }
@@ -298,51 +294,23 @@ private fun RecordingContent(
                 }
             }
         }
+        if (lastAcceptedScore != null && clipIndex > 1) {
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "Clip ${clipIndex - 1}: ✓ ${"%.2f".format(lastAcceptedScore)}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(
+                onClick = onRedoPrevious,
+                enabled = !isRecording,
+            ) { Text("Re-record clip ${clipIndex - 1}") }
+        }
         Spacer(Modifier.height(16.dp))
         LinearProgressIndicator(
             progress = { (clipIndex - 1).toFloat() / total },
             modifier = Modifier.fillMaxWidth(),
         )
-    }
-}
-
-@Composable
-private fun ConfirmingContent(
-    clipIndex: Int,
-    total: Int,
-    score: Float,
-    onAccept: () -> Unit,
-    onRedo: () -> Unit,
-) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.tertiaryContainer,
-            modifier = Modifier.size(80.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                )
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "Clip $clipIndex of $total recorded",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Match score: ${"%.2f".format(score)}",
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onAccept) { Text(if (clipIndex >= total) "Finish enrollment" else "Save and continue") }
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onRedo) { Text("Re-record this clip") }
     }
 }
 

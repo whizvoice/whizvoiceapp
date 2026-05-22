@@ -49,9 +49,7 @@ class EnrollmentViewModel(
             try {
                 val score = scorer.score(pcm)
                 if (score >= ACCEPT_THRESHOLD) {
-                    _state.value = EnrollmentState.Confirming(
-                        clipIndex = current.clipIndex, score = score, pcm = pcm,
-                    )
+                    saveAndAdvance(current.clipIndex, pcm, score)
                     return@launch
                 }
 
@@ -62,12 +60,12 @@ class EnrollmentViewModel(
                 retriesForCurrentClip++
 
                 if (retriesForCurrentClip >= MAX_RETRIES) {
-                    // Exhausted: auto-accept the best failed attempt so the user
-                    // is never stuck. Threshold calibration reflects the score honestly.
+                    // Exhausted: auto-accept the best failed attempt so the user is
+                    // never stuck. Threshold calibration reflects the score honestly,
+                    // and the "Re-record this clip" button on the next Recording
+                    // screen lets them try again if they want.
                     val (bestPcm, bestScore) = bestFailedAttempt!!
-                    _state.value = EnrollmentState.Confirming(
-                        clipIndex = current.clipIndex, score = bestScore, pcm = bestPcm,
-                    )
+                    saveAndAdvance(current.clipIndex, bestPcm, bestScore)
                 } else {
                     _state.value = EnrollmentState.RetryClip(
                         clipIndex = current.clipIndex,
@@ -81,33 +79,39 @@ class EnrollmentViewModel(
         }
     }
 
-    fun acceptClip() {
-        val confirming = _state.value as? EnrollmentState.Confirming ?: return
-        collectedClips.add(confirming.pcm to confirming.score)
-        scope.launch {
-            try {
-                saveClip(confirming.clipIndex, confirming.pcm)
-                if (confirming.clipIndex >= TARGET_CLIPS) {
-                    finalize()
-                } else {
-                    resetCurrentClipState()
-                    _state.value = EnrollmentState.Recording(clipIndex = confirming.clipIndex + 1)
-                }
-            } catch (t: Throwable) {
-                _state.value = EnrollmentState.Error("Could not save clip: ${t.message}")
-            }
-        }
-    }
-
-    fun redoCurrentClip() {
-        val confirming = _state.value as? EnrollmentState.Confirming ?: return
+    /** Pop the most recent accepted clip and return to its Recording slot. */
+    fun redoPreviousClip() {
+        val current = _state.value as? EnrollmentState.Recording ?: return
+        if (current.clipIndex <= 1 || collectedClips.isEmpty()) return
+        collectedClips.removeAt(collectedClips.lastIndex)
         resetCurrentClipState()
-        _state.value = EnrollmentState.Recording(clipIndex = confirming.clipIndex)
+        _state.value = EnrollmentState.Recording(
+            clipIndex = current.clipIndex - 1,
+            lastAcceptedScore = collectedClips.lastOrNull()?.second,
+        )
     }
 
     fun retryCurrentClip() {
         val retry = _state.value as? EnrollmentState.RetryClip ?: return
         _state.value = EnrollmentState.Recording(clipIndex = retry.clipIndex)
+    }
+
+    private fun saveAndAdvance(clipIndex: Int, pcm: ShortArray, score: Float) {
+        collectedClips.add(pcm to score)
+        try {
+            saveClip(clipIndex, pcm)
+            if (clipIndex >= TARGET_CLIPS) {
+                finalize()
+            } else {
+                resetCurrentClipState()
+                _state.value = EnrollmentState.Recording(
+                    clipIndex = clipIndex + 1,
+                    lastAcceptedScore = score,
+                )
+            }
+        } catch (t: Throwable) {
+            _state.value = EnrollmentState.Error("Could not save clip: ${t.message}")
+        }
     }
 
     private fun resetCurrentClipState() {

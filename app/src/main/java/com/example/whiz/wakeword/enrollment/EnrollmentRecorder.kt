@@ -17,10 +17,12 @@ import androidx.annotation.RequiresPermission
  *     "Hey Whiz" right before releasing)
  *   - shorter than 2 s → left-pad with silence to 2 s
  *
- * Uses `VOICE_COMMUNICATION` to match the runtime wake-word path (HAL AEC). The
- * verifier centroid is computed against the distribution the runtime detector
- * sees — `VOICE_RECOGNITION` here would create a mismatch that hurts cosine
- * similarity at fire time.
+ * Uses `VOICE_RECOGNITION` to match the runtime wake-word path. The verifier
+ * centroid is computed against the distribution the runtime detector sees;
+ * using a different source here would create a mismatch that hurts cosine
+ * similarity at fire time. (Runtime switched from VOICE_COMMUNICATION to
+ * VOICE_RECOGNITION because VOICE_COMMUNICATION gets muted ~20 s after
+ * screen-off when no VOIP session is active.)
  *
  * Caller MUST ensure the mic isn't held by WakeWordService — EnrollmentScreen
  * stops the service in a DisposableEffect.
@@ -33,7 +35,7 @@ class EnrollmentRecorder {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE_HZ, CHANNEL, FORMAT)
         val bufSize = maxOf(minBuf, MAX_HOLD_SAMPLES * 2)
         val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE_HZ,
             CHANNEL,
             FORMAT,

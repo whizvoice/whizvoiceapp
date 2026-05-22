@@ -168,6 +168,24 @@ class WakeWordService : Service() {
             (value.toInt() and 0xFF).toByte(),
             (value.toInt() shr 8 and 0xFF).toByte()
         )
+
+        /** RMS of a PCM16-LE byte buffer, normalized to [0, 1]. */
+        private fun computeRms16le(buf: ByteArray, len: Int): Float {
+            var sumSq = 0.0
+            var n = 0
+            var i = 0
+            while (i < len - 1) {
+                val lo = buf[i].toInt() and 0xFF
+                val hi = buf[i + 1].toInt()  // signed sign-extends
+                val s16 = (hi shl 8) or lo
+                sumSq += s16.toDouble() * s16.toDouble()
+                n++
+                i += 2
+            }
+            if (n == 0) return 0f
+            val mean = sumSq / n
+            return (kotlin.math.sqrt(mean).toFloat() / Short.MAX_VALUE.toFloat()).coerceIn(0f, 1f)
+        }
     }
 
     @Inject
@@ -395,6 +413,12 @@ class WakeWordService : Service() {
                 var frameCount = 0L
                 var lastHeartbeatTime = System.currentTimeMillis()
                 var lastExternalRecheckTime = System.currentTimeMillis()
+                // Per-heartbeat-window RMS stats — to distinguish "mic returning silence"
+                // from "VAD misjudging speech" in the screen-off dead zone.
+                var rmsSum = 0.0
+                var rmsCount = 0L
+                var rmsMin = Float.MAX_VALUE
+                var rmsMax = 0f
 
                 while (true) {
                     val nowRecheck = System.currentTimeMillis()
@@ -450,6 +474,12 @@ class WakeWordService : Service() {
                     // Existing: feed audio to ring buffer for detection-clip upload.
                     audioRingBuffer?.write(buffer, 0, bytesRead)
 
+                    val chunkRms = computeRms16le(buffer, bytesRead)
+                    rmsSum += chunkRms
+                    rmsCount++
+                    if (chunkRms < rmsMin) rmsMin = chunkRms
+                    if (chunkRms > rmsMax) rmsMax = chunkRms
+
                     // New: chunk raw PCM16 bytes into FRAME_BYTES-sized frames, convert to
                     // float32 in [-1, 1], and feed engine. Partial frames carry over to
                     // the next read.
@@ -474,9 +504,19 @@ class WakeWordService : Service() {
                     frameCount++
                     val now = System.currentTimeMillis()
                     if (now - lastHeartbeatTime >= 10_000) {
-                        Log.d(TAG, "Heartbeat: processed $frameCount audio chunks, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}")
+                        val rmsMean = if (rmsCount > 0) (rmsSum / rmsCount).toFloat() else 0f
+                        val minStr = if (rmsCount > 0) "%.4f".format(rmsMin) else "n/a"
+                        Log.d(
+                            TAG,
+                            "Heartbeat: processed $frameCount audio chunks, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}, " +
+                                "rms min=$minStr max=${"%.4f".format(rmsMax)} mean=${"%.4f".format(rmsMean)}"
+                        )
                         lastHeartbeatTime = now
                         frameCount = 0
+                        rmsSum = 0.0
+                        rmsCount = 0
+                        rmsMin = Float.MAX_VALUE
+                        rmsMax = 0f
                     }
                 }
             } catch (e: Exception) {
@@ -530,9 +570,14 @@ class WakeWordService : Service() {
      * session as "external" and we'd flap pause→release→recreate.
      */
     private fun createAudioRecord(bufferSize: Int): AudioRecord? {
+        // VOICE_RECOGNITION instead of VOICE_COMMUNICATION: VOICE_COMMUNICATION is for
+        // active VOIP/call sessions and gets muted ~20 s after screen-off when no call
+        // is active, killing wake-word detection. VOICE_RECOGNITION is the source
+        // designed for always-listening hotword detectors and stays alive screen-off.
+        // Trade-off: no HAL AEC, so loud TTS playback can briefly self-trigger.
         val record = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -547,7 +592,7 @@ class WakeWordService : Service() {
             return null
         }
         ownAudioSessionId = record.audioSessionId
-        Log.d(TAG, "AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_COMMUNICATION, aecAttached=false (no canceler on this session)")
+        Log.d(TAG, "AudioRecord created — sessionId=$ownAudioSessionId, source=VOICE_RECOGNITION, aecAttached=false (no canceler on this session)")
         return record
     }
 
@@ -581,7 +626,7 @@ class WakeWordService : Service() {
                 )
 
                 audioRecord = AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
                     SAMPLE_RATE,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,

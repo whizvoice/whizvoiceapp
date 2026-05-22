@@ -278,6 +278,108 @@ fun CalendarPermissionDialog(
 }
 
 @Composable
+fun HealthConnectPermissionDialog(
+    onDismiss: () -> Unit,
+    onGrantPermission: () -> Unit
+) {
+    InlineDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Health Connect permission dialog"
+        },
+        title = {
+            Text(
+                "Health Connect Permission Required",
+                modifier = Modifier.semantics {
+                    contentDescription = "Health Connect permission required title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Whiz needs permission to write to Health Connect so it can log calories and weight. Would you like to grant permission now?",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Health Connect permission explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onGrantPermission()
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Grant Health Connect permission button"
+                }
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss Health Connect permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
+fun ConnectHealthAppDialog(
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit
+) {
+    InlineDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Open Health Connect settings dialog"
+        },
+        title = {
+            Text(
+                "Open Health Connect settings?",
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Open Health Connect settings to connect an app so you can see your data.",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { onOpen() },
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings button"
+                }
+            ) {
+                Text("Open Health Connect")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss Health Connect settings dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
 fun AccessibilityPermissionDialog(
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit

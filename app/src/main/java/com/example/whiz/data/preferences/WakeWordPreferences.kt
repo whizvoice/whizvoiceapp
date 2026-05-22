@@ -295,6 +295,10 @@ class WakeWordPreferences @Inject constructor(
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
         private const val KEY_VAD_ENABLED = "vad_enabled"
-        const val DEFAULT_VERIFIER_THRESHOLD = 0.45f
+        // Lowered from 0.45 → 0.35 to accommodate screen-off cosine scores running
+        // ~0.06–0.10 lower than screen-on (different HAL processing path even with the
+        // same VOICE_RECOGNITION source). 0.35 covers the observed screen-off floor
+        // (~0.38) with a small margin.
+        const val DEFAULT_VERIFIER_THRESHOLD = 0.35f
     }
 }
