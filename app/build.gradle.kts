@@ -217,7 +217,11 @@ dependencies {
 
     // Data & Storage
     implementation("androidx.datastore:datastore-preferences:1.2.1")
-    
+
+    // Health Connect — primary integration for calories/weight logging
+    // (replaces UI automation against Fitbit / Google Health rebrand)
+    implementation("androidx.health.connect:connect-client:1.1.0-rc03")
+
     // Text diffing library (Google's diff-match-patch)
     implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
 

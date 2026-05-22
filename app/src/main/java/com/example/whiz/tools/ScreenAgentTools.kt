@@ -168,11 +168,13 @@ class ScreenAgentTools @Inject constructor(
         val speakerphoneEnabled: Boolean = false
     )
 
-    data class FitbitResult(
+    data class HealthDataResult(
         val success: Boolean,
         val action: String? = null,
-        val calories: Int? = null,
-        val error: String? = null
+        val dataType: String? = null,
+        val value: Double? = null,
+        val source: String? = null,
+        val error: String? = null,
     )
 
     data class CloseOtherAppResult(
@@ -10132,13 +10134,13 @@ class ScreenAgentTools @Inject constructor(
      * Add quick calories to Fitbit food log.
      * Handles navigation from any Fitbit screen by pressing BACK to reach a known state.
      */
-    suspend fun addFitbitQuickCalories(calories: Int): FitbitResult {
+    suspend fun addFitbitQuickCalories(calories: Int): HealthDataResult {
         Log.i(TAG, "addFitbitQuickCalories called with calories=$calories")
         trackAction("addFitbitQuickCalories: $calories")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
-                ?: return FitbitResult(
+                ?: return HealthDataResult(
                     success = false,
                     error = "Accessibility service not enabled. Please enable it in settings."
                 )
@@ -10146,7 +10148,7 @@ class ScreenAgentTools @Inject constructor(
             // Launch Fitbit app
             val launchResult = launchApp("Fitbit")
             if (!launchResult.success) {
-                return FitbitResult(
+                return HealthDataResult(
                     success = false,
                     error = "Failed to launch Fitbit: ${launchResult.error}"
                 )
@@ -10159,7 +10161,7 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
-                return FitbitResult(
+                return HealthDataResult(
                     success = false,
                     error = "Fitbit did not become ready in time"
                 )
@@ -10212,7 +10214,7 @@ class ScreenAgentTools @Inject constructor(
                     return tapFoodTileAndLog(accessibilityService, calories)
                 }
                 FitbitScreen.UNKNOWN -> {
-                    return FitbitResult(
+                    return HealthDataResult(
                         success = false,
                         error = "Could not navigate to a known Fitbit screen after multiple attempts"
                     )
@@ -10220,7 +10222,7 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in addFitbitQuickCalories", e)
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to add quick calories: ${e.message}"
             )
@@ -10270,7 +10272,7 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapFoodTileAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapFoodTileAndLog: Looking for Food tile on Today screen")
 
         val displayMetrics = context.resources.displayMetrics
@@ -10353,7 +10355,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_food_tile_not_found", "Could not find Food tile on Fitbit Today screen")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find Food tile on Fitbit Today screen"
             )
@@ -10375,7 +10377,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_food_detail_not_loaded", "Food detail page did not load after tapping Food tile")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Food detail page did not load after tapping Food tile"
             )
@@ -10390,11 +10392,11 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapMoreOptionsAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapMoreOptionsAndLog: On Food detail page")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         // Check if the dropdown is already open (has "Add Quick Calories" text visible)
         val existingDropdown = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
@@ -10411,7 +10413,7 @@ class ScreenAgentTools @Inject constructor(
         if (moreOptionsNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_more_options_not_found", "Could not find 'More options' button on Food detail page")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'More options' button on Food detail page"
             )
@@ -10435,7 +10437,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_more_options_tap_failed", "Failed to tap 'More options' button")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'More options' button"
             )
@@ -10459,7 +10461,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_dropdown_not_appeared", "More options dropdown did not appear")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "More options dropdown did not appear"
             )
@@ -10474,17 +10476,17 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapAddQuickCaloriesAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapAddQuickCaloriesAndLog: Looking for 'Add Quick Calories' option")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
         if (addQuickCalNodes == null || addQuickCalNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_add_quick_cal_not_found", "Could not find 'Add Quick Calories' in dropdown menu")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'Add Quick Calories' in dropdown menu"
             )
@@ -10508,7 +10510,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_tap_failed", "Failed to tap 'Add Quick Calories'")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'Add Quick Calories'"
             )
@@ -10530,7 +10532,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_screen_not_loaded", "Add Quick Calories screen did not appear")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Add Quick Calories screen did not appear"
             )
@@ -10545,11 +10547,11 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun enterCaloriesAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "enterCaloriesAndLog: Entering $calories calories")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         // Find the edit_calories field
         val editCaloriesNodes = rootNode.findAccessibilityNodeInfosByViewId(
@@ -10558,7 +10560,7 @@ class ScreenAgentTools @Inject constructor(
         if (editCaloriesNodes == null || editCaloriesNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_calories_input_not_found", "Could not find calories input field")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find calories input field"
             )
@@ -10584,7 +10586,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_calories_entry_failed", "Failed to enter calorie amount")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to enter calorie amount"
             )
@@ -10592,7 +10594,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Find and tap "LOG THIS" button
         val logRootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content after entering calories")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content after entering calories")
 
         val logBtnNodes = logRootNode.findAccessibilityNodeInfosByViewId(
             "com.fitbit.FitbitMobile:id/log_this_btn"
@@ -10610,7 +10612,7 @@ class ScreenAgentTools @Inject constructor(
         if (logButton == null) {
             dumpUIHierarchy(logRootNode, "fitbit_log_button_not_found", "Could not find 'LOG THIS' button")
             logRootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'LOG THIS' button"
             )
@@ -10633,7 +10635,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_log_button_tap_failed", "Failed to tap 'LOG THIS' button")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'LOG THIS' button"
             )
@@ -10665,10 +10667,12 @@ class ScreenAgentTools @Inject constructor(
         clearRecentActions()
         Log.i(TAG, "Successfully logged $calories quick calories to Fitbit")
 
-        return FitbitResult(
+        return HealthDataResult(
             success = true,
             action = "add_quick_calories",
-            calories = calories
+            dataType = "calories",
+            value = calories.toDouble(),
+            source = "fitbit_ui",
         )
     }
 

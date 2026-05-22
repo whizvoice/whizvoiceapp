@@ -26,6 +26,17 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Health Connect: write nutrition (calories) and weight -->
+    <uses-permission android:name="android.permission.health.WRITE_NUTRITION" />
+    <uses-permission android:name="android.permission.health.WRITE_WEIGHT" />
+
+    <!-- Health Connect package visibility (Android 11+). Required so the HC client
+         can resolve com.google.android.apps.healthdata on devices where it ships as
+         a separate APK (Android 13 and below). -->
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
+
     <application
         android:name="com.example.whiz.WhizApplication"
         android:allowBackup="true"
@@ -51,6 +62,11 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Health Connect requires this intent filter so the system can
+                 deep-link into the app to show why permissions are needed. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
             </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"

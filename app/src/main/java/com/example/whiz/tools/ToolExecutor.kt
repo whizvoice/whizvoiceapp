@@ -62,7 +62,8 @@ class ToolExecutor @Inject constructor(
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
     private val authRepository: com.example.whiz.data.auth.AuthRepository,
     private val rageShakeDetector: RageShakeDetector,
-    private val bugReportSubmitter: BugReportSubmitter
+    private val bugReportSubmitter: BugReportSubmitter,
+    private val healthConnectManager: com.example.whiz.health.HealthConnectManager,
 ) {
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
@@ -80,7 +81,7 @@ class ToolExecutor @Inject constructor(
         "agent_dial_phone_number",
         "agent_press_call_button",
         "agent_save_calendar_event", "agent_draft_calendar_event",
-        "agent_fitbit_add_quick_calories",
+        "agent_log_health_data",
         "agent_delete_alarm",
         "agent_close_other_app",
         "agent_click",
@@ -362,8 +363,8 @@ class ToolExecutor @Inject constructor(
                         }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
-                    "agent_fitbit_add_quick_calories" -> {
-                        executeFitbitAddQuickCalories(requestId, params)
+                    "agent_log_health_data" -> {
+                        executeLogHealthData(requestId, params)
                     }
                     "agent_press_back" -> {
                         executePressBack(requestId)
@@ -2082,36 +2083,80 @@ class ToolExecutor @Inject constructor(
         return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_stop_ringing", "agent_get_next_alarm", "agent_delete_alarm", "agent_dismiss_amdroid_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
-    private suspend fun executeFitbitAddQuickCalories(requestId: String, params: JSONObject) {
+    private suspend fun executeLogHealthData(requestId: String, params: JSONObject) {
         try {
-            val calories = params.getInt("calories")
-            Log.i(TAG, "Adding quick calories to Fitbit: $calories")
+            val dataType = params.getString("data_type")
+            val value = params.getDouble("value")
+            Log.i(TAG, "Logging health data: type=$dataType value=$value")
 
-            val result = screenAgentTools.addFitbitQuickCalories(calories)
+            val hcResult = when (dataType) {
+                "calories" -> healthConnectManager.logCalories(value.toInt())
+                "weight" -> healthConnectManager.logWeight(value)
+                else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
+            }
+
+            val result: ScreenAgentTools.HealthDataResult = when (hcResult) {
+                is com.example.whiz.health.HealthConnectManager.Result.Success -> ScreenAgentTools.HealthDataResult(
+                    success = true,
+                    action = "logged_via_health_connect",
+                    dataType = dataType,
+                    value = value,
+                    source = "health_connect",
+                )
+
+                is com.example.whiz.health.HealthConnectManager.Result.Unavailable,
+                is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> {
+                    if (dataType == "calories") {
+                        Log.i(TAG, "Health Connect not usable (${hcResult.javaClass.simpleName}); falling back to Fitbit UI for calories")
+                        screenAgentTools.addFitbitQuickCalories(value.toInt())
+                    } else {
+                        val reason = when (hcResult) {
+                            is com.example.whiz.health.HealthConnectManager.Result.Unavailable -> hcResult.reason
+                            is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> "Missing write permission for ${hcResult.permission}"
+                            else -> "Unknown"
+                        }
+                        ScreenAgentTools.HealthDataResult(
+                            success = false,
+                            dataType = dataType,
+                            source = "health_connect",
+                            error = "Health Connect required for weight: $reason",
+                        )
+                    }
+                }
+
+                is com.example.whiz.health.HealthConnectManager.Result.Failed -> ScreenAgentTools.HealthDataResult(
+                    success = false,
+                    dataType = dataType,
+                    source = "health_connect",
+                    error = hcResult.error,
+                )
+            }
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.action?.let { put("action", it) }
-                result.calories?.let { put("calories", it) }
+                result.dataType?.let { put("data_type", it) }
+                result.value?.let { put("value", it) }
+                result.source?.let { put("source", it) }
                 result.error?.let { put("error", it) }
             }
 
-            Log.i(TAG, "[TOOL_RESULT] agent_fitbit_add_quick_calories result for requestId=$requestId: ${resultJson.toString(2)}")
+            Log.i(TAG, "[TOOL_RESULT] agent_log_health_data result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "agent_fitbit_add_quick_calories",
+                    toolName = "agent_log_health_data",
                     requestId = requestId,
-                    result = resultJson
+                    result = resultJson,
                 )
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing Fitbit add quick calories", e)
+            Log.e(TAG, "Error executing agent_log_health_data", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "agent_fitbit_add_quick_calories",
+                    toolName = "agent_log_health_data",
                     requestId = requestId,
-                    error = "Failed to add quick calories: ${e.message}"
+                    error = "Failed to log health data: ${e.message}",
                 )
             )
         }
