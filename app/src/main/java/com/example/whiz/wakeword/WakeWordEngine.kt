@@ -4,6 +4,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import android.util.Log
 import com.example.whiz.wakeword.audio.SelfEchoGate
 import com.example.whiz.wakeword.detection.AdaptiveThresholdController
 import com.example.whiz.wakeword.detection.ScoreSmoother
@@ -147,9 +148,15 @@ class WakeWordEngine(
         if (framesSinceLastInference < inferenceIntervalFrames) return
         framesSinceLastInference = 0
 
-        if (selfEchoGate?.isBlocking(atMs = nowMs) == true) return
+        if (selfEchoGate?.isBlocking(atMs = nowMs) == true) {
+            selfEchoBlockedCount++
+            if (selfEchoBlockedCount % 25L == 1L) Log.d(TAG, "selfEcho blocked (cumulative=$selfEchoBlockedCount)")
+            return
+        }
         if (vad?.shouldSkipInference(atMs = nowMs) == true) {
             vad.maybeRecordSkip(atMs = nowMs)
+            vadSkipCount++
+            if (vadSkipCount % 25L == 1L) Log.d(TAG, "vad skipped inference (cumulative=$vadSkipCount)")
             return
         }
 
@@ -164,23 +171,44 @@ class WakeWordEngine(
         _rawScores.tryEmit(score)
         adaptiveThreshold?.onNonFireScore(score)
 
+        // Log every interesting score, plus a periodic heartbeat
+        inferenceCount++
+        if (score >= 0.10f || inferenceCount % 30L == 0L) {
+            val thr = smoother?.let { adaptiveThreshold?.effectiveThreshold(baseStage1Threshold) ?: baseStage1Threshold } ?: debouncer.threshold
+            Log.d(TAG, "inf #$inferenceCount score=${"%.3f".format(score)} thr=${"%.3f".format(thr)}")
+        }
+
         if (smoother != null) {
             adaptiveThreshold?.let { ctrl ->
                 smoother.setEnterThreshold(ctrl.effectiveThreshold(baseStage1Threshold))
             }
-            if (vad != null && !vad.allowsFireAt(atMs = nowMs)) return
+            if (vad != null && !vad.allowsFireAt(atMs = nowMs)) {
+                if (score >= 0.10f) Log.d(TAG, "vad veto fire @ score=${"%.3f".format(score)}")
+                return
+            }
             if (smoother.onScore(score, atMs = nowMs)) {
+                Log.d(TAG, "smoother fired @ score=${"%.3f".format(score)} — running verifier")
                 val verdict = verifier?.verify(captureBuffer())
                 lastVerifierVerdict = verdict
                 if (verdict == null || verdict.gatePassed) {
+                    Log.d(TAG, "DETECTION emit @ score=${"%.3f".format(score)} verdict=$verdict")
                     _detections.tryEmit(DetectionEvent(timestampMs = nowMs, confidence = score))
+                } else {
+                    Log.d(TAG, "verifier rejected @ score=${"%.3f".format(score)} verdict=$verdict")
                 }
             }
         } else {
             val event = debouncer.update(score, nowMs)
-            if (event != null) _detections.tryEmit(event)
+            if (event != null) {
+                Log.d(TAG, "DETECTION emit (debouncer) @ score=${"%.3f".format(score)}")
+                _detections.tryEmit(event)
+            }
         }
     }
+
+    private var inferenceCount: Long = 0L
+    private var selfEchoBlockedCount: Long = 0L
+    private var vadSkipCount: Long = 0L
 
     private fun pumpVad(samples: FloatArray, sampleStartMs: Long, gate: VadGate) {
         var srcIdx = 0
@@ -318,6 +346,7 @@ class WakeWordEngine(
     }
 
     companion object {
+        private const val TAG = "WakeWordEngine"
         const val SAMPLE_RATE_HZ = 16000
         const val FRAME_MS = 80
         const val FRAME_SAMPLES = SAMPLE_RATE_HZ / 1000 * FRAME_MS  // 1280

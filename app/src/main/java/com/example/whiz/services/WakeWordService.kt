@@ -496,7 +496,13 @@ class WakeWordService : Service() {
             val sidecar = File(wakeWordDir, "enrollment/enrollment.json")
             val embeddingsFile = File(wakeWordDir, "embeddings.bin")
             if (!sidecar.exists() || !embeddingsFile.exists() || embeddingsFile.length() <= 8) {
-                Log.w(TAG, "Voice match toggle ON but no enrollment found — skipping verifier")
+                // Fail OPEN: persist a broken flag + auto-disable the toggle so Settings
+                // surfaces the error to the user. Wake word continues working in
+                // anyone-can-trigger mode — a silently-broken wake word is worse than
+                // a permissive one.
+                Log.w(TAG, "Voice match toggle ON but enrollment missing — auto-disabling, surfacing error in Settings")
+                wakeWordPreferences.setVoiceMatchBroken(true)
+                wakeWordPreferences.setVoiceMatchEnabled(false)
                 return null
             }
             val embedder = CamPlusOrtEmbedder(this).also { camPlusEmbedder = it }

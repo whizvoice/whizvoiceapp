@@ -927,6 +927,7 @@ fun WakeWordSection(viewModel: SettingsViewModel, navController: NavController) 
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     val isVoiceMatchEnabled by viewModel.isVoiceMatchEnabled.collectAsState()
     val isVoiceEnrolled by viewModel.isVoiceEnrolled.collectAsState()
+    val isVoiceMatchBroken by viewModel.isVoiceMatchBroken.collectAsState()
 
     // Re-check enrollment state when returning from the enrollment screen.
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
@@ -1006,6 +1007,39 @@ fun WakeWordSection(viewModel: SettingsViewModel, navController: NavController) 
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+
+        // Voice match broken banner — surfaces the auto-disable so user knows to re-enroll
+        if (isVoiceMatchBroken) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Voice match enrollment lost banner" },
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Voice match was turned off",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = "Your enrollment data is missing. Re-enroll to use voice match again. Wake word is still active for any voice.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    TextButton(onClick = { viewModel.dismissVoiceMatchBroken() }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
 
         // Match my voice only
         Row(

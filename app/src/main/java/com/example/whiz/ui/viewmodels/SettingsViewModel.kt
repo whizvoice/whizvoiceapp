@@ -78,6 +78,7 @@ class SettingsViewModel @Inject constructor(
 
     val isWakeWordEnabled: StateFlow<Boolean> = wakeWordPreferences.isEnabled
     val isVoiceMatchEnabled: StateFlow<Boolean> = wakeWordPreferences.isVoiceMatchEnabled
+    val isVoiceMatchBroken: StateFlow<Boolean> = wakeWordPreferences.isVoiceMatchBroken
 
     private val _isVoiceEnrolled = MutableStateFlow(checkVoiceEnrolledOnce())
     val isVoiceEnrolled: StateFlow<Boolean> = _isVoiceEnrolled.asStateFlow()
@@ -85,10 +86,16 @@ class SettingsViewModel @Inject constructor(
     /** Re-read enrollment state from disk. Call from Settings screen onResume. */
     fun refreshVoiceEnrollmentState() {
         _isVoiceEnrolled.value = checkVoiceEnrolledOnce()
-        // If user just deleted enrollment, force voice-match off to keep prefs consistent.
+        // If toggle was ON but enrollment is gone, treat as broken: auto-disable
+        // the toggle AND surface an error banner so the user knows to re-enroll.
         if (!_isVoiceEnrolled.value && wakeWordPreferences.isVoiceMatchEnabledOnce()) {
+            wakeWordPreferences.setVoiceMatchBroken(true)
             wakeWordPreferences.setVoiceMatchEnabled(false)
         }
+    }
+
+    fun dismissVoiceMatchBroken() {
+        wakeWordPreferences.setVoiceMatchBroken(false)
     }
 
     private fun checkVoiceEnrolledOnce(): Boolean {
