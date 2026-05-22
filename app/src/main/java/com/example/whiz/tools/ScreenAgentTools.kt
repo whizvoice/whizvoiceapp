@@ -10258,6 +10258,12 @@ class ScreenAgentTools @Inject constructor(
         }
 
         if (!foodTileFound) {
+            // New "Google Health" UI fallback: the Today tab no longer carries Food tiles.
+            // The bottom-nav now includes a "Health" tab — tap it and search there.
+            foodTileFound = tryFindFoodViaHealthTab(accessibilityService, centerX, screenHeight)
+        }
+
+        if (!foodTileFound) {
             val dumpRoot = accessibilityService.getCurrentRootNode()
             if (dumpRoot != null) {
                 dumpUIHierarchy(dumpRoot, "fitbit_food_tile_not_found", "Could not find Food tile on Fitbit Today screen")
@@ -10292,6 +10298,82 @@ class ScreenAgentTools @Inject constructor(
         }
 
         return tapMoreOptionsAndLog(accessibilityService, calories)
+    }
+
+    /**
+     * Fallback for the redesigned "Google Health" Fitbit UI where the Today tab no
+     * longer hosts a Food tile. Taps the "Health" bottom-nav tab (when present),
+     * then scrolls looking for a clickable "Food" entry. Returns true if Food was
+     * tapped successfully, false otherwise (caller will then report the original
+     * fitbit_food_tile_not_found error).
+     */
+    private suspend fun tryFindFoodViaHealthTab(
+        accessibilityService: WhizAccessibilityService,
+        centerX: Float,
+        screenHeight: Int
+    ): Boolean {
+        val rootForTab = accessibilityService.getCurrentRootNode() ?: return false
+        val healthNode = findNodeByText(rootForTab, "Health")
+        if (healthNode == null) {
+            rootForTab.recycle()
+            return false
+        }
+
+        // Only treat this as the bottom-nav Health tab if it's in the lower portion
+        // of the screen — avoids accidentally tapping a "Health" string elsewhere.
+        val healthBounds = Rect()
+        healthNode.getBoundsInScreen(healthBounds)
+        if (healthBounds.top < screenHeight * 0.75) {
+            healthNode.recycle()
+            rootForTab.recycle()
+            return false
+        }
+
+        val clickableHealth = findClickableParent(healthNode)
+        if (clickableHealth == null) {
+            healthNode.recycle()
+            rootForTab.recycle()
+            return false
+        }
+
+        val tapped = clickableHealth.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        Log.i(TAG, "tryFindFoodViaHealthTab: tapped Health bottom tab: $tapped")
+        clickableHealth.recycle()
+        healthNode.recycle()
+        rootForTab.recycle()
+        if (!tapped) return false
+
+        delay(800)
+
+        val maxScrollAttempts = 10
+        for (scrollAttempt in 0..maxScrollAttempts) {
+            val rootNode = accessibilityService.getCurrentRootNode() ?: continue
+            val foodNode = findNodeByText(rootNode, "Food")
+            if (foodNode != null) {
+                Log.i(TAG, "Found 'Food' under Health tab on attempt $scrollAttempt")
+                val clickable = findClickableParent(foodNode)
+                if (clickable != null) {
+                    val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.i(TAG, "Clicked Food entry under Health tab: $clicked")
+                    clickable.recycle()
+                    foodNode.recycle()
+                    rootNode.recycle()
+                    if (clicked) return true
+                } else {
+                    foodNode.recycle()
+                }
+            }
+            rootNode.recycle()
+
+            if (scrollAttempt < maxScrollAttempts) {
+                Log.d(TAG, "Food not found under Health, scrolling down (attempt ${scrollAttempt + 1})")
+                accessibilityService.performScrollGesture(
+                    centerX, screenHeight * 0.7f, centerX, screenHeight * 0.3f, duration = 300
+                )
+                delay(400)
+            }
+        }
+        return false
     }
 
     /**

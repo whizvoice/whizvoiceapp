@@ -8,6 +8,56 @@ from helpers import (
 )
 
 
+def test_autofix_fitbit_food_tile_not_found(tester):
+    """Verify fix for fitbit_food_tile_not_found.
+
+    The Fitbit app was redesigned (now branded "Google Health") and the Today
+    tab no longer carries a Food tile. The fix adds a fallback that taps the
+    new "Health" bottom-nav tab and scrolls there before giving up. This test
+    triggers the addFitbitQuickCalories screen-agent path by sending a voice
+    command that asks the assistant to log calories, then checks that the
+    agent advanced past the Today tab (i.e. did not stop at the
+    fitbit_food_tile_not_found error).
+    """
+    success, error = navigate_to_my_chats(tester, "autofix_fitbit_food_tile_not_found")
+    assert success, f"Could not reach My Chats: {error}"
+
+    tester.tap(950, 2225)
+    time.sleep(2)
+
+    send_voice_command("log 1500 calories in fitbit")
+    time.sleep(45)
+
+    tester.screenshot("/tmp/whiz_fitbit_food.png")
+    on_fitbit_food = tester.validate_screenshot(
+        "/tmp/whiz_fitbit_food.png",
+        "The Fitbit / Google Health app is showing a food-related screen such "
+        "as 'Food', 'Add Quick Calories', a calories entry field, a food log "
+        "detail screen, or a food/nutrition tab"
+    )
+
+    if on_fitbit_food:
+        return
+
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+    tester.screenshot("/tmp/whiz_fitbit_food_chat.png")
+    chat_ok = tester.validate_screenshot(
+        "/tmp/whiz_fitbit_food_chat.png",
+        "The Whiz chat shows an assistant message about logging calories, food, "
+        "or Fitbit. It must NOT show an error message containing 'Could not "
+        "find Food tile on Fitbit Today screen'."
+    )
+    if not chat_ok:
+        save_failed_screenshot(
+            tester, "autofix_fitbit_food_tile_not_found", "validation_failed"
+        )
+    assert chat_ok, (
+        "Screen agent did not advance past the Today tab — "
+        "fitbit_food_tile_not_found appears to still be triggering"
+    )
+
+
 def test_autofix_ytmusic_app_not_ready(tester):
     """Verify fix for ytmusic_app_not_ready.
 
