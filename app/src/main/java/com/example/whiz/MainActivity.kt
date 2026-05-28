@@ -244,49 +244,24 @@ class MainActivity : ComponentActivity() {
     private val showConnectHealthAppDialog = mutableStateOf(false)
 
     /**
-     * Open Health Connect's main page (the "Your health apps" list at
-     * com.google.android.healthconnect.controller/...MainActivity). From there the
-     * user taps the row for any "Not connected" app to wire it up to HC.
-     *
-     * We try public actions first; if the standard Settings action somehow lands on
-     * a Settings search activity instead of the HC controller (observed on some
-     * builds), we fall back to launching the HC controller package directly.
+     * Open Health Connect's home page, where the user can navigate to "Your health
+     * apps" and connect any "Not connected" entry. Requires a matching <queries>
+     * intent-action entry in AndroidManifest.xml so resolveActivity can see the HC
+     * controller.
      */
     private fun openHealthConnectSettings(): Boolean {
-        // Try the Android 14+ public Settings action; verify it resolves to the HC
-        // controller package, not the Settings app's generic search activity.
-        val settingsAction = "android.settings.HEALTH_CONNECT_SETTINGS"
-        val candidate = Intent(settingsAction).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val resolved = candidate.resolveActivity(packageManager)
-        val hcController = "com.google.android.healthconnect.controller"
-        if (resolved != null && resolved.packageName == hcController) {
-            return try {
-                startActivity(candidate)
-                Log.i(TAG, "Opened Health Connect settings via $settingsAction (resolved to ${resolved.flattenToShortString()})")
-                true
-            } catch (e: Exception) {
-                Log.w(TAG, "$settingsAction resolved but startActivity failed", e)
-                false
-            }
-        } else {
-            Log.d(TAG, "$settingsAction did not resolve to HC controller (got ${resolved?.flattenToShortString()}); falling back to direct package launch")
+        val intent = Intent("android.health.connect.action.HEALTH_HOME_SETTINGS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(packageManager) == null) {
+            Log.w(TAG, "No activity handles HEALTH_HOME_SETTINGS — Health Connect not available on this device")
+            return false
         }
-
-        // Fallback: launch the HC controller's main activity directly.
-        val direct = packageManager.getLaunchIntentForPackage(hcController)
-            ?: Intent().apply {
-                component = android.content.ComponentName(
-                    hcController,
-                    "com.android.healthconnect.controller.MainActivity",
-                )
-            }
-        direct.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
-            startActivity(direct)
-            Log.i(TAG, "Opened Health Connect settings via direct package launch ($hcController)")
+            startActivity(intent)
+            Log.i(TAG, "Opened Health Connect home settings")
             true
         } catch (e: Exception) {
-            Log.w(TAG, "Could not open Health Connect settings — direct launch failed", e)
+            Log.w(TAG, "Failed to open Health Connect home settings", e)
             false
         }
     }

@@ -35,9 +35,14 @@
 
     <!-- Health Connect package visibility (Android 11+). Required so the HC client
          can resolve com.google.android.apps.healthdata on devices where it ships as
-         a separate APK (Android 13 and below). -->
+         a separate APK (Android 13 and below), and so we can resolve whichever
+         package handles HEALTH_HOME_SETTINGS (the in-system HC controller on
+         Android 14+). -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="android.health.connect.action.HEALTH_HOME_SETTINGS" />
+        </intent>
     </queries>
 
     <application
