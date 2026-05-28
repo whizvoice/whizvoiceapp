@@ -344,6 +344,7 @@ fun SettingsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TokenInputSection(
     title: String,
@@ -423,45 +424,59 @@ fun TokenInputSection(
                             "Asana Access Token" -> "Asana token set"
                             else -> "$title token set"
                         }
-                        Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Spacer(modifier = Modifier.width(8.dp))
                         val changeEnabled = !isBusy
                         Log.d("TokenInputSection", "[$title] Change button state - enabled: $changeEnabled, isBusy: $isBusy")
-                        // Use title-specific content description for Change button
                         val changeButtonDescription = when(title) {
                             "Claude API Key" -> "Change Claude token"
                             "Asana Access Token" -> "Change Asana token"
                             else -> "Change $title"
                         }
-                        LoadingButton(
-                            text = "Change",
-                            onClick = { onInputChange(""); editMode = true },
-                            isLoading = false,
-                            enabled = changeEnabled,
-                            contentDescription = changeButtonDescription
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Clear should always be enabled when token exists - user should always be able to remove a token
                         val clearEnabled = true // Always allow clearing when token is set
                         Log.d("TokenInputSection", "[$title] Clear button state - enabled: $clearEnabled, isBusy: $isBusy, clearOpInitiated: $clearOperationInitiated")
-                        // Use title-specific content description for Clear button
                         val clearButtonDescription = when(title) {
                             "Claude API Key" -> "Clear Claude token"
                             "Asana Access Token" -> "Clear Asana token"
                             else -> "Clear $title"
                         }
-                        ClearButton(
-                            onClick = {
-                                saveOperationInitiated = false // Cancel any pending save
-                                clearOperationInitiated = true
-                                onClearClick()
-                            },
-                            isLoading = isBusy && clearOperationInitiated,
-                            enabled = clearEnabled,
-                            modifier = Modifier.semantics { contentDescription = clearButtonDescription }
-                        )
+                        // FlowRow so the action buttons wrap to a second line at large display
+                        // scales instead of starving "Token is set." of horizontal space.
+                        FlowRow(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Token is set.", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                LoadingButton(
+                                    text = "Change",
+                                    onClick = { onInputChange(""); editMode = true },
+                                    isLoading = false,
+                                    enabled = changeEnabled,
+                                    contentDescription = changeButtonDescription
+                                )
+                                ClearButton(
+                                    onClick = {
+                                        saveOperationInitiated = false // Cancel any pending save
+                                        clearOperationInitiated = true
+                                        onClearClick()
+                                    },
+                                    isLoading = isBusy && clearOperationInitiated,
+                                    enabled = clearEnabled,
+                                    modifier = Modifier.semantics { contentDescription = clearButtonDescription }
+                                )
+                            }
+                        }
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
                         // In edit mode for an existing token (user clicked "Change")
