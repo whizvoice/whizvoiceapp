@@ -4,12 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -32,6 +37,8 @@ internal fun InlineDialog(
     confirmButton: @Composable () -> Unit,
     dismissButton: @Composable (() -> Unit)? = null
 ) {
+    val configuration = LocalConfiguration.current
+    val maxDialogHeight = (configuration.screenHeightDp * 0.9f).dp
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -46,6 +53,7 @@ internal fun InlineDialog(
         Surface(
             modifier = modifier
                 .widthIn(max = 340.dp)
+                .heightIn(max = maxDialogHeight)
                 .padding(horizontal = 24.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -63,10 +71,34 @@ internal fun InlineDialog(
                     Spacer(Modifier.height(16.dp))
                 }
                 if (text != null) {
-                    ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )) {
-                        text()
+                    // Body is scrollable so tall content at large display scales doesn't
+                    // push the action buttons off-screen. weight(fill = false) lets the
+                    // dialog wrap content when it fits and only consume remaining height
+                    // when content overflows. Top/bottom dividers appear when there's
+                    // hidden content in that direction — the M3 signal for "scrollable".
+                    val scrollState = rememberScrollState()
+                    val canScrollUp by remember {
+                        derivedStateOf { scrollState.value > 0 }
+                    }
+                    val canScrollDown by remember {
+                        derivedStateOf { scrollState.value < scrollState.maxValue }
+                    }
+                    if (canScrollUp) {
+                        HorizontalDivider()
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(scrollState)
+                    ) {
+                        ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )) {
+                            text()
+                        }
+                    }
+                    if (canScrollDown) {
+                        HorizontalDivider()
                     }
                     Spacer(Modifier.height(24.dp))
                 }
