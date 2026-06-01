@@ -24,6 +24,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.health.connect.client.PermissionController
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -92,6 +93,17 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
         @Volatile
         var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand Health Connect permission when agent_log_health_data needs a write perm.
+        // `permissions` is the set of HC permission strings to request; callback receives the granted subset.
+        @Volatile
+        var requestHealthConnectPermissionCallback: ((permissions: Set<String>, onResult: (Set<String>) -> Unit) -> Unit)? = null
+
+        // Callback for opening a health app so the user can wire it up as a Health Connect data source.
+        // Shows an in-app confirmation dialog first; on confirm, launches the target app. `onResult`
+        // receives true if the user accepted (and the launch was attempted), false if they dismissed.
+        @Volatile
+        var openHealthAppSettingsCallback: ((onResult: (Boolean) -> Unit) -> Unit)? = null
     }
     
     // No longer needed - using idempotent navigation instead of duplicate prevention
@@ -210,6 +222,48 @@ class MainActivity : ComponentActivity() {
         }
         calendarPermissionOnGranted = null
         calendarPermissionOnDenied = null
+    }
+
+    // Health Connect permission launcher (on-demand, triggered by agent_log_health_data)
+    private var healthConnectPermissionOnResult: ((Set<String>) -> Unit)? = null
+    private var healthConnectPermissionsToRequest: Set<String> = emptySet()
+    private val showHealthConnectPermissionDialog = mutableStateOf(false)
+
+    private val requestHealthConnectPermissionLauncher = registerForActivityResult(
+        PermissionController.createRequestPermissionResultContract()
+    ) { granted: Set<String> ->
+        Log.d(TAG, "Health Connect permission result: $granted (requested: $healthConnectPermissionsToRequest)")
+        showHealthConnectPermissionDialog.value = false
+        healthConnectPermissionOnResult?.invoke(granted)
+        healthConnectPermissionOnResult = null
+        healthConnectPermissionsToRequest = emptySet()
+    }
+
+    // "Open a health app to set up its Health Connect connection" dialog state.
+    private var connectHealthAppOnResult: ((Boolean) -> Unit)? = null
+    private val showConnectHealthAppDialog = mutableStateOf(false)
+
+    /**
+     * Open Health Connect's home page, where the user can navigate to "Your health
+     * apps" and connect any "Not connected" entry. Requires a matching <queries>
+     * intent-action entry in AndroidManifest.xml so resolveActivity can see the HC
+     * controller.
+     */
+    private fun openHealthConnectSettings(): Boolean {
+        val intent = Intent("android.health.connect.action.HEALTH_HOME_SETTINGS")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(packageManager) == null) {
+            Log.w(TAG, "No activity handles HEALTH_HOME_SETTINGS — Health Connect not available on this device")
+            return false
+        }
+        return try {
+            startActivity(intent)
+            Log.i(TAG, "Opened Health Connect home settings")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to open Health Connect home settings", e)
+            false
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -380,6 +434,21 @@ class MainActivity : ComponentActivity() {
             calendarPermissionOnGranted = onGranted
             calendarPermissionOnDenied = onDenied
             showCalendarPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand Health Connect permission (used by agent_log_health_data)
+        requestHealthConnectPermissionCallback = { permissions, onResult ->
+            Log.d(TAG, "requestHealthConnectPermissionCallback invoked for: $permissions")
+            healthConnectPermissionsToRequest = permissions
+            healthConnectPermissionOnResult = onResult
+            showHealthConnectPermissionDialog.value = true
+        }
+
+        // Set up static callback for "open a health app so the user can connect it to HC".
+        openHealthAppSettingsCallback = { onResult ->
+            Log.d(TAG, "openHealthAppSettingsCallback invoked")
+            connectHealthAppOnResult = onResult
+            showConnectHealthAppDialog.value = true
         }
 
         setContent {
@@ -593,6 +662,45 @@ class MainActivity : ComponentActivity() {
                                         Manifest.permission.READ_CALENDAR,
                                         Manifest.permission.WRITE_CALENDAR
                                     ))
+                                }
+                            }
+                        )
+                    }
+
+                    // On-demand "open health app to connect it to HC" dialog
+                    if (showConnectHealthAppDialog.value) {
+                        com.example.whiz.ui.components.ConnectHealthAppDialog(
+                            onDismiss = {
+                                showConnectHealthAppDialog.value = false
+                                connectHealthAppOnResult?.invoke(false)
+                                connectHealthAppOnResult = null
+                            },
+                            onOpen = {
+                                showConnectHealthAppDialog.value = false
+                                val opened = openHealthConnectSettings()
+                                connectHealthAppOnResult?.invoke(opened)
+                                connectHealthAppOnResult = null
+                            }
+                        )
+                    }
+
+                    // On-demand Health Connect permission dialog (triggered by agent_log_health_data)
+                    if (showHealthConnectPermissionDialog.value) {
+                        com.example.whiz.ui.components.HealthConnectPermissionDialog(
+                            onDismiss = {
+                                showHealthConnectPermissionDialog.value = false
+                                healthConnectPermissionOnResult?.invoke(emptySet())
+                                healthConnectPermissionOnResult = null
+                                healthConnectPermissionsToRequest = emptySet()
+                            },
+                            onGrantPermission = {
+                                val perms = healthConnectPermissionsToRequest
+                                if (perms.isEmpty()) {
+                                    Log.w(TAG, "HealthConnect grant tapped but no permissions to request; ignoring")
+                                } else {
+                                    executeWithUnlock {
+                                        requestHealthConnectPermissionLauncher.launch(perms)
+                                    }
                                 }
                             }
                         )
@@ -1150,6 +1258,8 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
+        requestHealthConnectPermissionCallback = null
+        openHealthAppSettingsCallback = null
 
         // Unregister test broadcast receiver if it was registered
         if (BuildConfig.DEBUG && testTranscriptionReceiver != null) {

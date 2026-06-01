@@ -24,6 +24,7 @@ import com.example.whiz.ui.screens.ChatScreen
 import com.example.whiz.ui.screens.ChatsListScreen
 import com.example.whiz.ui.screens.LoginScreen
 import com.example.whiz.ui.screens.SettingsScreen
+import com.example.whiz.ui.screens.enrollment.EnrollmentScreen
 import com.example.whiz.ui.viewmodels.AuthViewModel
 import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.ui.viewmodels.registerForTestTranscription
@@ -284,6 +285,24 @@ fun WhizNavHost(
                     viewModel.registerForTestTranscription()
                 }
             )
+        }
+
+        composable(
+            route = Screen.WakeWordEnrollment.route,
+            enterTransition = {
+                slideIntoContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.Start,
+                    animationSpec = tween(ANIMATION_DURATION)
+                )
+            },
+            exitTransition = {
+                slideOutOfContainer(
+                    towards = AnimatedContentTransitionScope.SlideDirection.End,
+                    animationSpec = tween(ANIMATION_DURATION)
+                )
+            }
+        ) {
+            EnrollmentScreen(navController = navController)
         }
 
     }

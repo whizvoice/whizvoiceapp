@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -366,6 +367,29 @@ class WhizAccessibilityService : AccessibilityService() {
             rootInActiveWindow
         } catch (e: Exception) {
             Log.e(TAG, "Error getting root node for package $packageName", e)
+            null
+        }
+    }
+
+    /**
+     * Returns the on-screen bounds of the currently visible input method (keyboard)
+     * window, or null if no IME window is present (keyboard closed) or windows are
+     * unavailable. Used by draft flows to size the copyedit overlay relative to the
+     * keyboard rather than relative to the input field.
+     */
+    fun getImeWindowBounds(): Rect? {
+        return try {
+            val all = windows ?: return null
+            for (window in all) {
+                if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                    val rect = Rect()
+                    window.getBoundsInScreen(rect)
+                    return rect
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting IME window bounds", e)
             null
         }
     }

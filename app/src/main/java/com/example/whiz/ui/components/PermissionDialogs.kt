@@ -4,15 +4,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 
@@ -22,7 +29,6 @@ import androidx.compose.ui.zIndex
  * AlertDialog creates a separate window that doesn't inherit
  * setShowWhenLocked(true), making buttons untappable on the lock screen.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun InlineDialog(
     onDismissRequest: () -> Unit,
@@ -32,6 +38,8 @@ internal fun InlineDialog(
     confirmButton: @Composable () -> Unit,
     dismissButton: @Composable (() -> Unit)? = null
 ) {
+    val configuration = LocalConfiguration.current
+    val maxDialogHeight = (configuration.screenHeightDp * 0.9f).dp
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -46,6 +54,7 @@ internal fun InlineDialog(
         Surface(
             modifier = modifier
                 .widthIn(max = 340.dp)
+                .heightIn(max = maxDialogHeight)
                 .padding(horizontal = 24.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -63,22 +72,93 @@ internal fun InlineDialog(
                     Spacer(Modifier.height(16.dp))
                 }
                 if (text != null) {
-                    ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )) {
-                        text()
+                    // Body is scrollable so tall content at large display scales doesn't
+                    // push the action buttons off-screen. weight(fill = false) lets the
+                    // dialog wrap content when it fits and only consume remaining height
+                    // when content overflows. Top/bottom dividers appear when there's
+                    // hidden content in that direction — the M3 signal for "scrollable".
+                    val scrollState = rememberScrollState()
+                    val canScrollUp by remember {
+                        derivedStateOf { scrollState.value > 0 }
+                    }
+                    val canScrollDown by remember {
+                        derivedStateOf { scrollState.value < scrollState.maxValue }
+                    }
+                    if (canScrollUp) {
+                        HorizontalDivider()
+                    }
+                    Column(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(scrollState)
+                    ) {
+                        ProvideTextStyle(MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )) {
+                            text()
+                        }
+                    }
+                    if (canScrollDown) {
+                        HorizontalDivider()
                     }
                     Spacer(Modifier.height(24.dp))
                 }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                DialogButtonRow(modifier = Modifier.fillMaxWidth()) {
                     if (dismissButton != null) {
                         dismissButton()
                     }
                     confirmButton()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Material 3 dialog action layout. Lays the buttons out as a single end-aligned
+ * row when they fit, and falls back to a vertical stack — with the LAST child
+ * (the confirm button) on top — when they don't. Mirrors what the framework's
+ * AlertDialogFlowRow does, but as a custom Layout so it works inside our
+ * activity-local InlineDialog.
+ *
+ * Spacing per M3 spec: 8dp between buttons in a row, 12dp between stacked rows.
+ */
+@Composable
+private fun DialogButtonRow(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        if (measurables.isEmpty()) return@Layout layout(0, 0) {}
+        val mainAxisSpacingPx = 8.dp.roundToPx()
+        val crossAxisSpacingPx = 12.dp.roundToPx()
+        // Measure with unbounded width so children take their natural size.
+        // Material 3 Button, given a bounded maxWidth via fillMaxWidth on this
+        // layout, expands to fill (centering its pill inside); an infinite
+        // maxWidth forces it to wrap to its content instead, so end-alignment
+        // hugs the actual visible button edge.
+        val childConstraints = Constraints(minWidth = 0, maxWidth = Constraints.Infinity)
+        val placeables = measurables.map { it.measure(childConstraints) }
+        val rowWidth = placeables.sumOf { it.width } +
+            mainAxisSpacingPx * (placeables.size - 1)
+        if (rowWidth <= constraints.maxWidth) {
+            val rowHeight = placeables.maxOf { it.height }
+            layout(constraints.maxWidth, rowHeight) {
+                var x = constraints.maxWidth - rowWidth
+                placeables.forEach { p ->
+                    p.placeRelative(x, (rowHeight - p.height) / 2)
+                    x += p.width + mainAxisSpacingPx
+                }
+            }
+        } else {
+            val width = constraints.maxWidth
+            val totalHeight = placeables.sumOf { it.height } +
+                crossAxisSpacingPx * (placeables.size - 1)
+            layout(width, totalHeight) {
+                var y = 0
+                placeables.asReversed().forEach { p ->
+                    p.placeRelative(width - p.width, y)
+                    y += p.height + crossAxisSpacingPx
                 }
             }
         }
@@ -269,6 +349,108 @@ fun CalendarPermissionDialog(
                 onClick = onDismiss,
                 modifier = Modifier.semantics {
                     contentDescription = "Dismiss calendar permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
+fun HealthConnectPermissionDialog(
+    onDismiss: () -> Unit,
+    onGrantPermission: () -> Unit
+) {
+    InlineDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Health Connect permission dialog"
+        },
+        title = {
+            Text(
+                "Health Connect Permission Required",
+                modifier = Modifier.semantics {
+                    contentDescription = "Health Connect permission required title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Whiz needs permission to write to Health Connect so it can log calories and weight. Would you like to grant permission now?",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Health Connect permission explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onGrantPermission()
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Grant Health Connect permission button"
+                }
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss Health Connect permission dialog button"
+                }
+            ) {
+                Text("Not Now")
+            }
+        }
+    )
+}
+
+@Composable
+fun ConnectHealthAppDialog(
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit
+) {
+    InlineDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics {
+            contentDescription = "Open Health Connect settings dialog"
+        },
+        title = {
+            Text(
+                "Open Health Connect settings?",
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings title"
+                }
+            )
+        },
+        text = {
+            Text(
+                "Open Health Connect settings to connect an app so you can see your data.",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = { onOpen() },
+                modifier = Modifier.semantics {
+                    contentDescription = "Open Health Connect settings button"
+                }
+            ) {
+                Text("Open Health Connect")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.semantics {
+                    contentDescription = "Dismiss Health Connect settings dialog button"
                 }
             ) {
                 Text("Not Now")

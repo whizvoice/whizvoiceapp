@@ -34,6 +34,52 @@ class WakeWordPreferences @Inject constructor(
         return prefs.getBoolean(KEY_ENABLED, false)
     }
 
+    // --- Voice match (CAM++ speaker verifier) ---
+
+    private val _isVoiceMatchEnabled = MutableStateFlow(prefs.getBoolean(KEY_VOICE_MATCH_ENABLED, false))
+    val isVoiceMatchEnabled: StateFlow<Boolean> = _isVoiceMatchEnabled
+
+    fun setVoiceMatchEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VOICE_MATCH_ENABLED, enabled).apply()
+        _isVoiceMatchEnabled.value = enabled
+        // Re-enabling implies enrollment was just restored; clear any stale broken flag.
+        if (enabled) setVoiceMatchBroken(false)
+    }
+
+    fun isVoiceMatchEnabledOnce(): Boolean = prefs.getBoolean(KEY_VOICE_MATCH_ENABLED, false)
+
+    /**
+     * Signal that voice match was on but enrollment was missing at service start.
+     * Surfaces as an error banner in Settings; cleared when the user re-enrolls
+     * (or dismisses the banner) so they aren't nagged forever.
+     *
+     * We fail OPEN here (wake word still works without voice match) because a
+     * silently-broken wake word is worse UX than a permissive one. The banner
+     * makes the regression visible so the user can decide.
+     */
+    private val _isVoiceMatchBroken = MutableStateFlow(prefs.getBoolean(KEY_VOICE_MATCH_BROKEN, false))
+    val isVoiceMatchBroken: StateFlow<Boolean> = _isVoiceMatchBroken
+
+    fun setVoiceMatchBroken(broken: Boolean) {
+        prefs.edit().putBoolean(KEY_VOICE_MATCH_BROKEN, broken).apply()
+        _isVoiceMatchBroken.value = broken
+    }
+
+    /** CAM++ cosine threshold for sync-gate acceptance. */
+    fun verifierThresholdOnce(): Float =
+        Float.fromBits(prefs.getInt(KEY_VERIFIER_THRESHOLD_BITS, DEFAULT_VERIFIER_THRESHOLD.toBits()))
+
+    fun setVerifierThreshold(threshold: Float) {
+        prefs.edit().putInt(KEY_VERIFIER_THRESHOLD_BITS, threshold.toBits()).apply()
+    }
+
+    /** Silero VAD gate toggle. Defaults ON (battery savings). */
+    fun isVadEnabledOnce(): Boolean = prefs.getBoolean(KEY_VAD_ENABLED, true)
+
+    fun setVadEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_VAD_ENABLED, enabled).apply()
+    }
+
     // --- Wake word detection metrics (Welford's online algorithm) ---
 
     private fun metricsKey(phrase: String, field: String): String =
@@ -245,5 +291,14 @@ class WakeWordPreferences @Inject constructor(
 
     companion object {
         private const val KEY_ENABLED = "wake_word_enabled"
+        private const val KEY_VOICE_MATCH_ENABLED = "voice_match_enabled"
+        private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
+        private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
+        private const val KEY_VAD_ENABLED = "vad_enabled"
+        // Lowered from 0.45 → 0.35 to accommodate screen-off cosine scores running
+        // ~0.06–0.10 lower than screen-on (different HAL processing path even with the
+        // same VOICE_RECOGNITION source). 0.35 covers the observed screen-off floor
+        // (~0.38) with a small margin.
+        const val DEFAULT_VERIFIER_THRESHOLD = 0.35f
     }
 }

@@ -15,4 +15,5 @@ sealed class Screen(val route: String) {
             }
         }
     }
-} 
+    object WakeWordEnrollment : Screen("wake_word_enrollment")
+}

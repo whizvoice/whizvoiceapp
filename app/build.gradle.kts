@@ -217,18 +217,22 @@ dependencies {
 
     // Data & Storage
     implementation("androidx.datastore:datastore-preferences:1.2.1")
-    
+
+    // Health Connect — primary integration for calories/weight logging
+    // (replaces UI automation against Fitbit / Google Health rebrand)
+    implementation("androidx.health.connect:connect-client:1.1.0-rc03")
+
     // Text diffing library (Google's diff-match-patch)
     implementation("org.bitbucket.cowwoc:diff-match-patch:1.2")
 
     // Markdown parsing (CommonMark)
     implementation("org.commonmark:commonmark:0.24.0")
 
-    // Wake word detection (Vosk offline speech recognition)
-    implementation("com.alphacephei:vosk-android:0.3.75")
-
-    // ONNX Runtime for wake word classifier
+    // ONNX Runtime for wake-word detection (mel + embedding + classifier + Silero VAD + CAM++)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
+
+    // Encrypted file storage for voice-match enrollment PCM clips
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

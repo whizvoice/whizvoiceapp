@@ -62,7 +62,8 @@ class ToolExecutor @Inject constructor(
     private val userPreferences: com.example.whiz.data.preferences.UserPreferences,
     private val authRepository: com.example.whiz.data.auth.AuthRepository,
     private val rageShakeDetector: RageShakeDetector,
-    private val bugReportSubmitter: BugReportSubmitter
+    private val bugReportSubmitter: BugReportSubmitter,
+    private val healthConnectManager: com.example.whiz.health.HealthConnectManager,
 ) {
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
@@ -72,6 +73,7 @@ class ToolExecutor @Inject constructor(
         "agent_launch_app",
         "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
         "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
+        "agent_draft_message", "agent_send_message",
         "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
         "agent_search_google_maps_location", "agent_search_google_maps_phrase",
         "agent_get_google_maps_directions", "agent_recenter_google_maps",
@@ -79,11 +81,13 @@ class ToolExecutor @Inject constructor(
         "agent_dial_phone_number",
         "agent_press_call_button",
         "agent_save_calendar_event", "agent_draft_calendar_event",
-        "agent_fitbit_add_quick_calories",
+        "agent_log_health_data",
+        "agent_open_health_app_settings",
         "agent_delete_alarm",
         "agent_close_other_app",
         "agent_click",
-        "agent_insert_text"
+        "agent_insert_text",
+        "agent_peek_app"
     )
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
@@ -223,6 +227,12 @@ class ToolExecutor @Inject constructor(
                     "agent_sms_send_message" -> {
                         executeSMSSendMessage(requestId, params)
                     }
+                    "agent_draft_message" -> {
+                        executeDraftMessage(requestId, params)
+                    }
+                    "agent_send_message" -> {
+                        executeSendMessage(requestId)
+                    }
                     "agent_disable_continuous_listening" -> {
                         executeDisableContinuousListening(requestId, voiceManager)
                     }
@@ -354,14 +364,20 @@ class ToolExecutor @Inject constructor(
                         }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
-                    "agent_fitbit_add_quick_calories" -> {
-                        executeFitbitAddQuickCalories(requestId, params)
+                    "agent_log_health_data" -> {
+                        executeLogHealthData(requestId, params)
+                    }
+                    "agent_open_health_app_settings" -> {
+                        executeOpenHealthAppSettings(requestId, params)
                     }
                     "agent_press_back" -> {
                         executePressBack(requestId)
                     }
                     "agent_get_ui" -> {
                         executeGetUi(requestId, params)
+                    }
+                    "agent_peek_app" -> {
+                        executePeekApp(requestId, params)
                     }
                     "agent_click" -> {
                         executeClick(requestId, params)
@@ -494,7 +510,23 @@ class ToolExecutor @Inject constructor(
                         }
                     )
                 } else {
-                    emptyList()
+                    // Generic draft/send for any other foreground app. The tool
+                    // description tells the agent what it's for; the tool
+                    // itself returns a clean error when there's no text input.
+                    // We don't allowlist by package because that would exclude
+                    // legitimate but unenumerable surfaces (Signal, Messenger,
+                    // Telegram, Instagram, Discord, Slack, Twitter/X compose,
+                    // GitHub comments, email compose, Reddit DMs, etc.).
+                    listOf(
+                        JSONObject().apply {
+                            put("name", "agent_draft_message")
+                            put("description", "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.")
+                        },
+                        JSONObject().apply {
+                            put("name", "agent_send_message")
+                            put("description", "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually.")
+                        }
+                    )
                 }
             }
         }
@@ -776,6 +808,78 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_sms_send_message",
                     requestId = requestId,
                     error = "Failed to send SMS message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    // ========== Generic Draft/Send Tool Execution Methods ==========
+
+    private suspend fun executeDraftMessage(requestId: String, params: JSONObject) {
+        try {
+            val message = params.getString("message")
+            val previousText = if (params.has("previous_text")) params.getString("previous_text") else null
+            Log.d(TAG, "Drafting generic message: message='${message.take(80)}', previousText='$previousText'")
+
+            val result = screenAgentTools.draftGenericMessage(message, previousText)
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                result.message?.let { put("message", it) }
+                result.error?.let { put("error", it) }
+                put("overlay_shown", result.overlayShown)
+                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Generic draft message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_draft_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing generic draft message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_draft_message",
+                    requestId = requestId,
+                    error = "Failed to draft message: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executeSendMessage(requestId: String) {
+        try {
+            Log.d(TAG, "Sending generic drafted message")
+
+            val result = screenAgentTools.sendGenericMessage()
+
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("sent", result.sent)
+                result.error?.let { put("error", it) }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] Generic send message result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_send_message",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing generic send message", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_send_message",
+                    requestId = requestId,
+                    error = "Failed to send message: ${e.message}"
                 )
             )
         }
@@ -1983,36 +2087,229 @@ class ToolExecutor @Inject constructor(
         return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_stop_ringing", "agent_get_next_alarm", "agent_delete_alarm", "agent_dismiss_amdroid_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
     }
     
-    private suspend fun executeFitbitAddQuickCalories(requestId: String, params: JSONObject) {
+    private suspend fun executeLogHealthData(requestId: String, params: JSONObject) {
         try {
-            val calories = params.getInt("calories")
-            Log.i(TAG, "Adding quick calories to Fitbit: $calories")
+            val dataType = params.getString("data_type")
+            val value = params.getDouble("value")
+            Log.i(TAG, "Logging health data: type=$dataType value=$value")
 
-            val result = screenAgentTools.addFitbitQuickCalories(calories)
+            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
+                "calories" -> healthConnectManager.logCalories(value.toInt())
+                "weight" -> healthConnectManager.logWeight(value)
+                else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
+            }
+
+            // Upfront permission top-up: if we're missing ANY HC permission Whiz uses
+            // (write OR read — reads are needed for the connection-status check), JIT
+            // request the full bundle so the user grants everything in one dialog. We
+            // don't gate on the result here — the write itself re-checks write perms
+            // separately, so this is a soft "ensure all four are asked for" pass.
+            val desiredPerms = healthConnectManager.allHealthConnectPermissions()
+            val alreadyGranted = healthConnectManager.grantedPermissions()
+            val missingPerms = desiredPerms - alreadyGranted
+            if (missingPerms.isNotEmpty()) {
+                val topUpCallback = MainActivity.requestHealthConnectPermissionCallback
+                if (topUpCallback != null) {
+                    Log.i(TAG, "🏥 Missing HC perms (${missingPerms.size}/${desiredPerms.size}); requesting full bundle upfront")
+                    _toolResults.emit(
+                        ToolExecutionResult.Status(
+                            toolName = "agent_log_health_data",
+                            requestId = requestId,
+                            status = "waiting_for_health_connect_permission",
+                            message = "Health Connect permission required. Waiting for user to grant.",
+                        )
+                    )
+                    withTimeoutOrNull(60_000L) {
+                        suspendCancellableCoroutine<Set<String>> { cont ->
+                            topUpCallback(desiredPerms) { result ->
+                                if (cont.isActive) cont.resume(result)
+                            }
+                        }
+                    }
+                } else {
+                    Log.w(TAG, "🏥 Missing HC perms but no permission callback registered (MainActivity not in foreground?)")
+                }
+            }
+
+            val initialHcResult = attemptHcWrite()
+
+            // If write was denied due to missing permission, request the permission JIT
+            // (mirrors the contacts pattern at agent_lookup_phone_contacts) and retry.
+            val hcResult: com.example.whiz.health.HealthConnectManager.Result =
+                if (initialHcResult is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing) {
+                    val permCallback = MainActivity.requestHealthConnectPermissionCallback
+                    if (permCallback != null) {
+                        Log.i(TAG, "🏥 HC permission missing (${initialHcResult.permission}); showing permission dialog")
+                        _toolResults.emit(
+                            ToolExecutionResult.Status(
+                                toolName = "agent_log_health_data",
+                                requestId = requestId,
+                                status = "waiting_for_health_connect_permission",
+                                message = "Health Connect permission required. Waiting for user to grant.",
+                            )
+                        )
+                        val granted = withTimeoutOrNull(60_000L) {
+                            suspendCancellableCoroutine<Set<String>> { cont ->
+                                // Request the full set of HC permissions Whiz uses so the
+                                // user grants once and covers calories + weight (write) plus
+                                // the reads we need for connection detection together.
+                                permCallback(healthConnectManager.allHealthConnectPermissions()) { result ->
+                                    if (cont.isActive) cont.resume(result)
+                                }
+                            }
+                        }
+                        if (granted != null && initialHcResult.permission in granted) {
+                            Log.i(TAG, "🏥 HC permission granted; retrying write")
+                            attemptHcWrite()
+                        } else {
+                            val reason = if (granted == null) "Permission request timed out" else "User denied permission"
+                            Log.i(TAG, "🏥 $reason for Health Connect")
+                            initialHcResult
+                        }
+                    } else {
+                        Log.w(TAG, "🏥 HC permission missing but no permission callback registered (MainActivity not in foreground?)")
+                        initialHcResult
+                    }
+                } else {
+                    initialHcResult
+                }
+
+            val result: ScreenAgentTools.HealthDataResult = when (hcResult) {
+                is com.example.whiz.health.HealthConnectManager.Result.Success -> ScreenAgentTools.HealthDataResult(
+                    success = true,
+                    action = "logged_via_health_connect",
+                    dataType = dataType,
+                    value = value,
+                    source = "health_connect",
+                )
+
+                is com.example.whiz.health.HealthConnectManager.Result.Unavailable,
+                is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> {
+                    if (dataType == "calories") {
+                        Log.i(TAG, "Health Connect not usable (${hcResult.javaClass.simpleName}); falling back to Fitbit UI for calories")
+                        screenAgentTools.addFitbitQuickCalories(value.toInt())
+                    } else {
+                        val reason = when (hcResult) {
+                            is com.example.whiz.health.HealthConnectManager.Result.Unavailable -> hcResult.reason
+                            is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> "Missing write permission for ${hcResult.permission}"
+                            else -> "Unknown"
+                        }
+                        ScreenAgentTools.HealthDataResult(
+                            success = false,
+                            dataType = dataType,
+                            source = "health_connect",
+                            error = "Health Connect required for weight: $reason",
+                        )
+                    }
+                }
+
+                is com.example.whiz.health.HealthConnectManager.Result.Failed -> ScreenAgentTools.HealthDataResult(
+                    success = false,
+                    dataType = dataType,
+                    source = "health_connect",
+                    error = hcResult.error,
+                )
+            }
 
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.action?.let { put("action", it) }
-                result.calories?.let { put("calories", it) }
+                result.dataType?.let { put("data_type", it) }
+                result.value?.let { put("value", it) }
+                result.source?.let { put("source", it) }
                 result.error?.let { put("error", it) }
             }
 
-            Log.i(TAG, "[TOOL_RESULT] agent_fitbit_add_quick_calories result for requestId=$requestId: ${resultJson.toString(2)}")
+            // The HC write itself succeeded, but if no other health app is reading
+            // from Health Connect the user won't see this data in any app's UI.
+            // Flip success to false with reason=requires_connection so the assistant
+            // cannot silently move on; include the unconnected apps' names so it can
+            // mention them when offering to open agent_open_health_app_settings.
+            if (result.success && result.source == "health_connect") {
+                val unconnected = healthConnectManager.unconnectedHealthApps()
+                if (unconnected.isNotEmpty()) {
+                    val arr = org.json.JSONArray()
+                    unconnected.forEach { app ->
+                        arr.put(JSONObject().apply {
+                            put("package_name", app.packageName)
+                            put("name", app.name)
+                        })
+                    }
+                    resultJson.put("unconnected_health_apps", arr)
+                    resultJson.put("success", false)
+                    resultJson.put("reason", "requires_connection")
+                    Log.i(TAG, "🏥 Detected ${unconnected.size} unconnected health app(s): ${unconnected.joinToString { it.name }}")
+                }
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_log_health_data result for requestId=$requestId: ${resultJson.toString(2)}")
 
             _toolResults.emit(
                 ToolExecutionResult.Success(
-                    toolName = "agent_fitbit_add_quick_calories",
+                    toolName = "agent_log_health_data",
                     requestId = requestId,
-                    result = resultJson
+                    result = resultJson,
                 )
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Error executing Fitbit add quick calories", e)
+            Log.e(TAG, "Error executing agent_log_health_data", e)
             _toolResults.emit(
                 ToolExecutionResult.Error(
-                    toolName = "agent_fitbit_add_quick_calories",
+                    toolName = "agent_log_health_data",
                     requestId = requestId,
-                    error = "Failed to add quick calories: ${e.message}"
+                    error = "Failed to log health data: ${e.message}",
+                )
+            )
+        }
+    }
+
+    private suspend fun executeOpenHealthAppSettings(requestId: String, params: JSONObject) {
+        try {
+            Log.i(TAG, "Opening Health Connect settings")
+
+            val callback = MainActivity.openHealthAppSettingsCallback
+            val opened = if (callback != null) {
+                _toolResults.emit(
+                    ToolExecutionResult.Status(
+                        toolName = "agent_open_health_app_settings",
+                        requestId = requestId,
+                        status = "waiting_for_user_confirmation",
+                        message = "Asking the user whether to open Health Connect settings.",
+                    )
+                )
+                withTimeoutOrNull(60_000L) {
+                    suspendCancellableCoroutine<Boolean> { cont ->
+                        callback { result ->
+                            if (cont.isActive) cont.resume(result)
+                        }
+                    }
+                } ?: false
+            } else {
+                Log.w(TAG, "openHealthAppSettingsCallback not registered (MainActivity not in foreground?)")
+                false
+            }
+
+            val resultJson = JSONObject().apply {
+                put("success", opened)
+                if (!opened) put("message", "User did not open Health Connect settings, or it could not be launched.")
+            }
+
+            Log.i(TAG, "[TOOL_RESULT] agent_open_health_app_settings result for requestId=$requestId: ${resultJson.toString(2)}")
+
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_open_health_app_settings",
+                    requestId = requestId,
+                    result = resultJson,
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing agent_open_health_app_settings", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_open_health_app_settings",
+                    requestId = requestId,
+                    error = "Failed to open health app settings: ${e.message}",
                 )
             )
         }
@@ -2106,6 +2403,40 @@ class ToolExecutor @Inject constructor(
                     toolName = "agent_get_ui",
                     requestId = requestId,
                     error = "Failed to get UI: ${e.message}"
+                )
+            )
+        }
+    }
+
+    private suspend fun executePeekApp(requestId: String, params: JSONObject) {
+        try {
+            val appName = params.getString("app_name")
+            val scope = if (params.has("scope")) params.getString("scope") else "full"
+            Log.i(TAG, "agent_peek_app invoked, app_name=$appName, scope=$scope")
+            val result = screenAgentTools.peekApp(appName, scope)
+            val resultJson = JSONObject().apply {
+                put("success", result.success)
+                put("dump", result.dump)
+                put("node_count", result.nodeCount)
+                result.peekedPackage?.let { put("peeked_package", it) }
+                result.restoredPackage?.let { put("restored_package", it) }
+                result.error?.let { put("error", it) }
+            }
+            Log.i(TAG, "[TOOL_RESULT] agent_peek_app result for requestId=$requestId: success=${result.success}, peeked=${result.peekedPackage}, nodes=${result.nodeCount}")
+            _toolResults.emit(
+                ToolExecutionResult.Success(
+                    toolName = "agent_peek_app",
+                    requestId = requestId,
+                    result = resultJson
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing peek app", e)
+            _toolResults.emit(
+                ToolExecutionResult.Error(
+                    toolName = "agent_peek_app",
+                    requestId = requestId,
+                    error = "Failed to peek app: ${e.message}"
                 )
             )
         }

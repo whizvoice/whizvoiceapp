@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="diff_added">#FF78B4FF</color>
+    <color name="diff_removed">#FFFF7878</color>
+</resources>

@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.whiz.R
 import com.example.whiz.ui.viewmodels.SettingsViewModel
 import com.example.whiz.ui.navigation.Screen
@@ -196,7 +197,7 @@ fun SettingsScreen(
             )
             HorizontalDivider(thickness = Dp.Hairline)
 
-            WakeWordSection(viewModel = viewModel)
+            WakeWordSection(viewModel = viewModel, navController = navController)
 
             // Subscription Section
             Spacer(modifier = Modifier.height(16.dp))
@@ -343,6 +344,7 @@ fun SettingsScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TokenInputSection(
     title: String,
@@ -422,45 +424,59 @@ fun TokenInputSection(
                             "Asana Access Token" -> "Asana token set"
                             else -> "$title token set"
                         }
-                        Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Token is set.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Spacer(modifier = Modifier.width(8.dp))
                         val changeEnabled = !isBusy
                         Log.d("TokenInputSection", "[$title] Change button state - enabled: $changeEnabled, isBusy: $isBusy")
-                        // Use title-specific content description for Change button
                         val changeButtonDescription = when(title) {
                             "Claude API Key" -> "Change Claude token"
                             "Asana Access Token" -> "Change Asana token"
                             else -> "Change $title"
                         }
-                        LoadingButton(
-                            text = "Change",
-                            onClick = { onInputChange(""); editMode = true },
-                            isLoading = false,
-                            enabled = changeEnabled,
-                            contentDescription = changeButtonDescription
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Clear should always be enabled when token exists - user should always be able to remove a token
                         val clearEnabled = true // Always allow clearing when token is set
                         Log.d("TokenInputSection", "[$title] Clear button state - enabled: $clearEnabled, isBusy: $isBusy, clearOpInitiated: $clearOperationInitiated")
-                        // Use title-specific content description for Clear button
                         val clearButtonDescription = when(title) {
                             "Claude API Key" -> "Clear Claude token"
                             "Asana Access Token" -> "Clear Asana token"
                             else -> "Clear $title"
                         }
-                        ClearButton(
-                            onClick = {
-                                saveOperationInitiated = false // Cancel any pending save
-                                clearOperationInitiated = true
-                                onClearClick()
-                            },
-                            isLoading = isBusy && clearOperationInitiated,
-                            enabled = clearEnabled,
-                            modifier = Modifier.semantics { contentDescription = clearButtonDescription }
-                        )
+                        // FlowRow so the action buttons wrap to a second line at large display
+                        // scales instead of starving "Token is set." of horizontal space.
+                        FlowRow(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = tokenSetDescription, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Token is set.", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            Row(
+                                modifier = Modifier.align(Alignment.CenterVertically),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                LoadingButton(
+                                    text = "Change",
+                                    onClick = { onInputChange(""); editMode = true },
+                                    isLoading = false,
+                                    enabled = changeEnabled,
+                                    contentDescription = changeButtonDescription
+                                )
+                                ClearButton(
+                                    onClick = {
+                                        saveOperationInitiated = false // Cancel any pending save
+                                        clearOperationInitiated = true
+                                        onClearClick()
+                                    },
+                                    isLoading = isBusy && clearOperationInitiated,
+                                    enabled = clearEnabled,
+                                    modifier = Modifier.semantics { contentDescription = clearButtonDescription }
+                                )
+                            }
+                        }
                     } else {
                         Log.d("TokenInputSection", "[$title] Displaying: Edit mode for existing token")
                         // In edit mode for an existing token (user clicked "Change")
@@ -922,43 +938,158 @@ fun BenefitRow(text: String) {
 }
 
 @Composable
-fun WakeWordSection(viewModel: SettingsViewModel) {
+fun WakeWordSection(viewModel: SettingsViewModel, navController: NavController) {
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
+    val isVoiceMatchEnabled by viewModel.isVoiceMatchEnabled.collectAsState()
+    val isVoiceEnrolled by viewModel.isVoiceEnrolled.collectAsState()
+    val isVoiceMatchBroken by viewModel.isVoiceMatchBroken.collectAsState()
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics { contentDescription = "Wake Word Detection content" },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Always-on Wake Word",
-                style = MaterialTheme.typography.bodyLarge
-            )
-            Text(
-                text = "Say \"Hey Whiz\" to open the app",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (isWakeWordEnabled) {
+    // Re-check enrollment state when returning from the enrollment screen.
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    LaunchedEffect(currentBackStackEntry?.destination?.route) {
+        if (currentBackStackEntry?.destination?.route == Screen.Settings.routeWithArgs) {
+            viewModel.refreshVoiceEnrollmentState()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Wake Word Detection content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "A green dot in the status bar indicates microphone access",
+                    text = "Always-on Wake Word",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = "Say \"Hey Whiz\" to open the app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isWakeWordEnabled) {
+                    Text(
+                        text = "A green dot in the status bar indicates microphone access",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Switch(
+                checked = isWakeWordEnabled,
+                onCheckedChange = { enabled ->
+                    viewModel.setWakeWordEnabled(enabled)
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Always-on Wake Word switch"
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Enroll your voice
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Enroll your voice content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Enroll your voice",
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = if (isVoiceEnrolled) "Voice fingerprint saved on this device"
+                    else "Save a voice fingerprint so wake word only triggers for you",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-        Switch(
-            checked = isWakeWordEnabled,
-            onCheckedChange = { enabled ->
-                viewModel.setWakeWordEnabled(enabled)
-            },
-            modifier = Modifier.semantics {
-                contentDescription = "Always-on Wake Word switch"
+            TextButton(
+                onClick = { navController.navigate(Screen.WakeWordEnrollment.route) },
+                modifier = Modifier.semantics {
+                    contentDescription = "Enroll voice button"
+                }
+            ) {
+                Text(if (isVoiceEnrolled) "Re-enroll" else "Enroll")
             }
-        )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Voice match broken banner — surfaces the auto-disable so user knows to re-enroll
+        if (isVoiceMatchBroken) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "Voice match enrollment lost banner" },
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = MaterialTheme.shapes.medium,
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Voice match was turned off",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = "Your enrollment data is missing. Re-enroll to use voice match again. Wake word is still active for any voice.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                    TextButton(onClick = { viewModel.dismissVoiceMatchBroken() }) {
+                        Text("Dismiss")
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        // Match my voice only
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Match my voice only content" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Match my voice only",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (isVoiceEnrolled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (isVoiceEnrolled)
+                        "Suppress wake word triggers that don't match your voice fingerprint"
+                    else "Enroll your voice first to enable",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = isVoiceMatchEnabled,
+                enabled = isVoiceEnrolled,
+                onCheckedChange = { enabled ->
+                    viewModel.setVoiceMatchEnabled(enabled)
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Match my voice only switch"
+                }
+            )
+        }
     }
 }
 

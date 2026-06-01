@@ -111,6 +111,40 @@ class ScreenAgentTools @Inject constructor(
         val overlayShown: Boolean = false
     )
 
+    data class SendResult(
+        val success: Boolean,
+        val sent: Boolean = false,
+        val error: String? = null,
+    )
+
+    /**
+     * Configuration for [draftMessageCore]. App-specific lookups (input finder,
+     * input-bar container top) are supplied as lambdas; the core handles the
+     * shared pipeline (keyboard open, bounds compute, adaptive sizing, show overlay).
+     */
+    data class DraftCoreInput(
+        val targetPackage: String,
+        val findInput: (AccessibilityNodeInfo) -> AccessibilityNodeInfo?,
+        val findContainerTop: ((AccessibilityNodeInfo) -> Int?)? = null,
+        val message: String,
+        val previousText: String? = null,
+        val onInputNotFound: ((AccessibilityNodeInfo) -> Unit)? = null,
+    )
+
+    /**
+     * Configuration for [sendDraftedMessageCore]. App-specific lookups (input
+     * finder, send-button finder) are supplied as lambdas; the core handles
+     * the shared pipeline (clear + set text, click send, dismiss overlay).
+     */
+    data class SendCoreInput(
+        val targetPackage: String,
+        val findInput: (AccessibilityNodeInfo) -> AccessibilityNodeInfo?,
+        val findSendButton: (root: AccessibilityNodeInfo, input: AccessibilityNodeInfo) -> AccessibilityNodeInfo?,
+        val message: String,
+        val onInputNotFound: ((AccessibilityNodeInfo) -> Unit)? = null,
+        val onSendButtonNotFound: ((AccessibilityNodeInfo) -> Unit)? = null,
+    )
+
     data class MusicActionResult(
         val success: Boolean,
         val action: String,
@@ -134,11 +168,13 @@ class ScreenAgentTools @Inject constructor(
         val speakerphoneEnabled: Boolean = false
     )
 
-    data class FitbitResult(
+    data class HealthDataResult(
         val success: Boolean,
         val action: String? = null,
-        val calories: Int? = null,
-        val error: String? = null
+        val dataType: String? = null,
+        val value: Double? = null,
+        val source: String? = null,
+        val error: String? = null,
     )
 
     data class CloseOtherAppResult(
@@ -151,6 +187,15 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val dump: String,
         val nodeCount: Int,
+        val error: String? = null
+    )
+
+    data class PeekResult(
+        val success: Boolean,
+        val dump: String,
+        val nodeCount: Int,
+        val peekedPackage: String? = null,
+        val restoredPackage: String? = null,
         val error: String? = null
     )
 
@@ -1205,6 +1250,144 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
+     * Peek the UI of a target app even if it's backgrounded. Brings the app to the
+     * foreground, dumps its accessibility tree, then fire-and-forget restores whatever
+     * was foreground before. The internal launch uses enableOverlay=false so the bubble
+     * overlay isn't (re)started; an already-running bubble persists across the peek
+     * since it's a system overlay independent of foreground app state.
+     *
+     * Default scope is "full" (not "interactable") because peek is a read, so the LLM
+     * usually wants all the on-screen text, not just clickable nodes.
+     */
+    suspend fun peekApp(appName: String, scope: String = "full"): PeekResult {
+        Log.i(TAG, "peekApp called, appName=$appName, scope=$scope")
+        trackAction("peekApp: $appName")
+
+        if (WhizAccessibilityService.getInstance() == null) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = "Accessibility service not enabled. Please enable it in settings."
+            )
+        }
+
+        val originPackage = WhizAccessibilityService.getCurrentPackageName()
+        Log.d(TAG, "peekApp: originPackage=$originPackage")
+
+        val launchResult = launchApp(appName, enableOverlay = false)
+        if (!launchResult.success || launchResult.packageName == null) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                error = launchResult.error ?: "Failed to launch $appName for peek"
+            )
+        }
+        val targetPackage = launchResult.packageName
+
+        if (targetPackage != originPackage) {
+            val reached = waitForForegroundPackage(targetPackage, maxAttempts = 20, intervalMs = 50)
+            if (!reached) {
+                Log.w(TAG, "peekApp: $targetPackage never reached foreground within 1s")
+                if (originPackage != null) scheduleRestore(originPackage)
+                return PeekResult(
+                    success = false,
+                    dump = "",
+                    nodeCount = 0,
+                    peekedPackage = targetPackage,
+                    error = "peek_timeout: $targetPackage did not reach foreground within 1s"
+                )
+            }
+        }
+
+        val dumpResult = getUi(scope)
+        if (originPackage != null && originPackage != targetPackage) {
+            scheduleRestore(originPackage)
+        }
+        if (!dumpResult.success) {
+            return PeekResult(
+                success = false,
+                dump = "",
+                nodeCount = 0,
+                peekedPackage = targetPackage,
+                restoredPackage = if (originPackage != null && originPackage != targetPackage) originPackage else null,
+                error = dumpResult.error ?: "Failed to dump $targetPackage"
+            )
+        }
+
+        return PeekResult(
+            success = true,
+            dump = dumpResult.dump,
+            nodeCount = dumpResult.nodeCount,
+            peekedPackage = targetPackage,
+            restoredPackage = if (originPackage != null && originPackage != targetPackage) originPackage else null
+        )
+    }
+
+    private suspend fun waitForForegroundPackage(
+        targetPackage: String,
+        maxAttempts: Int,
+        intervalMs: Long
+    ): Boolean {
+        for (i in 0 until maxAttempts) {
+            val current = WhizAccessibilityService.getCurrentPackageName()
+            if (current == targetPackage) return true
+            delay(intervalMs)
+        }
+        return false
+    }
+
+    private fun scheduleRestore(originPackage: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                restoreToPackage(originPackage)
+            } catch (e: Exception) {
+                Log.e(TAG, "scheduleRestore: failed to restore to $originPackage", e)
+            }
+        }
+    }
+
+    private fun restoreToPackage(originPackage: String) {
+        if (isWhizApp(originPackage)) {
+            restoreFullScreenWhiz()
+            return
+        }
+        val homePackage = try {
+            val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            context.packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo?.packageName
+        } catch (_: Exception) {
+            null
+        }
+        if (originPackage == homePackage) {
+            WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_HOME
+            )
+            return
+        }
+        val intent = try {
+            context.packageManager.getLaunchIntentForPackage(originPackage)
+        } catch (_: Exception) {
+            null
+        }
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+                Log.i(TAG, "restoreToPackage: launched $originPackage")
+            } catch (e: Exception) {
+                Log.e(TAG, "restoreToPackage: failed to launch $originPackage", e)
+            }
+        } else {
+            Log.w(TAG, "restoreToPackage: no launch intent for $originPackage, falling back to HOME")
+            WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
+                AccessibilityService.GLOBAL_ACTION_HOME
+            )
+        }
+    }
+
+    /**
      * Click the element identified by element_id from the most recent getUi() call.
      * Resolves the element_id -> signature -> live node by re-walking the tree. If
      * the matched node is not itself clickable, walks up to the first clickable
@@ -1912,273 +2095,73 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Could not get root node"
-                )
+            // If we're on a contact profile page (has message_btn), click it to
+            // open the chat before drafting. This is a WhatsApp-specific
+            // precondition; the actual draft pipeline runs after.
+            val preDraftRoot = accessibilityService.getCurrentRootNode()
+            if (preDraftRoot != null) {
+                val messageBtnNodes = preDraftRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
+                if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
+                    Log.d(TAG, "On contact profile page, clicking message button to open chat")
+                    messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    messageBtnNodes.forEach { it.recycle() }
+                    delay(1500) // Wait for chat to open
+                } else {
+                    messageBtnNodes?.forEach { it.recycle() }
+                }
+                preDraftRoot.recycle()
             }
 
-            // If we're on a contact profile page (has message_btn), click it to open the chat
-            val messageBtnNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/message_btn")
-            if (messageBtnNodes != null && messageBtnNodes.isNotEmpty()) {
-                Log.d(TAG, "On contact profile page, clicking message button to open chat")
-                messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                messageBtnNodes.forEach { it.recycle() }
-                rootNode.recycle()
-                delay(1500) // Wait for chat to open
-                val chatRootNode = accessibilityService.getCurrentRootNode()
-                if (chatRootNode == null) {
-                    return DraftResult(
-                        success = false,
-                        message = message,
-                        error = "Could not get root node after navigating from contact profile"
-                    )
-                }
-                val inputNodesFromProfile = mutableListOf<AccessibilityNodeInfo>()
-                findWhatsAppMessageInput(chatRootNode, inputNodesFromProfile, 0)
-                if (inputNodesFromProfile.isEmpty()) {
-                    dumpUIHierarchy(chatRootNode, "whatsapp_input_not_found", "Could not find message input field in WhatsApp after contact profile click")
-                    chatRootNode.recycle()
-                    return DraftResult(
-                        success = false,
-                        message = message,
-                        error = "Could not find message input field after navigating from contact profile"
-                    )
-                }
-                // Re-enter function logic with the new root; simplest approach: replace rootNode and inputNodes
-                val screenHeight2 = context.resources.displayMetrics.heightPixels
-                val inputNode2 = if (inputNodesFromProfile.size > 1) {
-                    inputNodesFromProfile.minByOrNull { node ->
-                        val r = android.graphics.Rect()
-                        node.getBoundsInScreen(r)
-                        Math.abs(r.centerY() - screenHeight2 * 0.85)
-                    } ?: inputNodesFromProfile[0]
-                } else {
-                    inputNodesFromProfile[0]
-                }
-                inputNode2.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                delay(500)
-                val appBounds2 = android.graphics.Rect()
-                chatRootNode.getBoundsInScreen(appBounds2)
-                val rect2 = android.graphics.Rect()
-                inputNode2.getBoundsInScreen(rect2)
-                // Find the input bar container by resource ID
-                var containerTop2 = rect2.top
-                val containerIds2 = listOf("com.whatsapp:id/footer", "com.whatsapp:id/edit_layout", "com.whatsapp:id/text_entry_layout")
-                for (containerId in containerIds2) {
-                    val containers = chatRootNode.findAccessibilityNodeInfosByViewId(containerId)
-                    if (containers != null && containers.isNotEmpty()) {
-                        val cr = android.graphics.Rect()
-                        containers[0].getBoundsInScreen(cr)
-                        containerTop2 = cr.top
-                        Log.d(TAG, "Found input container '$containerId': bounds=$cr")
-                        containers.forEach { it.recycle() }
-                        break
+            // Hand off to the shared draft pipeline with WhatsApp-specific lookups.
+            return draftMessageCore(DraftCoreInput(
+                targetPackage = "com.whatsapp",
+                findInput = { root ->
+                    val candidates = mutableListOf<AccessibilityNodeInfo>()
+                    findWhatsAppMessageInput(root, candidates, 0)
+                    val screenHeight = context.resources.displayMetrics.heightPixels
+                    val best = if (candidates.size > 1) {
+                        // Pick the candidate closest to 70% of screen height —
+                        // biases toward the message input near the bottom, away
+                        // from any search bar near the top.
+                        candidates.minByOrNull { node ->
+                            val rect = Rect()
+                            node.getBoundsInScreen(rect)
+                            Math.abs(rect.top - (screenHeight * 0.7)).toInt()
+                        }
+                    } else {
+                        candidates.firstOrNull()
                     }
-                }
-                val overlayBounds2 = android.graphics.Rect(appBounds2.left, containerTop2, appBounds2.right, rect2.bottom)
-                val overlayStarted2 = MessageDraftOverlayService.show(context, overlayBounds2, message, previousText)
-                inputNodesFromProfile.forEach { it.recycle() }
-                chatRootNode.recycle()
-                return DraftResult(
-                    success = overlayStarted2,
-                    message = message,
-                    overlayShown = overlayStarted2,
-                    error = if (!overlayStarted2) "Failed to show draft overlay" else null
-                )
-            }
-            messageBtnNodes?.forEach { it.recycle() }
-
-            // Find the WhatsApp message input field specifically
-            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-            findWhatsAppMessageInput(rootNode, inputNodes, 0)
-
-            if (inputNodes.isNotEmpty()) {
-                Log.d(TAG, "Found ${inputNodes.size} potential input field(s)")
-
-                // Look for the best candidate - prefer one closer to bottom but not at very bottom (keyboard area)
-                val screenHeight = context.resources.displayMetrics.heightPixels
-                val inputNode = if (inputNodes.size > 1) {
-                    // If multiple, pick the one that's likely the message input (not search bar)
-                    inputNodes.minByOrNull { node ->
-                        val rect = android.graphics.Rect()
-                        node.getBoundsInScreen(rect)
-                        // Prefer nodes around 60-80% of screen height (above keyboard)
-                        Math.abs(rect.top - (screenHeight * 0.7)).toInt()
-                    } ?: inputNodes[0]
-                } else {
-                    inputNodes[0]
-                }
-
-                // Get the initial bounds of the input field
-                val initialRect = android.graphics.Rect()
-                inputNode.getBoundsInScreen(initialRect)
-
-                Log.d(TAG, "Initial input field bounds before keyboard: $initialRect (top=${initialRect.top}, bottom=${initialRect.bottom})")
-                Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
-
-                // Click on the input field to focus it and open the keyboard
-                // Note: Use ACTION_CLICK only (not ACTION_FOCUS || ACTION_CLICK) because WhatsApp
-                // auto-focuses the input field when entering a chat, so ACTION_FOCUS would succeed
-                // without triggering the keyboard, short-circuiting the || and skipping ACTION_CLICK.
-                val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                val clickSuccess = clickResult
-                Log.d(TAG, "EditText: click=$clickResult")
-
-                if (clickSuccess) {
-                    Log.d(TAG, "Clicked/focused input field to open keyboard")
-
-                    // Wait for the keyboard to open and input field to move up
-                    // The input field should move significantly upward when keyboard opens
-                    val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
-                        val currentRootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
-                        if (currentRootNode != null) {
-                            val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                            findWhatsAppMessageInput(currentRootNode, currentInputNodes, 0)
-
-                            if (currentInputNodes.isNotEmpty()) {
-                                val currentRect = android.graphics.Rect()
-                                currentInputNodes[0].getBoundsInScreen(currentRect)
-
-                                // Check if input field has moved up significantly (at least 300px)
-                                val movedUp = initialRect.top - currentRect.top > 300
-
-                                currentInputNodes.forEach { it.recycle() }
-                                currentRootNode.recycle()
-
-                                movedUp
-                            } else {
-                                currentRootNode.recycle()
-                                false
-                            }
+                    candidates.filter { it !== best }.forEach { it.recycle() }
+                    best
+                },
+                findContainerTop = { root ->
+                    // The accessibility-tree parent of the EditText may skip
+                    // intermediate layout nodes, so look up known input-bar
+                    // container resource IDs to get the full input area top
+                    // (including attach/camera/mic buttons).
+                    listOf(
+                        "com.whatsapp:id/footer",
+                        "com.whatsapp:id/edit_layout",
+                        "com.whatsapp:id/text_entry_layout",
+                    ).firstNotNullOfOrNull { id ->
+                        val containers = root.findAccessibilityNodeInfosByViewId(id)
+                        if (containers != null && containers.isNotEmpty()) {
+                            val rect = Rect()
+                            containers[0].getBoundsInScreen(rect)
+                            containers.forEach { it.recycle() }
+                            Log.d(TAG, "Found WhatsApp input container '$id': bounds=$rect")
+                            rect.top
                         } else {
-                            false
+                            null
                         }
                     }
-
-                    if (keyboardOpened) {
-                        Log.d(TAG, "Keyboard opened successfully, input field moved up")
-                    } else {
-                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
-                    }
-                } else {
-                    Log.w(TAG, "Could not click/focus input field to open keyboard")
-                }
-
-                // Wait a bit more for keyboard animation to complete
-                delay(300)
-
-                // Get the updated root node and input field after keyboard opened
-                val updatedRootNode = accessibilityService.getCurrentRootNode()
-                if (updatedRootNode == null) {
-                    inputNodes.forEach { it.recycle() }
-                    rootNode.recycle()
-                    return DraftResult(
-                        success = false,
-                        message = message,
-                        error = "Could not get root node after keyboard opened"
-                    )
-                }
-
-                // Find the input field again to get its new position
-                val updatedInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                findWhatsAppMessageInput(updatedRootNode, updatedInputNodes, 0)
-
-                if (updatedInputNodes.isEmpty()) {
-                    dumpUIHierarchy(updatedRootNode, "whatsapp_input_not_found_after_keyboard", "Could not find input field after keyboard opened")
-                    inputNode.recycle()
-                    rootNode.recycle()
-                    updatedRootNode.recycle()
-                    return DraftResult(
-                        success = false,
-                        message = message,
-                        error = "Could not find input field after keyboard opened"
-                    )
-                }
-
-                val finalInputNode = if (updatedInputNodes.size > 1) {
-                    updatedInputNodes.minByOrNull { node ->
-                        val rect = android.graphics.Rect()
-                        node.getBoundsInScreen(rect)
-                        Math.abs(rect.top - (screenHeight * 0.7)).toInt()
-                    } ?: updatedInputNodes[0]
-                } else {
-                    updatedInputNodes[0]
-                }
-
-                // Get the final bounds of the input field (after keyboard is open)
-                val rect = android.graphics.Rect()
-                finalInputNode.getBoundsInScreen(rect)
-
-                // Get the app window bounds (WhatsApp's actual width on screen)
-                val appBounds = android.graphics.Rect()
-                updatedRootNode.getBoundsInScreen(appBounds)
-
-                // Find the input bar container by resource ID to get the full input area bounds
-                // (including attach/camera/mic buttons). The accessibility tree parent may skip
-                // intermediate layout nodes, so we search by known WhatsApp resource IDs instead.
-                var containerTop = rect.top
-                val containerIds = listOf("com.whatsapp:id/footer", "com.whatsapp:id/edit_layout", "com.whatsapp:id/text_entry_layout")
-                for (containerId in containerIds) {
-                    val containers = updatedRootNode.findAccessibilityNodeInfosByViewId(containerId)
-                    if (containers != null && containers.isNotEmpty()) {
-                        val cr = android.graphics.Rect()
-                        containers[0].getBoundsInScreen(cr)
-                        containerTop = cr.top
-                        Log.d(TAG, "Found input container '$containerId': bounds=$cr")
-                        containers.forEach { it.recycle() }
-                        break
-                    }
-                }
-
-                Log.d(TAG, "Using input field at bounds: $rect, containerTop=$containerTop")
-                Log.d(TAG, "WhatsApp window bounds: $appBounds (width=${appBounds.width()})")
-                Log.d(TAG, "Screen dimensions: ${context.resources.displayMetrics.widthPixels} x ${context.resources.displayMetrics.heightPixels}")
-                Log.d(TAG, "Input field is at ${(rect.top.toFloat() / context.resources.displayMetrics.heightPixels * 100).toInt()}% of screen height")
-
-                // Create bounds for overlay that uses app width but container's vertical position
-                val overlayBounds = android.graphics.Rect(
-                    appBounds.left,   // Use app's left edge
-                    containerTop,     // Use container top to cover full input bar
-                    appBounds.right,  // Use app's right edge
-                    rect.bottom       // Use input field's bottom
-                )
-
-                // Start the draft overlay service with the bounds, message, and previousText
-                val overlayStarted = MessageDraftOverlayService.show(
-                    context,
-                    overlayBounds,
-                    message,
-                    previousText
-                )
-
-                // Clean up
-                inputNode.recycle()
-                updatedInputNodes.forEach { it.recycle() }
-                rootNode.recycle()
-                updatedRootNode.recycle()
-
-                return DraftResult(
-                    success = overlayStarted,
-                    message = message,
-                    overlayShown = overlayStarted,
-                    error = if (!overlayStarted) "Failed to show draft overlay" else null
-                )
-            }
-
-            // Clean up - no input field found
-            inputNodes.forEach { it.recycle() }
-            dumpUIHierarchy(rootNode, "whatsapp_input_not_found", "Could not find message input field in WhatsApp")
-            rootNode.recycle()
-
-            return DraftResult(
-                success = false,
+                },
                 message = message,
-                error = "Could not find message input field"
-            )
+                previousText = previousText,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "whatsapp_input_not_found", "Could not find message input field in WhatsApp")
+                },
+            ))
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting WhatsApp message", e)
@@ -2227,120 +2210,50 @@ class ScreenAgentTools @Inject constructor(
             if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT, maxWaitMs = 1500)) {
                 Log.w(TAG, "Not in a WhatsApp chat after waiting")
             }
-            
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                logScreenAgentError("root_node_null", "Could not get root node", "com.whatsapp")
-                return WhatsAppResult(
+
+            val coreResult = sendDraftedMessageCore(SendCoreInput(
+                targetPackage = "com.whatsapp",
+                findInput = { root ->
+                    val candidates = mutableListOf<AccessibilityNodeInfo>()
+                    findEditTextNodes(root, candidates)
+                    val first = candidates.firstOrNull()
+                    candidates.filter { it !== first }.forEach { it.recycle() }
+                    first
+                },
+                findSendButton = { root, input ->
+                    // Preferred: WhatsApp's known resource ID.
+                    val sendNodes = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
+                    if (sendNodes != null && sendNodes.isNotEmpty()) {
+                        val first = sendNodes[0]
+                        sendNodes.drop(1).forEach { it.recycle() }
+                        first
+                    } else {
+                        // Fallback: peek the window. Catches version drift where
+                        // WhatsApp changes the send button's resource ID.
+                        findSendButtonByPeekingWindow(root, input)
+                    }
+                },
+                message = message,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "whatsapp_send_input_not_found", "Could not find message input field in sendWhatsAppMessage")
+                },
+                onSendButtonNotFound = { root ->
+                    dumpUIHierarchy(root, "whatsapp_send_button_not_found", "Could not find or click send button in WhatsApp")
+                },
+            ))
+
+            // External API: "send_message" only succeeds when we actually
+            // sent. Core's partial-success (text drafted, no send button) is
+            // a WhatsApp send failure.
+            return if (coreResult.success && coreResult.sent) {
+                WhatsAppResult(success = true, action = "send_message")
+            } else {
+                WhatsAppResult(
                     success = false,
                     action = "send_message",
-                    error = "Could not get root node"
+                    error = coreResult.error ?: "Could not send WhatsApp message",
                 )
             }
-
-            // Find the message input field (usually has hint text "Message" or "Type a message")
-            val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-            findEditTextNodes(rootNode, inputNodes)
-            
-            if (inputNodes.isNotEmpty()) {
-                val inputNode = inputNodes[0]
-
-                // Dismiss the draft overlay if it's active
-                try {
-                    if (com.example.whiz.services.MessageDraftOverlayService.isActive) {
-                        Log.d(TAG, "Dismissing draft overlay before sending message")
-                        com.example.whiz.services.MessageDraftOverlayService.stop(accessibilityService.applicationContext)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
-                }
-
-                // Clear the input field first
-                val clearBundle = Bundle()
-                clearBundle.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    ""
-                )
-                inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
-                Log.d(TAG, "Cleared input field")
-
-                // Wait a bit for the clear to take effect
-                delay(200)
-
-                // Set the text
-                val bundle = Bundle()
-                bundle.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    message
-                )
-                val textSet = inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
-                
-                if (textSet) {
-                    Log.d(TAG, "Message text set successfully")
-                    
-                    // Wait for text to be set and then find send button
-                    val sendButtonFound = waitForCondition(maxWaitMs = 1000) {
-                        val currentRoot = accessibilityService.getRootNodeForPackage("com.whatsapp")
-                        if (currentRoot != null) {
-                            // Check if send button is now enabled/visible
-                            val sendButton = currentRoot.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
-                            val hasButton = sendButton != null && sendButton.isNotEmpty()
-                            sendButton?.forEach { it.recycle() }
-                            currentRoot.recycle()
-                            hasButton
-                        } else {
-                            false
-                        }
-                    }
-                    
-                    val sendSuccess = if (sendButtonFound) {
-                        val currentRoot = accessibilityService.getCurrentRootNode()
-                        val success = if (currentRoot != null) {
-                            clickSendButton(currentRoot)
-                        } else {
-                            false
-                        }
-                        currentRoot?.recycle()
-                        success
-                    } else {
-                        false
-                    }
-                    
-                    // Clean up
-                    inputNodes.forEach { it.recycle() }
-                    rootNode.recycle()
-                    
-                    if (sendSuccess) {
-                        return WhatsAppResult(
-                            success = true,
-                            action = "send_message"
-                        )
-                    } else {
-                        // UI dump for send button not found
-                        val dumpRoot = accessibilityService.getCurrentRootNode()
-                        if (dumpRoot != null) {
-                            dumpUIHierarchy(dumpRoot, "whatsapp_send_button_not_found", "Could not find or click send button in WhatsApp")
-                            dumpRoot.recycle()
-                        }
-                        return WhatsAppResult(
-                            success = false,
-                            action = "send_message",
-                            error = "Could not find or click send button"
-                        )
-                    }
-                }
-            }
-
-            // Clean up
-            inputNodes.forEach { it.recycle() }
-            dumpUIHierarchy(rootNode, "whatsapp_send_input_not_found", "Could not find message input field in sendWhatsAppMessage")
-            rootNode.recycle()
-
-            return WhatsAppResult(
-                success = false,
-                action = "send_message",
-                error = "Could not find message input field"
-            )
 
         } catch (e: Exception) {
             Log.e(TAG, "Error sending WhatsApp message", e)
@@ -2894,331 +2807,39 @@ class ScreenAgentTools @Inject constructor(
             // Wait a bit to ensure we're in a conversation (shorter when updating since we're already there)
             delay(if (previousText != null) 300 else 800)
 
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Could not get root node"
-                )
-            }
-
-            // Get screen height for later use
-            val screenHeight = context.resources.displayMetrics.heightPixels
-
-            // IMPORTANT: Check if we're still in the search screen
-            val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
-            val searchBoxNodes = rootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
-            if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
-                Log.e(TAG, "Still in search screen - not in a conversation!")
-                searchBoxNodes.forEach { it.recycle() }
-                dumpUIHierarchy(rootNode, "sms_stuck_in_search_screen", "Cannot draft message: still in search screen. Please select a contact first to open a conversation.")
-                rootNode.recycle()
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Cannot draft message: still in search screen. Please select a contact first to open a conversation."
-                )
-            }
-
-            // Find the SMS message input field
-            // Try by resource ID first (Google Messages - traditional view)
-            var inputNode: AccessibilityNodeInfo? = null
-            var isComposeUI = false  // Track if we're using Compose UI (needs double-click) vs EditText (single click)
-            val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
-            val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
-
-            if (composeMessageNodes != null && composeMessageNodes.isNotEmpty()) {
-                Log.d(TAG, "Found message input field by resource ID: $composeMessageId")
-                inputNode = composeMessageNodes[0]
-                isComposeUI = false  // Traditional EditText
-                composeMessageNodes.drop(1).forEach { it.recycle() }
-            } else {
-                // Fallback 1: Find any EditText nodes, but exclude search boxes
-                Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
-                val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-                findEditTextNodes(rootNode, inputNodes)
-
-                // Filter out search box nodes
-                val filteredNodes = inputNodes.filter { node ->
-                    val viewId = node.viewIdResourceName
-                    viewId != searchBoxId && !viewId.contains("search")
-                }
-
-                // Recycle nodes that were filtered out
-                inputNodes.filter { it !in filteredNodes }.forEach { it.recycle() }
-
-                if (filteredNodes.isNotEmpty()) {
-                    Log.d(TAG, "Found ${filteredNodes.size} potential input field(s) after filtering")
-
-                    // Pick the best candidate input field (usually near bottom of screen)
-                    inputNode = filteredNodes.maxByOrNull { node ->
-                        val rect = android.graphics.Rect()
-                        node.getBoundsInScreen(rect)
-                        rect.top // Prefer input fields lower on screen
-                    } ?: filteredNodes[0]
-                    isComposeUI = false  // Traditional EditText
-
-                    // Recycle unused nodes
-                    filteredNodes.filter { it != inputNode }.forEach { it.recycle() }
-                } else if (previousText != null) {
-                    // When updating existing draft, don't use Compose UI fallback
-                    // The overlay was just dismissed, and the Compose UI heuristics might find it or other views
-                    Log.w(TAG, "No EditText nodes found when updating draft - cannot proceed without EditText")
-                } else {
-                    Log.d(TAG, "No EditText nodes found - trying Compose UI fallback")
-
-                    // Fallback 2: For Compose-based Google Messages
-                    // Look for clickable View near the bottom that's part of the compose area
-                    // These are typically wider views in the bottom third of the screen
-                    val allClickableNodes = mutableListOf<AccessibilityNodeInfo>()
-                    findClickableChildren(rootNode, allClickableNodes)
-
-                    val screenHeight = context.resources.displayMetrics.heightPixels
-                    val bottomThirdStart = (screenHeight * 0.67).toInt()
-
-                    // Find wide clickable views in bottom third that could be the compose area
-                    val composeAreaCandidates = allClickableNodes.filter { node ->
-                        val rect = android.graphics.Rect()
-                        node.getBoundsInScreen(rect)
-                        val width = rect.right - rect.left
-                        val screenWidth = context.resources.displayMetrics.widthPixels
-
-                        // Must be in bottom third, reasonably wide, and not too tall (not a list item)
-                        rect.top > bottomThirdStart &&
-                        width > (screenWidth * 0.4) &&
-                        (rect.bottom - rect.top) < 400
-                    }
-
-                    if (composeAreaCandidates.isNotEmpty()) {
-                        // Use the first candidate (usually the compose text area)
-                        inputNode = composeAreaCandidates[0]
-                        isComposeUI = true  // Compose UI needs double-click
-                        Log.d(TAG, "Found compose area candidate in Compose UI at bottom of screen")
-
-                        // Recycle others
-                        composeAreaCandidates.drop(1).forEach { it.recycle() }
-                        allClickableNodes.filter { it !in composeAreaCandidates }.forEach { it.recycle() }
-                    } else {
-                        Log.w(TAG, "No compose area candidates found")
-                        allClickableNodes.forEach { it.recycle() }
-                    }
-                }
-            }
-
-            if (inputNode != null) {
-                Log.d(TAG, "Using input node for drafting")
-
-                // Get the initial bounds of the input field
-                val initialRect = android.graphics.Rect()
-                inputNode.getBoundsInScreen(initialRect)
-
-                Log.d(TAG, "Initial input field bounds before keyboard: $initialRect (top=${initialRect.top}, bottom=${initialRect.bottom})")
-                Log.d(TAG, "Initial input field is at ${(initialRect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
-
-                // Click on the input field to focus it and open the keyboard
-                // For EditText (traditional UI): Use focus only, then toggleSoftInput fallback if needed
-                // For Compose UI: Use double-click pattern
-                val clickSuccess: Boolean
-                if (isComposeUI) {
-                    // Compose UI needs click actions
-                    val focusResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-                    val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    clickSuccess = focusResult || clickResult
-                    Log.d(TAG, "Compose UI: focus=$focusResult, click=$clickResult")
-
-                    // Double-tap for Compose fields - they sometimes need the click action twice
-                    delay(50)
-                    val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.d(TAG, "Second click result (Compose UI): $secondClick")
-                } else {
-                    // Traditional EditText: Just click to open keyboard
-                    // Note: ACTION_FOCUS sets accessibility focus which may interfere with input focus
-                    val clickResult = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    clickSuccess = clickResult
-                    Log.d(TAG, "EditText: click=$clickResult")
-                }
-
-                if (clickSuccess) {
-                    Log.d(TAG, "Clicked/focused input field to open keyboard (isComposeUI=$isComposeUI)")
-
-                    // Wait for the keyboard to open and input field to move up
-                    // The input field should move significantly upward when keyboard opens
-                    val keyboardOpened = waitForCondition(maxWaitMs = 2000) {
-                        val currentRootNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                        if (currentRootNode != null) {
-                            // Try to find EditText nodes first (traditional UI)
-                            val currentInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                            findEditTextNodes(currentRootNode, currentInputNodes)
-
-                            val movedUp = if (currentInputNodes.isNotEmpty()) {
-                                val currentRect = android.graphics.Rect()
-                                currentInputNodes[0].getBoundsInScreen(currentRect)
-                                val moved = initialRect.top - currentRect.top > 300
-                                currentInputNodes.forEach { it.recycle() }
-                                moved
-                            } else {
-                                false
-                            }
-
-                            currentRootNode.recycle()
-                            movedUp
-                        } else {
-                            false
-                        }
-                    }
-
-                    if (keyboardOpened) {
-                        Log.d(TAG, "Keyboard opened successfully, input field moved up")
-                    } else {
-                        Log.w(TAG, "Keyboard may not have opened, input field didn't move 300px")
-                    }
-                } else {
-                    Log.w(TAG, "Could not click/focus input field to open keyboard")
-                }
-
-                // Wait a bit more for keyboard animation to complete
-                delay(300)
-
-                // Get the updated root node and input field after keyboard opened
-                val updatedRootNode = accessibilityService.getCurrentRootNode()
-                if (updatedRootNode == null) {
-                    inputNode?.recycle()
-                    rootNode.recycle()
+            // Bail out early if user is still in the SMS search screen (no
+            // open conversation). Doing this here keeps the search-screen
+            // check separate from the shared draft pipeline.
+            val checkRoot = accessibilityService.getCurrentRootNode()
+            if (checkRoot != null) {
+                val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                val searchBoxNodes = checkRoot.findAccessibilityNodeInfosByViewId(searchBoxId)
+                if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
+                    Log.e(TAG, "Still in search screen - not in a conversation!")
+                    searchBoxNodes.forEach { it.recycle() }
+                    dumpUIHierarchy(checkRoot, "sms_stuck_in_search_screen", "Cannot draft message: still in search screen. Please select a contact first to open a conversation.")
+                    checkRoot.recycle()
                     return DraftResult(
                         success = false,
                         message = message,
-                        error = "Could not get root node after keyboard opened"
+                        error = "Cannot draft message: still in search screen. Please select a contact first to open a conversation."
                     )
                 }
-
-                // Find the input field again to get its new position
-                val updatedInputNodes = mutableListOf<AccessibilityNodeInfo>()
-                findEditTextNodes(updatedRootNode, updatedInputNodes)
-
-                val finalInputNode: AccessibilityNodeInfo
-                val rect = android.graphics.Rect()
-
-                if (updatedInputNodes.isNotEmpty()) {
-                    // Traditional EditText found
-                    finalInputNode = updatedInputNodes.maxByOrNull { node ->
-                        val r = android.graphics.Rect()
-                        node.getBoundsInScreen(r)
-                        r.top
-                    } ?: updatedInputNodes[0]
-
-                    finalInputNode.getBoundsInScreen(rect)
-
-                    // Clean up others
-                    updatedInputNodes.filter { it != finalInputNode }.forEach { it.recycle() }
-                } else {
-                    // Compose UI - find wide clickable view in bottom area (after keyboard moved it up)
-                    Log.d(TAG, "No EditText found after keyboard, looking for Compose input area...")
-
-                    val allClickable = mutableListOf<AccessibilityNodeInfo>()
-                    findClickableChildren(updatedRootNode, allClickable)
-
-                    val screenWidth = context.resources.displayMetrics.widthPixels
-                    val wideBottomViews = allClickable.filter { node ->
-                        val r = android.graphics.Rect()
-                        node.getBoundsInScreen(r)
-                        val width = r.right - r.left
-                        // Look for wide views that are now in the middle of screen (moved up from bottom)
-                        width > (screenWidth * 0.4) && r.top > 800 && r.top < 1800
-                    }
-
-                    if (wideBottomViews.isEmpty()) {
-                        allClickable.forEach { it.recycle() }
-                        dumpUIHierarchy(updatedRootNode, "sms_input_not_found_compose", "Could not find input field after keyboard opened (Compose UI)")
-                        inputNode.recycle()
-                        rootNode.recycle()
-                        updatedRootNode.recycle()
-                        return DraftResult(
-                            success = false,
-                            message = message,
-                            error = "Could not find input field after keyboard opened (Compose UI)"
-                        )
-                    }
-
-                    finalInputNode = wideBottomViews[0]
-                    finalInputNode.getBoundsInScreen(rect)
-
-                    Log.d(TAG, "Found Compose input area at: $rect")
-
-                    // Clean up
-                    wideBottomViews.drop(1).forEach { it.recycle() }
-                    allClickable.filter { it !in wideBottomViews }.forEach { it.recycle() }
-                }
-
-                // Get the app window bounds
-                val appBounds = android.graphics.Rect()
-                updatedRootNode.getBoundsInScreen(appBounds)
-
-                // For SMS, walk up accessibility parents to find a reasonable container.
-                // Use the first ancestor whose height is within 3x of the input field's height.
-                val smsEditTextHeight = rect.height()
-                var smsContainerTop = rect.top
-                var smsCurrent: AccessibilityNodeInfo? = finalInputNode.parent
-                var smsWalkDepth = 0
-                while (smsCurrent != null && smsWalkDepth < 5) {
-                    val pr = android.graphics.Rect()
-                    smsCurrent.getBoundsInScreen(pr)
-                    Log.d(TAG, "SMS parent walk depth $smsWalkDepth: bounds=$pr, height=${pr.height()}, editTextHeight=$smsEditTextHeight")
-                    if (pr.height() <= smsEditTextHeight * 3 && pr.top < rect.top) {
-                        smsContainerTop = pr.top
-                        Log.d(TAG, "Found SMS input container at depth $smsWalkDepth: bounds=$pr")
-                        break
-                    }
-                    smsCurrent = smsCurrent.parent
-                    smsWalkDepth++
-                }
-
-                Log.d(TAG, "Using input field at bounds: $rect, containerTop=$smsContainerTop")
-                Log.d(TAG, "SMS app window bounds: $appBounds (width=${appBounds.width()})")
-                Log.d(TAG, "Input field is at ${(rect.top.toFloat() / screenHeight * 100).toInt()}% of screen height")
-
-                // Create bounds for overlay that uses app width but container's vertical position
-                val overlayBounds = android.graphics.Rect(
-                    appBounds.left,    // Use app's left edge
-                    smsContainerTop,   // Use container top to cover full input bar
-                    appBounds.right,   // Use app's right edge
-                    rect.bottom        // Use input field's bottom
-                )
-
-                // Start the draft overlay service with the bounds, message, and previousText
-                val overlayStarted = MessageDraftOverlayService.show(
-                    context,
-                    overlayBounds,
-                    message,
-                    previousText
-                )
-
-                // Clean up
-                inputNode.recycle()
-                finalInputNode.recycle()
-                rootNode.recycle()
-                updatedRootNode.recycle()
-
-                return DraftResult(
-                    success = overlayStarted,
-                    message = message,
-                    overlayShown = overlayStarted,
-                    error = if (!overlayStarted) "Failed to show draft overlay" else null
-                )
+                searchBoxNodes?.forEach { it.recycle() }
+                checkRoot.recycle()
             }
 
-            // Clean up - inputNode is null
-            if (inputNode != null) {
-                inputNode.recycle()
-            }
-            dumpUIHierarchy(rootNode, "sms_input_not_found", "Could not find message input field in SMS app")
-            rootNode.recycle()
-
-            return DraftResult(
-                success = false,
+            // Hand off to the shared draft pipeline with SMS-specific lookups.
+            return draftMessageCore(DraftCoreInput(
+                targetPackage = "com.google.android.apps.messaging",
+                findInput = { root -> smsFindBestInput(root, allowComposeFallback = previousText == null) },
+                findContainerTop = { root -> smsFindContainerTopByParentWalk(root, allowComposeFallback = previousText == null) },
                 message = message,
-                error = "Could not find message input field"
-            )
+                previousText = previousText,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "sms_input_not_found", "Could not find message input field in SMS app")
+                },
+            ))
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting SMS message", e)
@@ -3235,12 +2856,119 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    /**
+     * SMS-specific input finder used by both the draft pipeline (initial find
+     * before keyboard) and its post-keyboard re-find. Tries the traditional
+     * Google Messages EditText by resource ID first; falls back to generic
+     * EditText search with search-box filtering; finally falls back to a
+     * Compose-UI heuristic (wide clickable view in the bottom third), only
+     * when allowed.
+     *
+     * `allowComposeFallback=false` for the update-draft path: we just
+     * dismissed the overlay, and the Compose-UI heuristic could pick up
+     * stale views.
+     */
+    private fun smsFindBestInput(root: AccessibilityNodeInfo, allowComposeFallback: Boolean): AccessibilityNodeInfo? {
+        val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+        val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
+
+        // Path 1: by resource ID (traditional EditText).
+        val byResourceId = root.findAccessibilityNodeInfosByViewId(composeMessageId)
+        if (byResourceId != null && byResourceId.isNotEmpty()) {
+            val first = byResourceId[0]
+            byResourceId.drop(1).forEach { it.recycle() }
+            Log.d(TAG, "smsFindBestInput: found via resource ID $composeMessageId")
+            return first
+        }
+
+        // Path 2: generic EditText search, filtered to drop search boxes.
+        val inputs = mutableListOf<AccessibilityNodeInfo>()
+        findEditTextNodes(root, inputs)
+        val filtered = inputs.filter { node ->
+            val viewId = node.viewIdResourceName
+            viewId != searchBoxId && !viewId.contains("search")
+        }
+        inputs.filter { it !in filtered }.forEach { it.recycle() }
+        if (filtered.isNotEmpty()) {
+            val best = filtered.maxByOrNull { node ->
+                val rect = Rect()
+                node.getBoundsInScreen(rect)
+                rect.top // bottommost wins
+            } ?: filtered.first()
+            filtered.filter { it !== best }.forEach { it.recycle() }
+            Log.d(TAG, "smsFindBestInput: found via EditText fallback (${filtered.size} candidate(s))")
+            return best
+        }
+
+        if (!allowComposeFallback) {
+            Log.w(TAG, "smsFindBestInput: no EditText and Compose fallback disabled")
+            return null
+        }
+
+        // Path 3: Compose-UI heuristic — wide clickable view in bottom third.
+        val clickables = mutableListOf<AccessibilityNodeInfo>()
+        findClickableChildren(root, clickables)
+        val screenHeight = context.resources.displayMetrics.heightPixels
+        val screenWidth = context.resources.displayMetrics.widthPixels
+        val bottomThirdStart = (screenHeight * 0.67).toInt()
+        val composeCandidates = clickables.filter { node ->
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            val width = rect.right - rect.left
+            rect.top > bottomThirdStart &&
+                width > (screenWidth * 0.4) &&
+                (rect.bottom - rect.top) < 400
+        }
+        if (composeCandidates.isNotEmpty()) {
+            val first = composeCandidates[0]
+            clickables.filter { it !== first }.forEach { it.recycle() }
+            Log.d(TAG, "smsFindBestInput: found via Compose-UI heuristic")
+            return first
+        }
+        clickables.forEach { it.recycle() }
+        return null
+    }
+
+    /**
+     * SMS-specific container-top finder for the draft overlay. Walks up the
+     * accessibility parents of the chosen input until a "reasonable" ancestor
+     * is found — height within 3x of the input height. Returns null if no
+     * suitable ancestor exists (core then falls back to inputRect.top).
+     */
+    private fun smsFindContainerTopByParentWalk(root: AccessibilityNodeInfo, allowComposeFallback: Boolean): Int? {
+        val inputNode = smsFindBestInput(root, allowComposeFallback) ?: return null
+        try {
+            val inputRect = Rect().also { inputNode.getBoundsInScreen(it) }
+            val inputHeight = inputRect.height()
+            var current: AccessibilityNodeInfo? = inputNode.parent
+            var depth = 0
+            while (current != null && depth < 5) {
+                val parentRect = Rect().also { current.getBoundsInScreen(it) }
+                Log.d(TAG, "SMS parent walk depth $depth: bounds=$parentRect, height=${parentRect.height()}, inputHeight=$inputHeight")
+                if (parentRect.height() <= inputHeight * 3 && parentRect.top < inputRect.top) {
+                    val top = parentRect.top
+                    Log.d(TAG, "Found SMS input container at depth $depth: bounds=$parentRect")
+                    current.recycle()
+                    return top
+                }
+                val next = current.parent
+                current.recycle()
+                current = next
+                depth++
+            }
+            return null
+        } finally {
+            inputNode.recycle()
+        }
+    }
+
     suspend fun sendSMSMessage(message: String): SMSResult {
         Log.d(TAG, "Attempting to send SMS message: $message")
 
         try {
-            // Skip launching app - sendSMSMessage is always called after a draft was shown,
-            // so the Messages app should already be open in the correct conversation
+            // Skip launching app - sendSMSMessage is always called after a draft
+            // was shown, so the Messages app should already be open in the correct
+            // conversation.
             Log.d(TAG, "Skipping app launch - send is called after draft, app should already be in correct state")
 
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -3253,172 +2981,35 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait a bit to ensure UI is ready
+            // Wait a bit to ensure UI is ready (matches the prior 500ms settle).
             delay(500)
 
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode == null) {
-                logScreenAgentError("root_node_null", "Could not get root node", "com.google.android.apps.messaging")
-                return SMSResult(
+            val coreResult = sendDraftedMessageCore(SendCoreInput(
+                targetPackage = "com.google.android.apps.messaging",
+                findInput = { root -> smsFindBestInput(root, allowComposeFallback = false) },
+                findSendButton = { root, input ->
+                    // Preferred: Google Messages' known content descriptions.
+                    // Fallback: peek window (catches version drift / unlabeled buttons).
+                    smsFindSendButton(root) ?: findSendButtonByPeekingWindow(root, input)
+                },
+                message = message,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "sms_send_input_not_found", "Could not find message input field in sendSMSMessage")
+                },
+                onSendButtonNotFound = { root ->
+                    dumpUIHierarchy(root, "sms_send_button_not_found", "Could not find or click send button in SMS app")
+                },
+            ))
+
+            return if (coreResult.success && coreResult.sent) {
+                SMSResult(success = true, action = "send_message")
+            } else {
+                SMSResult(
                     success = false,
                     action = "send_message",
-                    error = "Could not get root node"
+                    error = coreResult.error ?: "Could not send SMS message",
                 )
             }
-
-            // Find the message input field
-            // Try by resource ID first (Google Messages)
-            var inputNode: AccessibilityNodeInfo? = null
-            val composeMessageId = "com.google.android.apps.messaging:id/compose_message_text"
-            val composeMessageNodes = rootNode.findAccessibilityNodeInfosByViewId(composeMessageId)
-
-            if (composeMessageNodes != null && composeMessageNodes.isNotEmpty()) {
-                Log.d(TAG, "Found message input field by resource ID: $composeMessageId")
-                inputNode = composeMessageNodes[0]
-                composeMessageNodes.drop(1).forEach { it.recycle() }
-            } else {
-                // Fallback: Find any EditText nodes
-                Log.d(TAG, "Resource ID not found, falling back to generic EditText search")
-                val inputNodes = mutableListOf<AccessibilityNodeInfo>()
-                findEditTextNodes(rootNode, inputNodes)
-
-                if (inputNodes.isNotEmpty()) {
-                    inputNode = inputNodes[0]
-                    inputNodes.drop(1).forEach { it.recycle() }
-                }
-            }
-
-            if (inputNode != null) {
-
-                // Dismiss the draft overlay if it's active
-                try {
-                    if (com.example.whiz.services.MessageDraftOverlayService.isActive) {
-                        Log.d(TAG, "Dismissing draft overlay before sending message")
-                        com.example.whiz.services.MessageDraftOverlayService.stop(accessibilityService.applicationContext)
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not dismiss draft overlay: ${e.message}")
-                }
-
-                // Clear the input field first
-                val clearBundle = Bundle()
-                clearBundle.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    ""
-                )
-                inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
-                Log.d(TAG, "Cleared input field")
-
-                // Wait a bit for the clear to take effect
-                delay(200)
-
-                // Set the text
-                val bundle = Bundle()
-                bundle.putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    message
-                )
-                val textSet = inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
-
-                if (textSet) {
-                    Log.d(TAG, "Message text set successfully")
-
-                    // Wait for text to be set and send button to become active
-                    delay(500)
-
-                    // Try to find the send button
-                    // Common identifiers: "Send", button with contentDescription "Send"
-                    val currentRoot = accessibilityService.getCurrentRootNode()
-                    var sendSuccess = false
-
-                    if (currentRoot != null) {
-                        // Find by content description and try direct click
-                        val sendButtons = mutableListOf<AccessibilityNodeInfo>()
-                        // Try all possible send button content descriptions
-                        val sendButtonDescriptions = listOf("Send message", "Send SMS", "Send MMS", "Send encrypted message")
-                        for (desc in sendButtonDescriptions) {
-                            findNodesByContentDescription(currentRoot, desc, sendButtons)
-                            if (sendButtons.isNotEmpty()) break
-                        }
-
-                        if (sendButtons.isNotEmpty()) {
-                            Log.d(TAG, "Found send button by content description")
-                            val sendButtonChild = sendButtons[0]
-
-                            // Try clicking the node directly first - Android might bubble the click up
-                            sendSuccess = sendButtonChild.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                            Log.d(TAG, "Tried clicking node directly, result: $sendSuccess")
-
-                            // If direct click didn't work, walk up the tree to find clickable ancestor
-                            if (!sendSuccess) {
-                                Log.d(TAG, "Direct click failed, walking up tree to find clickable ancestor")
-                                var sendButton = sendButtonChild.parent
-
-                                // Walk up the tree to find a clickable ancestor
-                                var attempts = 0
-                                while (sendButton != null && !sendButton.isClickable && attempts < 3) {
-                                    Log.d(TAG, "Parent node not clickable, trying grandparent (attempt ${attempts + 1})")
-                                    val nextParent = sendButton.parent
-                                    sendButton.recycle()
-                                    sendButton = nextParent
-                                    attempts++
-                                }
-
-                                if (sendButton != null && sendButton.isClickable) {
-                                    sendSuccess = accessibilityService.clickNode(sendButton)
-                                    Log.d(TAG, "Clicked send button by walking up tree, result: $sendSuccess")
-                                    sendButton.recycle()
-                                } else {
-                                    Log.w(TAG, "Could not find clickable ancestor for send button")
-                                    sendButton?.recycle()
-                                }
-                            }
-
-                            sendButtons.forEach { it.recycle() }
-                        } else {
-                            Log.e(TAG, "Could not find send button by content description")
-                        }
-
-                        currentRoot.recycle()
-                    }
-
-                    // Clean up
-                    inputNode.recycle()
-                    rootNode.recycle()
-
-                    if (sendSuccess) {
-                        return SMSResult(
-                            success = true,
-                            action = "send_message"
-                        )
-                    } else {
-                        // UI dump for send button not found
-                        val dumpRoot = accessibilityService.getCurrentRootNode()
-                        if (dumpRoot != null) {
-                            dumpUIHierarchy(dumpRoot, "sms_send_button_not_found", "Could not find or click send button in SMS app")
-                            dumpRoot.recycle()
-                        }
-                        return SMSResult(
-                            success = false,
-                            action = "send_message",
-                            error = "Could not find or click send button"
-                        )
-                    }
-                }
-            }
-
-            // Clean up - inputNode is null
-            if (inputNode != null) {
-                inputNode.recycle()
-            }
-            dumpUIHierarchy(rootNode, "sms_send_input_not_found", "Could not find message input field in sendSMSMessage")
-            rootNode.recycle()
-
-            return SMSResult(
-                success = false,
-                action = "send_message",
-                error = "Could not find message input field"
-            )
 
         } catch (e: Exception) {
             Log.e(TAG, "Error sending SMS message", e)
@@ -3433,6 +3024,251 @@ class ScreenAgentTools @Inject constructor(
                 error = "Error sending message: ${e.message}"
             )
         }
+    }
+
+    /**
+     * Generic send-button finder used as a fallback when a per-app resource-ID
+     * or content-description lookup misses, and as the primary lookup for the
+     * generic draft+send flow in unknown messaging apps.
+     *
+     * The heuristic peeks at the window for a clickable node that looks like
+     * a send button, in priority order:
+     *   1. Clickable node in the same row as [input], right of [input],
+     *      with contentDescription containing "send" or "submit".
+     *   2. Any clickable node anywhere with contentDescription containing
+     *      "send" or "submit".
+     *   3. Rightmost clickable node in the same row as [input] (catches
+     *      unlabeled icon-only send buttons).
+     *
+     * Returns a node the caller must recycle (a copy via `obtain`), or null
+     * if no plausible candidate exists.
+     */
+    private fun findSendButtonByPeekingWindow(
+        root: AccessibilityNodeInfo,
+        input: AccessibilityNodeInfo,
+    ): AccessibilityNodeInfo? {
+        val inputRect = Rect().also { input.getBoundsInScreen(it) }
+        val clickables = mutableListOf<AccessibilityNodeInfo>()
+        findClickableChildren(root, clickables)
+
+        fun describes(node: AccessibilityNodeInfo): Boolean {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: return false
+            return desc.contains("send") || desc.contains("submit")
+        }
+
+        fun verticallyInRow(node: AccessibilityNodeInfo): Boolean {
+            val r = Rect().also { node.getBoundsInScreen(it) }
+            return r.centerY() in (inputRect.top - 20)..(inputRect.bottom + 20)
+        }
+
+        // Priority 1: described send button in the same row as the input.
+        var best = clickables.firstOrNull { describes(it) && verticallyInRow(it) }
+
+        // Priority 2: any described send button anywhere.
+        if (best == null) {
+            best = clickables.firstOrNull { describes(it) }
+        }
+
+        // Priority 3: rightmost clickable in the input row (icon-only buttons).
+        if (best == null) {
+            best = clickables
+                .filter { node ->
+                    val r = Rect().also { node.getBoundsInScreen(it) }
+                    verticallyInRow(node) && r.left >= inputRect.right - 20
+                }
+                .maxByOrNull { node ->
+                    val r = Rect().also { node.getBoundsInScreen(it) }
+                    r.left
+                }
+        }
+
+        clickables.filter { it !== best }.forEach { it.recycle() }
+        if (best != null) {
+            val r = Rect().also { best.getBoundsInScreen(it) }
+            Log.d(TAG, "findSendButtonByPeekingWindow: candidate desc='${best.contentDescription}', bounds=$r")
+        }
+        return best
+    }
+
+    /**
+     * SMS-specific send-button finder. Tries each known content description in
+     * priority order. If the matching node is itself clickable, returns it;
+     * otherwise walks up to the nearest clickable ancestor (up to 3 levels).
+     */
+    private fun smsFindSendButton(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val descriptions = listOf("Send message", "Send SMS", "Send MMS", "Send encrypted message")
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        for (desc in descriptions) {
+            findNodesByContentDescription(root, desc, candidates)
+            if (candidates.isNotEmpty()) break
+        }
+        if (candidates.isEmpty()) return null
+
+        val first = candidates[0]
+        candidates.drop(1).forEach { it.recycle() }
+
+        if (first.isClickable) return first
+
+        // Walk up to find clickable ancestor.
+        var current: AccessibilityNodeInfo? = first.parent
+        var attempts = 0
+        while (current != null && !current.isClickable && attempts < 3) {
+            val next = current.parent
+            current.recycle()
+            current = next
+            attempts++
+        }
+        first.recycle()
+        return if (current != null && current.isClickable) {
+            current
+        } else {
+            current?.recycle()
+            null
+        }
+    }
+
+    // ========== Generic Draft/Send Functions ==========
+
+    /**
+     * Draft a message in the currently-foreground app's text input. Used when
+     * the user is already inside a chat thread in an app we don't have
+     * specific tooling for (Signal, Messenger, Telegram, Instagram, Discord,
+     * Slack, email compose, etc.). No contact navigation, no app launch — the
+     * user is assumed to be in the conversation already.
+     *
+     * Same draft pipeline as WhatsApp/SMS via [draftMessageCore]; lookups are
+     * generic ([genericFindInput] for the input field, no per-app container
+     * lookup so the overlay top sits at the input's top edge).
+     */
+    suspend fun draftGenericMessage(message: String, previousText: String? = null): DraftResult {
+        Log.d(TAG, "draftGenericMessage: message='${message.take(60)}...', previousText=$previousText")
+        trackAction("draftGenericMessage: ${message.take(30)}...")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return DraftResult(success = false, message = message, error = "Accessibility service not enabled")
+
+            val currentRoot = accessibilityService.getCurrentRootNode()
+                ?: return DraftResult(success = false, message = message, error = "No foreground app")
+            val targetPackage = currentRoot.packageName?.toString()
+            currentRoot.recycle()
+
+            if (targetPackage.isNullOrEmpty()) {
+                return DraftResult(success = false, message = message, error = "Could not determine foreground package")
+            }
+
+            Log.d(TAG, "draftGenericMessage: targeting package $targetPackage")
+
+            return draftMessageCore(DraftCoreInput(
+                targetPackage = targetPackage,
+                findInput = { root -> genericFindInput(root) },
+                // No per-app container lookup. Core falls back to inputRect.top,
+                // and adaptive sizing covers the keyboard-only case when the
+                // input floats above the keyboard with a visible gap.
+                findContainerTop = null,
+                message = message,
+                previousText = previousText,
+                onInputNotFound = { root ->
+                    Log.w(TAG, "draftGenericMessage: no text input found in $targetPackage")
+                    dumpUIHierarchy(root, "generic_input_not_found", "Could not find text input in $targetPackage")
+                },
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error drafting generic message", e)
+            return DraftResult(success = false, message = message, error = "Error drafting message: ${e.message}")
+        }
+    }
+
+    /**
+     * Send the previously-drafted message (stored in [MessageDraftOverlayService.currentDraftMessage])
+     * in the currently-foreground app. Best-effort: looks for the send button
+     * via [findSendButtonByPeekingWindow] (clickable near the input row,
+     * preferring "send"/"submit" content descriptions). If no plausible button
+     * is found, returns a partial-success result — the text stays in the input
+     * for the user to send manually rather than risk a wrong tap.
+     */
+    suspend fun sendGenericMessage(): SendResult {
+        Log.d(TAG, "sendGenericMessage")
+        trackAction("sendGenericMessage")
+
+        try {
+            val accessibilityService = WhizAccessibilityService.getInstance()
+                ?: return SendResult(success = false, error = "Accessibility service not enabled")
+
+            val draftMessage = MessageDraftOverlayService.currentDraftMessage
+                ?: return SendResult(success = false, error = "No active draft to send")
+
+            val currentRoot = accessibilityService.getCurrentRootNode()
+                ?: return SendResult(success = false, error = "No foreground app")
+            val targetPackage = currentRoot.packageName?.toString()
+            currentRoot.recycle()
+
+            if (targetPackage.isNullOrEmpty()) {
+                return SendResult(success = false, error = "Could not determine foreground package")
+            }
+
+            Log.d(TAG, "sendGenericMessage: targeting $targetPackage, draft length=${draftMessage.length}")
+
+            return sendDraftedMessageCore(SendCoreInput(
+                targetPackage = targetPackage,
+                findInput = { root -> genericFindInput(root) },
+                findSendButton = { root, input -> findSendButtonByPeekingWindow(root, input) },
+                message = draftMessage,
+                onInputNotFound = { root ->
+                    dumpUIHierarchy(root, "generic_send_input_not_found", "Could not find text input in $targetPackage during send")
+                },
+                onSendButtonNotFound = { root ->
+                    Log.w(TAG, "sendGenericMessage: peek heuristic found no send button in $targetPackage; text drafted in input")
+                },
+            ))
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending generic message", e)
+            return SendResult(success = false, error = "Error sending message: ${e.message}")
+        }
+    }
+
+    /**
+     * Generic input finder for unknown messaging apps. Prefers a focused
+     * EditText; falls back to the bottommost EditText (typical for chat
+     * inputs); falls back to a Compose-style heuristic (wide clickable view
+     * in the bottom half) so apps using non-EditText inputs still work.
+     */
+    private fun genericFindInput(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val editTexts = mutableListOf<AccessibilityNodeInfo>()
+        findEditTextNodes(root, editTexts)
+        if (editTexts.isNotEmpty()) {
+            val focused = editTexts.firstOrNull { it.isFocused }
+            val best = focused ?: editTexts.maxByOrNull { node ->
+                val rect = Rect().also { node.getBoundsInScreen(it) }
+                rect.top
+            }
+            editTexts.filter { it !== best }.forEach { it.recycle() }
+            return best
+        }
+
+        // No EditText found. Try the Compose-style heuristic: a wide clickable
+        // view in the bottom half of the screen. openKeyboardAndWaitForIme
+        // will detect this isn't an EditText and use the focus+click+delay+click
+        // pattern automatically.
+        val clickables = mutableListOf<AccessibilityNodeInfo>()
+        findClickableChildren(root, clickables)
+        val screenHeight = context.resources.displayMetrics.heightPixels
+        val screenWidth = context.resources.displayMetrics.widthPixels
+        val bottomHalfStart = (screenHeight * 0.5).toInt()
+        val composeCandidates = clickables.filter { node ->
+            val rect = Rect().also { node.getBoundsInScreen(it) }
+            val width = rect.right - rect.left
+            rect.top > bottomHalfStart &&
+                width > (screenWidth * 0.4) &&
+                (rect.bottom - rect.top) < 400
+        }
+        if (composeCandidates.isNotEmpty()) {
+            val best = composeCandidates.first()
+            clickables.filter { it !== best }.forEach { it.recycle() }
+            return best
+        }
+        clickables.forEach { it.recycle() }
+        return null
     }
 
     // ========== SMS Helper Functions ==========
@@ -4964,122 +4800,127 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode.recycle()
             }
 
-            // Wait for directions screen to be fully loaded
-            // Look for Start button OR directions_mode_tabs (for transit mode which has no Start button initially)
+            // Wait for the directions screen to be ready. Ceiling 10s — well under the 25s
+            // server timeout for this tool (whizvoice/maps_tools.py:563) — so a slow bicycle
+            // route calc (the Palace-of-Fine-Arts bug, dumps 1314/1315) has room to finish.
             var modeRootNode: AccessibilityNodeInfo? = null
-            var directionsScreenFound = false
-            var hasStartButton = false
-            for (attempt in 1..5) {
-                modeRootNode = accessibilityService.getCurrentRootNode()
-                if (modeRootNode != null) {
-                    // Check for Start button using built-in search (no depth limit - Start button is at depth ~22)
-                    val startNodes = modeRootNode.findAccessibilityNodeInfosByText("Start")
-                    hasStartButton = startNodes.any { node ->
-                        if (node.isClickable && node.className == "android.widget.Button") {
-                            true
-                        } else {
-                            // The Start button may have text="" with desc="Start", and its child View
-                            // has text="Start" but is not clickable. Check if the parent is a clickable Button.
-                            val parent = node.parent
-                            val parentMatch = parent != null && parent.isClickable &&
-                                parent.className == "android.widget.Button" &&
-                                parent.contentDescription?.toString()?.equals("Start") == true
-                            parent?.recycle()
-                            parentMatch
-                        }
-                    }
-                    startNodes.forEach { it.recycle() }
+            var terminalFailureReason: String? = null
+            var clickedHomeForOrigin = false
 
-                    if (hasStartButton) {
-                        directionsScreenFound = true
-                        Log.d(TAG, "Found Start button on attempt $attempt")
-                        break
-                    }
+            val waitSucceeded = waitForCondition(maxWaitMs = 10_000, maxIntervalMs = 500) {
+                val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
 
-                    // If no Start button, check for mode tabs using built-in search (no depth limit)
-                    val modeTabNodes = modeRootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
-                    val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
-                    modeTabNodes?.forEach { it.recycle() }
-
-                    if (hasModeTabs) {
-                        // Check what mode we're in using built-in search (no depth limit)
-                        var currentMode: String? = null
-                        val allModeCheckNodes = modeRootNode.findAccessibilityNodeInfosByText("mode")
-                        for (modeNode in allModeCheckNodes) {
-                            val desc = modeNode.contentDescription?.toString()
-                            if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
-                                currentMode = desc.substringBefore(":").trim()
-                                break
-                            }
-                        }
-                        allModeCheckNodes.forEach { it.recycle() }
-                        val isTransitMode = currentMode?.contains("Transit", ignoreCase = true) == true
-
-                        if (isTransitMode) {
-                            // Transit mode genuinely doesn't have Start button until route is selected
-                            directionsScreenFound = true
-                            Log.d(TAG, "Found directions mode tabs on attempt $attempt (transit mode - no Start button expected)")
-                            break
-                        } else {
-                            // Non-transit mode - Start button should exist, keep waiting for it to render
-                            Log.d(TAG, "Found directions mode tabs on attempt $attempt but no Start button yet (mode: $currentMode), waiting...")
-
-                            // Check if Maps is showing "Choose start location" — this means
-                            // no origin was auto-filled (e.g. no GPS on emulator). Try clicking
-                            // "Home" from the suggestions to set an origin so directions can load.
-                            val chooseOriginNodes = modeRootNode.findAccessibilityNodeInfosByText("Choose start location")
-                            if (chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()) {
-                                Log.d(TAG, "Origin not set ('Choose start location' visible), looking for Home suggestion")
-                                chooseOriginNodes.forEach { it.recycle() }
-                                val homeNodes = modeRootNode.findAccessibilityNodeInfosByText("Home")
-                                if (homeNodes != null && homeNodes.isNotEmpty()) {
-                                    val homeNode = homeNodes[0]
-                                    val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
-                                    if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                        Log.d(TAG, "Clicked 'Home' to set origin on attempt $attempt, waiting for directions to load")
-                                    }
-                                    if (target != null && target !== homeNode) target.recycle()
-                                    homeNodes.forEach { it.recycle() }
-                                    modeRootNode.recycle()
-                                    modeRootNode = null
-                                    waitForCondition(maxWaitMs = 5000) {
-                                        val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
-                                        if (node != null) {
-                                            val startVisible = node.findAccessibilityNodeInfosByText("Start").any { n ->
-                                                val match = n.isClickable && n.className == "android.widget.Button"
-                                                n.recycle()
-                                                match
-                                            }
-                                            node.recycle()
-                                            startVisible
-                                        } else false
-                                    }
-                                    continue
-                                }
-                                homeNodes?.forEach { it.recycle() }
-                            } else {
-                                chooseOriginNodes?.forEach { it.recycle() }
-                            }
-
-                            // Don't break - continue the loop to wait for Start button
-                            modeRootNode.recycle()
-                            modeRootNode = null
-                        }
-                    }
-
-                    modeRootNode?.recycle()
-                    modeRootNode = null
+                val pkg = root.packageName?.toString()
+                if (pkg != null && pkg != "com.google.android.apps.maps") {
+                    terminalFailureReason = "User navigated away from Google Maps (now in $pkg)"
+                    Log.d(TAG, "Directions wait aborted: $terminalFailureReason")
+                    root.recycle()
+                    return@waitForCondition true
                 }
-                Log.d(TAG, "Directions screen indicators not found, waiting... (attempt $attempt/5)")
-                delay(1000)
+
+                val startNodes = root.findAccessibilityNodeInfosByText("Start")
+                val hasStart = startNodes.any { node ->
+                    if (node.isClickable && node.className == "android.widget.Button") {
+                        true
+                    } else {
+                        val parent = node.parent
+                        val parentMatch = parent != null && parent.isClickable &&
+                            parent.className == "android.widget.Button" &&
+                            parent.contentDescription?.toString()?.equals("Start") == true
+                        parent?.recycle()
+                        parentMatch
+                    }
+                }
+                startNodes.forEach { it.recycle() }
+                if (hasStart) {
+                    Log.d(TAG, "Found Start button")
+                    modeRootNode = root
+                    return@waitForCondition true
+                }
+
+                val modeTabNodes = root.findAccessibilityNodeInfosByViewId(
+                    "com.google.android.apps.maps:id/directions_mode_tabs"
+                )
+                val hasModeTabs = modeTabNodes != null && modeTabNodes.isNotEmpty()
+                modeTabNodes?.forEach { it.recycle() }
+
+                if (hasModeTabs) {
+                    var currentMode: String? = null
+                    val allModeCheckNodes = root.findAccessibilityNodeInfosByText("mode")
+                    for (modeNode in allModeCheckNodes) {
+                        val desc = modeNode.contentDescription?.toString()
+                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                            currentMode = desc.substringBefore(":").trim()
+                            break
+                        }
+                    }
+                    allModeCheckNodes.forEach { it.recycle() }
+
+                    if (currentMode?.contains("Transit", ignoreCase = true) == true) {
+                        Log.d(TAG, "Found mode tabs in transit mode (no Start button expected)")
+                        modeRootNode = root
+                        return@waitForCondition true
+                    }
+
+                    if (!clickedHomeForOrigin) {
+                        // No origin auto-filled (e.g. no GPS on emulator) — pick "Home" once to unblock.
+                        val chooseOriginNodes = root.findAccessibilityNodeInfosByText("Choose start location")
+                        val originMissing = chooseOriginNodes != null && chooseOriginNodes.isNotEmpty()
+                        chooseOriginNodes?.forEach { it.recycle() }
+                        if (originMissing) {
+                            val homeNodes = root.findAccessibilityNodeInfosByText("Home")
+                            if (homeNodes != null && homeNodes.isNotEmpty()) {
+                                val homeNode = homeNodes[0]
+                                val target = if (homeNode.isClickable) homeNode else findClickableParent(homeNode)
+                                if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                                    Log.d(TAG, "Clicked 'Home' to set origin")
+                                    clickedHomeForOrigin = true
+                                }
+                                if (target != null && target !== homeNode) target.recycle()
+                            }
+                            homeNodes?.forEach { it.recycle() }
+                        }
+                    }
+                }
+
+                for (errText in listOf("Can't find route", "Directions are not available", "No route found")) {
+                    val errNodes = root.findAccessibilityNodeInfosByText(errText)
+                    if (errNodes != null && errNodes.isNotEmpty()) {
+                        errNodes.forEach { it.recycle() }
+                        terminalFailureReason = "Maps could not find a route: $errText"
+                        Log.d(TAG, "Directions wait aborted: $terminalFailureReason")
+                        root.recycle()
+                        return@waitForCondition true
+                    }
+                    errNodes?.forEach { it.recycle() }
+                }
+
+                root.recycle()
+                false
             }
 
-            if (!directionsScreenFound || modeRootNode == null) {
-                Log.w(TAG, "Directions screen did not fully load - neither Start button nor mode tabs found after 5 attempts")
-                // UI dump for Start button not found
+            if (terminalFailureReason != null) {
+                val reason = terminalFailureReason!!
+                Log.w(TAG, "Directions wait failed terminally: $reason")
                 val dumpRoot = accessibilityService.getCurrentRootNode()
                 if (dumpRoot != null) {
-                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", "Neither Start button nor mode tabs found after 5 attempts on directions screen")
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", reason)
+                    dumpRoot.recycle()
+                }
+                modeRootNode?.recycle()
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    error = reason
+                )
+            }
+
+            if (!waitSucceeded || modeRootNode == null) {
+                Log.w(TAG, "Directions screen did not fully load within 10s - neither Start button nor mode tabs found")
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_directions_screen_not_found", "Neither Start button nor mode tabs found within 10s on directions screen")
                     dumpRoot.recycle()
                 }
                 modeRootNode?.recycle()
@@ -8442,11 +8283,311 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Poll for a specific condition with exponential backoff
-     * @param condition The condition to check
-     * @param maxWaitMs Maximum time to wait in milliseconds
-     * @param initialDelayMs Initial delay between checks
-     * @param maxIntervalMs Maximum interval between checks
+     * Shared draft pipeline. Used by WhatsApp, SMS, and the generic draft flow.
+     * Caller is responsible for app-specific preconditions (app launch, chat
+     * navigation, "are we in a chat" wait); the core handles only the "find
+     * input → open keyboard → re-find input → compute bounds → show overlay"
+     * pipeline.
+     *
+     * Adaptive overlay sizing: when the IME window is visible and there's a
+     * notable gap between the input bottom and the IME top (input floats above
+     * the keyboard), the overlay covers only the keyboard region. Otherwise
+     * it covers from the input container top down to the screen bottom — the
+     * existing behavior for WhatsApp/Messages where the input sits flush
+     * against the keyboard.
+     */
+    private suspend fun draftMessageCore(args: DraftCoreInput): DraftResult {
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return DraftResult(
+                success = false,
+                message = args.message,
+                error = "Accessibility service not enabled",
+            )
+
+        val rootNode = accessibilityService.getRootNodeForPackage(args.targetPackage)
+            ?: return DraftResult(
+                success = false,
+                message = args.message,
+                error = "Could not get root node for ${args.targetPackage}",
+            )
+
+        val inputNode = args.findInput(rootNode)
+        if (inputNode == null) {
+            args.onInputNotFound?.invoke(rootNode)
+            rootNode.recycle()
+            return DraftResult(
+                success = false,
+                message = args.message,
+                error = "Could not find message input field",
+            )
+        }
+
+        // Open keyboard and wait. The refetch lambda re-resolves bounds each
+        // tick so the fallback "input moved up" heuristic survives across
+        // accessibility tree refreshes.
+        openKeyboardAndWaitForIme(
+            inputNode = inputNode,
+            refetchInputBounds = {
+                val r = accessibilityService.getRootNodeForPackage(args.targetPackage)
+                if (r == null) {
+                    null
+                } else {
+                    val fresh = args.findInput(r)
+                    val rect = fresh?.let { Rect().also { rect -> it.getBoundsInScreen(rect) } }
+                    fresh?.recycle()
+                    r.recycle()
+                    rect
+                }
+            },
+        )
+
+        // Re-fetch root + input after the keyboard animation so bounds reflect
+        // the keyboard-open layout.
+        val updatedRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
+        if (updatedRoot == null) {
+            inputNode.recycle()
+            rootNode.recycle()
+            return DraftResult(
+                success = false,
+                message = args.message,
+                error = "Could not get root node after keyboard opened",
+            )
+        }
+        val updatedInput = args.findInput(updatedRoot)
+        if (updatedInput == null) {
+            args.onInputNotFound?.invoke(updatedRoot)
+            inputNode.recycle()
+            rootNode.recycle()
+            updatedRoot.recycle()
+            return DraftResult(
+                success = false,
+                message = args.message,
+                error = "Could not find input field after keyboard opened",
+            )
+        }
+
+        val inputRect = Rect().also { updatedInput.getBoundsInScreen(it) }
+        val appRect = Rect().also { updatedRoot.getBoundsInScreen(it) }
+        val containerTop = args.findContainerTop?.invoke(updatedRoot) ?: inputRect.top
+
+        // Adaptive sizing: if input floats well above the keyboard, cover only
+        // the keyboard region; else cover input container + below.
+        val imeRect = accessibilityService.getImeWindowBounds()
+        val density = context.resources.displayMetrics.density
+        val gapThresholdPx = (48 * density).toInt()
+        val keyboardTop = if (imeRect != null && imeRect.top - inputRect.bottom > gapThresholdPx) {
+            Log.d(TAG, "draftMessageCore: input-to-keyboard gap=${imeRect.top - inputRect.bottom}px > $gapThresholdPx → keyboard-only overlay at top=${imeRect.top}")
+            imeRect.top
+        } else {
+            if (imeRect != null) {
+                Log.d(TAG, "draftMessageCore: input-to-keyboard gap=${imeRect.top - inputRect.bottom}px <= $gapThresholdPx → full overlay (existing behavior)")
+            } else {
+                Log.d(TAG, "draftMessageCore: no IME bounds available → full overlay (existing behavior)")
+            }
+            null
+        }
+
+        val screenHeight = context.resources.displayMetrics.heightPixels
+        val overlayBounds = Rect(appRect.left, containerTop, appRect.right, screenHeight)
+
+        Log.d(TAG, "draftMessageCore: pkg=${args.targetPackage}, inputRect=$inputRect, appRect=$appRect, containerTop=$containerTop, keyboardTop=$keyboardTop, overlayBounds=$overlayBounds")
+
+        val overlayStarted = MessageDraftOverlayService.show(
+            context, overlayBounds, args.message, args.previousText, keyboardTop,
+        )
+
+        inputNode.recycle()
+        updatedInput.recycle()
+        rootNode.recycle()
+        updatedRoot.recycle()
+
+        return DraftResult(
+            success = overlayStarted,
+            message = args.message,
+            overlayShown = overlayStarted,
+            error = if (!overlayStarted) "Failed to show draft overlay" else null,
+        )
+    }
+
+    /**
+     * Shared send pipeline. Used by WhatsApp, SMS, and the generic send flow.
+     * Caller supplies app-specific input/send-button finders as lambdas; core
+     * clears the input, sets the message text, clicks the send button (or
+     * returns a partial-success SendResult when no button is found — for the
+     * generic case in unknown apps, the text stays in the field so the user
+     * can send manually).
+     */
+    private suspend fun sendDraftedMessageCore(args: SendCoreInput): SendResult {
+        val accessibilityService = WhizAccessibilityService.getInstance()
+            ?: return SendResult(success = false, error = "Accessibility service not enabled")
+
+        // Dismiss the draft overlay if active so it doesn't sit on top of the
+        // post-send UI.
+        try {
+            if (MessageDraftOverlayService.isActive) {
+                Log.d(TAG, "sendDraftedMessageCore: dismissing draft overlay")
+                MessageDraftOverlayService.stop(accessibilityService.applicationContext)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sendDraftedMessageCore: could not dismiss overlay: ${e.message}")
+        }
+
+        val rootNode = accessibilityService.getRootNodeForPackage(args.targetPackage)
+            ?: return SendResult(success = false, error = "Could not get root node for ${args.targetPackage}")
+
+        val inputNode = args.findInput(rootNode)
+        if (inputNode == null) {
+            args.onInputNotFound?.invoke(rootNode)
+            rootNode.recycle()
+            return SendResult(success = false, error = "Could not find message input field")
+        }
+
+        // Clear, then set. Matches existing per-app behavior.
+        val clearBundle = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+        }
+        inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, clearBundle)
+        delay(200)
+
+        val setBundle = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, args.message)
+        }
+        val textSet = inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, setBundle)
+        if (!textSet) {
+            inputNode.recycle()
+            rootNode.recycle()
+            return SendResult(success = false, error = "Could not set text in input field")
+        }
+
+        // Poll for the send button. Some apps only enable their send button
+        // after the text-set frame is committed (WhatsApp's resource-ID node
+        // appears with a short delay; Compose-based apps may be slower still),
+        // so retry the lookup until it returns non-null or we hit the timeout.
+        // This restores the per-app polling that the old WhatsApp send had,
+        // but generalised across all flows.
+        var freshRoot: AccessibilityNodeInfo = rootNode
+        var freshInput: AccessibilityNodeInfo = inputNode
+        var sendButton: AccessibilityNodeInfo? = null
+        val sendDeadline = System.currentTimeMillis() + 1500
+        while (System.currentTimeMillis() < sendDeadline) {
+            val polledRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
+            if (polledRoot != null) {
+                val polledInput = args.findInput(polledRoot) ?: inputNode
+                val polledButton = args.findSendButton(polledRoot, polledInput)
+                if (polledButton != null) {
+                    if (freshRoot !== rootNode) freshRoot.recycle()
+                    if (freshInput !== inputNode) freshInput.recycle()
+                    freshRoot = polledRoot
+                    freshInput = polledInput
+                    sendButton = polledButton
+                    break
+                }
+                if (polledInput !== inputNode) polledInput.recycle()
+                polledRoot.recycle()
+            }
+            delay(100)
+        }
+
+        if (sendButton == null) {
+            args.onSendButtonNotFound?.invoke(freshRoot)
+            if (freshInput !== inputNode) freshInput.recycle()
+            if (freshRoot !== rootNode) freshRoot.recycle()
+            inputNode.recycle()
+            rootNode.recycle()
+            // Partial success: text is in the field; user can send manually.
+            return SendResult(success = true, sent = false, error = "Could not find send button; text drafted in input")
+        }
+
+        val clicked = sendButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        sendButton.recycle()
+        if (freshInput !== inputNode) freshInput.recycle()
+        if (freshRoot !== rootNode) freshRoot.recycle()
+        inputNode.recycle()
+        rootNode.recycle()
+
+        return if (clicked) {
+            SendResult(success = true, sent = true)
+        } else {
+            SendResult(success = false, error = "Could not click send button")
+        }
+    }
+
+    /**
+     * Click the given input node to open the keyboard, then poll until the IME
+     * is visible (or the input has moved up far enough to imply it). Used by
+     * all draft flows so they share one keyboard-open detection path.
+     *
+     * Click strategy is chosen from the node's className:
+     *
+     *   - **EditText / subclass**: ACTION_CLICK only. ACTION_FOCUS is
+     *     deliberately not used — some apps (WhatsApp) auto-focus the input
+     *     on chat entry, so a focus + click sequence can succeed at focus
+     *     without raising the keyboard.
+     *
+     *   - **Anything else** (Compose-style views, custom text fields, etc.):
+     *     ACTION_FOCUS → ACTION_CLICK → 50ms settle → ACTION_CLICK. Compose
+     *     views do not reliably open the keyboard on a single click; this
+     *     sequence was tuned in the original SMS draft flow for Google
+     *     Messages' Compose UI and applies equally to other Compose-based
+     *     messaging apps.
+     *
+     * Primary keyboard-open signal: WhizAccessibilityService.getImeWindowBounds()
+     * (TYPE_INPUT_METHOD window present). Fallback: [refetchInputBounds] each
+     * tick — input moved up >300px implies the keyboard pushed it. The lambda
+     * owns its own root/node recycling since recycling a root invalidates its
+     * children.
+     *
+     * On success, adds a 300ms post-open delay to let keyboard animation
+     * settle before callers read new bounds.
+     */
+    private suspend fun openKeyboardAndWaitForIme(
+        inputNode: AccessibilityNodeInfo,
+        refetchInputBounds: () -> Rect?,
+        maxWaitMs: Long = 2000,
+    ): Boolean {
+        val service = WhizAccessibilityService.getInstance() ?: return false
+        val initialRect = Rect().also { inputNode.getBoundsInScreen(it) }
+
+        val className = inputNode.className?.toString().orEmpty()
+        val isEditText = className.contains("EditText", ignoreCase = true)
+        Log.d(TAG, "openKeyboardAndWaitForIme: className='$className', isEditText=$isEditText, initialRect=$initialRect")
+
+        val clicked: Boolean
+        if (isEditText) {
+            clicked = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            Log.d(TAG, "openKeyboardAndWaitForIme: EditText path, ACTION_CLICK=$clicked")
+        } else {
+            val focused = inputNode.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            val firstClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            delay(50)
+            val secondClick = inputNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            clicked = focused || firstClick || secondClick
+            Log.d(TAG, "openKeyboardAndWaitForIme: Compose path, focus=$focused, click1=$firstClick, click2=$secondClick")
+        }
+
+        if (!clicked) {
+            return false
+        }
+
+        val opened = waitForCondition(maxWaitMs = maxWaitMs, initialDelayMs = 100) {
+            if (service.getImeWindowBounds() != null) {
+                return@waitForCondition true
+            }
+            val rect = refetchInputBounds() ?: return@waitForCondition false
+            initialRect.top - rect.top > 300
+        }
+
+        if (opened) {
+            delay(300)
+            Log.d(TAG, "openKeyboardAndWaitForIme: keyboard open, IME bounds=${service.getImeWindowBounds()}")
+        } else {
+            Log.w(TAG, "openKeyboardAndWaitForIme: timed out waiting for keyboard")
+        }
+        return opened
+    }
+
+    /**
+     * Poll for a specific condition with exponential backoff.
      * @return true if condition was met within timeout
      */
     private suspend fun waitForCondition(
@@ -9882,55 +10023,6 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    private fun clickSendButton(rootNode: AccessibilityNodeInfo): Boolean {
-        try {
-            // Look for send button by content description
-            val sendDescriptions = listOf("Send", "send", "Send button")
-            
-            for (desc in sendDescriptions) {
-                val sendNodes = rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
-                if (sendNodes != null && sendNodes.isNotEmpty()) {
-                    val success = sendNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    sendNodes.forEach { it.recycle() }
-                    if (success) return true
-                }
-            }
-            
-            // Try to find by traversing the tree
-            return findAndClickSendButton(rootNode)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clicking send button", e)
-            return false
-        }
-    }
-    
-    private fun findAndClickSendButton(node: AccessibilityNodeInfo): Boolean {
-        try {
-            // Check if this node is a send button
-            val contentDesc = node.contentDescription?.toString()?.lowercase()
-            if (contentDesc != null && contentDesc.contains("send") && node.isClickable) {
-                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            }
-            
-            // Check children
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i)
-                if (child != null) {
-                    if (findAndClickSendButton(child)) {
-                        child.recycle()
-                        return true
-                    }
-                    child.recycle()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in findAndClickSendButton", e)
-        }
-        
-        return false
-    }
-    
     // ========== Fitbit Functions ==========
 
     /**
@@ -10042,13 +10134,13 @@ class ScreenAgentTools @Inject constructor(
      * Add quick calories to Fitbit food log.
      * Handles navigation from any Fitbit screen by pressing BACK to reach a known state.
      */
-    suspend fun addFitbitQuickCalories(calories: Int): FitbitResult {
+    suspend fun addFitbitQuickCalories(calories: Int): HealthDataResult {
         Log.i(TAG, "addFitbitQuickCalories called with calories=$calories")
         trackAction("addFitbitQuickCalories: $calories")
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
-                ?: return FitbitResult(
+                ?: return HealthDataResult(
                     success = false,
                     error = "Accessibility service not enabled. Please enable it in settings."
                 )
@@ -10056,7 +10148,7 @@ class ScreenAgentTools @Inject constructor(
             // Launch Fitbit app
             val launchResult = launchApp("Fitbit")
             if (!launchResult.success) {
-                return FitbitResult(
+                return HealthDataResult(
                     success = false,
                     error = "Failed to launch Fitbit: ${launchResult.error}"
                 )
@@ -10069,7 +10161,7 @@ class ScreenAgentTools @Inject constructor(
                 maxWaitMs = 5000
             )
             if (!appReady) {
-                return FitbitResult(
+                return HealthDataResult(
                     success = false,
                     error = "Fitbit did not become ready in time"
                 )
@@ -10122,7 +10214,7 @@ class ScreenAgentTools @Inject constructor(
                     return tapFoodTileAndLog(accessibilityService, calories)
                 }
                 FitbitScreen.UNKNOWN -> {
-                    return FitbitResult(
+                    return HealthDataResult(
                         success = false,
                         error = "Could not navigate to a known Fitbit screen after multiple attempts"
                     )
@@ -10130,7 +10222,7 @@ class ScreenAgentTools @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in addFitbitQuickCalories", e)
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to add quick calories: ${e.message}"
             )
@@ -10180,7 +10272,7 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapFoodTileAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapFoodTileAndLog: Looking for Food tile on Today screen")
 
         val displayMetrics = context.resources.displayMetrics
@@ -10263,7 +10355,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_food_tile_not_found", "Could not find Food tile on Fitbit Today screen")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find Food tile on Fitbit Today screen"
             )
@@ -10285,7 +10377,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_food_detail_not_loaded", "Food detail page did not load after tapping Food tile")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Food detail page did not load after tapping Food tile"
             )
@@ -10300,11 +10392,11 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapMoreOptionsAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapMoreOptionsAndLog: On Food detail page")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         // Check if the dropdown is already open (has "Add Quick Calories" text visible)
         val existingDropdown = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
@@ -10321,7 +10413,7 @@ class ScreenAgentTools @Inject constructor(
         if (moreOptionsNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_more_options_not_found", "Could not find 'More options' button on Food detail page")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'More options' button on Food detail page"
             )
@@ -10345,7 +10437,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_more_options_tap_failed", "Failed to tap 'More options' button")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'More options' button"
             )
@@ -10369,7 +10461,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_dropdown_not_appeared", "More options dropdown did not appear")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "More options dropdown did not appear"
             )
@@ -10384,17 +10476,17 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun tapAddQuickCaloriesAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "tapAddQuickCaloriesAndLog: Looking for 'Add Quick Calories' option")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         val addQuickCalNodes = rootNode.findAccessibilityNodeInfosByText("Add Quick Calories")
         if (addQuickCalNodes == null || addQuickCalNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_add_quick_cal_not_found", "Could not find 'Add Quick Calories' in dropdown menu")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'Add Quick Calories' in dropdown menu"
             )
@@ -10418,7 +10510,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_tap_failed", "Failed to tap 'Add Quick Calories'")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'Add Quick Calories'"
             )
@@ -10440,7 +10532,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_add_quick_cal_screen_not_loaded", "Add Quick Calories screen did not appear")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Add Quick Calories screen did not appear"
             )
@@ -10455,11 +10547,11 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun enterCaloriesAndLog(
         accessibilityService: WhizAccessibilityService,
         calories: Int
-    ): FitbitResult {
+    ): HealthDataResult {
         Log.i(TAG, "enterCaloriesAndLog: Entering $calories calories")
 
         val rootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content")
 
         // Find the edit_calories field
         val editCaloriesNodes = rootNode.findAccessibilityNodeInfosByViewId(
@@ -10468,7 +10560,7 @@ class ScreenAgentTools @Inject constructor(
         if (editCaloriesNodes == null || editCaloriesNodes.isEmpty()) {
             dumpUIHierarchy(rootNode, "fitbit_calories_input_not_found", "Could not find calories input field")
             rootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find calories input field"
             )
@@ -10494,7 +10586,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_calories_entry_failed", "Failed to enter calorie amount")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to enter calorie amount"
             )
@@ -10502,7 +10594,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Find and tap "LOG THIS" button
         val logRootNode = accessibilityService.getCurrentRootNode()
-            ?: return FitbitResult(success = false, error = "Could not get screen content after entering calories")
+            ?: return HealthDataResult(success = false, error = "Could not get screen content after entering calories")
 
         val logBtnNodes = logRootNode.findAccessibilityNodeInfosByViewId(
             "com.fitbit.FitbitMobile:id/log_this_btn"
@@ -10520,7 +10612,7 @@ class ScreenAgentTools @Inject constructor(
         if (logButton == null) {
             dumpUIHierarchy(logRootNode, "fitbit_log_button_not_found", "Could not find 'LOG THIS' button")
             logRootNode.recycle()
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Could not find 'LOG THIS' button"
             )
@@ -10543,7 +10635,7 @@ class ScreenAgentTools @Inject constructor(
                 dumpUIHierarchy(dumpRoot, "fitbit_log_button_tap_failed", "Failed to tap 'LOG THIS' button")
                 dumpRoot.recycle()
             }
-            return FitbitResult(
+            return HealthDataResult(
                 success = false,
                 error = "Failed to tap 'LOG THIS' button"
             )
@@ -10575,10 +10667,12 @@ class ScreenAgentTools @Inject constructor(
         clearRecentActions()
         Log.i(TAG, "Successfully logged $calories quick calories to Fitbit")
 
-        return FitbitResult(
+        return HealthDataResult(
             success = true,
             action = "add_quick_calories",
-            calories = calories
+            dataType = "calories",
+            value = calories.toDouble(),
+            source = "fitbit_ui",
         )
     }
 

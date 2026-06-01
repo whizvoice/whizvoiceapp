@@ -3,4 +3,6 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="error">#F44336</color>
+    <color name="diff_added">#FF0000FF</color>
+    <color name="diff_removed">#FFFF0000</color>
 </resources>

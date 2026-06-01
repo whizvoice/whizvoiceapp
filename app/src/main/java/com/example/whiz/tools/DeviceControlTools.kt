@@ -2,6 +2,7 @@ package com.example.whiz.tools
 
 import android.Manifest
 import android.app.AlarmManager
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -1023,12 +1024,45 @@ class DeviceControlTools @Inject constructor(
             val eventUri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
             if (eventUri != null) {
                 Log.i(TAG, "Calendar event inserted successfully: $eventUri")
+
+                // Insert attendees (if provided) into the separate Attendees table.
+                // Events and Attendees are separate ContentProvider tables joined by EVENT_ID.
+                // Email-invite delivery depends on Google Calendar's sync adapter and is not
+                // guaranteed by Android's Calendar Provider — see plan + schema description.
+                val attendeesAdded = mutableListOf<String>()
+                if (params.has("attendees") && !params.isNull("attendees")) {
+                    val eventId = ContentUris.parseId(eventUri)
+                    val emails = params.getString("attendees")
+                        .split(",")
+                        .map { it.trim() }
+                        .filter { it.contains("@") }
+                    for (email in emails) {
+                        val attendeeValues = ContentValues().apply {
+                            put(CalendarContract.Attendees.EVENT_ID, eventId)
+                            put(CalendarContract.Attendees.ATTENDEE_EMAIL, email)
+                            put(CalendarContract.Attendees.ATTENDEE_RELATIONSHIP, CalendarContract.Attendees.RELATIONSHIP_ATTENDEE)
+                            put(CalendarContract.Attendees.ATTENDEE_TYPE, CalendarContract.Attendees.TYPE_REQUIRED)
+                            put(CalendarContract.Attendees.ATTENDEE_STATUS, CalendarContract.Attendees.ATTENDEE_STATUS_INVITED)
+                        }
+                        try {
+                            val attendeeUri = context.contentResolver.insert(CalendarContract.Attendees.CONTENT_URI, attendeeValues)
+                            Log.i(TAG, "Attendee inserted: $email -> $attendeeUri")
+                            attendeesAdded.add(email)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to insert attendee $email for event $eventId", e)
+                        }
+                    }
+                }
+
                 JSONObject().apply {
                     put("success", true)
                     put("message", "Calendar event '$title' saved successfully")
                     put("event_uri", eventUri.toString())
                     put("account_name", calendarInfo.accountName)
                     put("account_type", calendarInfo.accountType)
+                    if (attendeesAdded.isNotEmpty()) {
+                        put("attendees_added", attendeesAdded.joinToString(","))
+                    }
                 }
             } else {
                 Log.e(TAG, "ContentProvider insert returned null URI")
