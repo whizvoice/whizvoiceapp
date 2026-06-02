@@ -1110,7 +1110,7 @@ class ChatViewModel @Inject constructor(
                                             // 🔧 NEW: Use request ID pairing to insert assistant message after corresponding user message
                                             // This ensures responses appear in the correct order relative to their user messages
                                             val messageId = if (event.requestId != null) {
-                                                repository.addAssistantMessageAfterRequest(targetChatId, messageContentForChat, event.requestId)
+                                                repository.addAssistantMessageAfterRequest(targetChatId, messageContentForChat, event.requestId, event.serverTimestamp)
                                             } else {
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)

@@ -9,6 +9,7 @@ import com.example.whiz.data.local.MessageType
 import com.example.whiz.data.local.toChatEntity
 import com.example.whiz.data.local.toConversationCreate
 import com.example.whiz.data.local.toMessageEntity
+import com.example.whiz.data.local.parseTimestampToMillis
 import com.example.whiz.data.local.toMessageCreate
 import com.example.whiz.data.api.ApiService
 import kotlinx.coroutines.flow.Flow
@@ -548,7 +549,7 @@ class WhizRepository @Inject constructor(
      * 🔧 NEW: Add assistant message after the user message with matching requestId.
      * This ensures responses appear in the correct order relative to their user messages.
      */
-    suspend fun addAssistantMessageAfterRequest(chatId: Long, content: String, requestId: String): Long {
+    suspend fun addAssistantMessageAfterRequest(chatId: Long, content: String, requestId: String, serverTimestamp: String? = null): Long {
         return try {
             // 🔧 MIGRATION FIX: Get the actual chat ID in case of migration
             val actualChatId = getActualChatId(chatId)
@@ -559,13 +560,20 @@ class WhizRepository @Inject constructor(
             if (userMessage != null) {
                 Log.d(TAG, "addAssistantMessageAfterRequest: found user message ${userMessage.id} with requestId $requestId")
                 
+                // Adopt the server's authoritative timestamp when provided; otherwise fall back to
+                // the local +1ms-after-user rule. This keeps live ordering identical to the reload
+                // path (which already uses the server timestamp) and to the server's stored order,
+                // so the client no longer maintains a separate ordering calculation.
+                val assistantTimestamp = serverTimestamp?.let { parseTimestampToMillis(it) }
+                    ?: (userMessage.timestamp + 1) // Ensure it goes after the user message
+
                 // Create assistant message with timestamp after the user message
                 val assistantMessage = MessageEntity(
                     id = 0,
                     chatId = actualChatId,
                     content = content,
                     type = MessageType.ASSISTANT,
-                    timestamp = userMessage.timestamp + 1, // Ensure it goes after the user message
+                    timestamp = assistantTimestamp,
                     requestId = requestId // Link to the user message
                 )
                 
