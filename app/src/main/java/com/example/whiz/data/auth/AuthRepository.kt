@@ -14,6 +14,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Tasks
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -100,6 +101,15 @@ open class AuthRepository @Inject constructor(
                 .requestProfile()
                 // Use web client ID for ID token
                 .requestIdToken(AuthConfig.WEB_CLIENT_ID)
+                // Read-only access to the user's Google Contacts (saved + Gmail auto-saved),
+                // so the server can use them as a fallback contact source. requestServerAuthCode
+                // with forceCodeForRefreshToken=true yields a one-time code the server exchanges
+                // for an offline-access refresh token.
+                .requestScopes(
+                    Scope("https://www.googleapis.com/auth/contacts.readonly"),
+                    Scope("https://www.googleapis.com/auth/contacts.other.readonly")
+                )
+                .requestServerAuthCode(AuthConfig.WEB_CLIENT_ID, true)
                 .build()
             
             GoogleSignIn.getClient(context, gso)
