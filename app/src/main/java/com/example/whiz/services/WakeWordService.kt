@@ -22,7 +22,6 @@ import com.example.whiz.accessibility.AccessibilityManager
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.wakeword.WakeWordEngine
-import com.example.whiz.wakeword.audio.SelfEchoGate
 import com.example.whiz.wakeword.detection.CamPlusOrtEmbedder
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SileroOrtScorer
@@ -84,9 +83,6 @@ class WakeWordService : Service() {
         private const val VAD_SPEECH_THRESHOLD = 0.5f
         private const val VAD_SILENCE_WINDOWS_BEFORE_SKIP = 50  // ~1.6 s @ 32 ms/window
         private const val VAD_PRE_WINDOW_LOOKBACK_MS = 2000L
-
-        // Self-echo gate tail (matches prototype Phase A default).
-        private const val SELF_ECHO_TAIL_MS = 300
 
         @Volatile
         var isRunning = false
@@ -207,7 +203,6 @@ class WakeWordService : Service() {
     private var audioRecord: AudioRecord? = null
     private var engine: WakeWordEngine? = null
     private var sileroScorer: SileroOrtScorer? = null
-    private var selfEchoGate: SelfEchoGate? = null
     private var camPlusEmbedder: CamPlusOrtEmbedder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
@@ -339,7 +334,6 @@ class WakeWordService : Service() {
                     hysteresis = SMOOTHER_HYSTERESIS,
                     refractoryMs = SMOOTHER_REFRACTORY_MS,
                 )
-                selfEchoGate = SelfEchoGate(tailMs = SELF_ECHO_TAIL_MS)
 
                 // Voice match: construct CAM++ verifier iff the user enrolled AND turned the toggle on.
                 val verifier = if (wakeWordPreferences.isVoiceMatchEnabledOnce()) {
@@ -352,7 +346,6 @@ class WakeWordService : Service() {
                         context = this@WakeWordService,
                         smoother = smoother,
                         vad = vad,
-                        selfEchoGate = selfEchoGate,
                         verifier = verifier,
                         baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
                         adaptiveThreshold = null,  // Phase C, out of scope
@@ -749,7 +742,6 @@ class WakeWordService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Error closing CAM++ embedder", e)
         }
-        selfEchoGate = null
         try {
             wakeLock?.let {
                 if (it.isHeld) {

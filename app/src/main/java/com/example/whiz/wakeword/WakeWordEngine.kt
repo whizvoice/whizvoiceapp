@@ -5,7 +5,6 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.util.Log
-import com.example.whiz.wakeword.audio.SelfEchoGate
 import com.example.whiz.wakeword.detection.AdaptiveThresholdController
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
@@ -48,7 +47,6 @@ class WakeWordEngine(
     classifierAsset: String = DEFAULT_CLASSIFIER_ASSET,
     private val smoother: ScoreSmoother? = null,
     private val vad: VadGate? = null,
-    private val selfEchoGate: SelfEchoGate? = null,
     private val verifier: SpeakerVerifier? = null,
     private val baseStage1Threshold: Float = 0f,
     private val adaptiveThreshold: AdaptiveThresholdController? = null,
@@ -148,11 +146,6 @@ class WakeWordEngine(
         if (framesSinceLastInference < inferenceIntervalFrames) return
         framesSinceLastInference = 0
 
-        if (selfEchoGate?.isBlocking(atMs = nowMs) == true) {
-            selfEchoBlockedCount++
-            if (selfEchoBlockedCount % 25L == 1L) Log.d(TAG, "selfEcho blocked (cumulative=$selfEchoBlockedCount)")
-            return
-        }
         if (vad?.shouldSkipInference(atMs = nowMs) == true) {
             vad.maybeRecordSkip(atMs = nowMs)
             vadSkipCount++
@@ -207,7 +200,6 @@ class WakeWordEngine(
     }
 
     private var inferenceCount: Long = 0L
-    private var selfEchoBlockedCount: Long = 0L
     private var vadSkipCount: Long = 0L
 
     private fun pumpVad(samples: FloatArray, sampleStartMs: Long, gate: VadGate) {
