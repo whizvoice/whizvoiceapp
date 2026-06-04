@@ -3076,6 +3076,18 @@ class ScreenAgentTools @Inject constructor(
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickableChildren(root, clickables)
 
+        // High-confidence send-button phrases, tried before the loose "send"
+        // match. Phrase matching (e.g. "send message") cleanly excludes voice
+        // buttons like "Record and send audio attachment", which merely contain
+        // the word "send" and otherwise win the loose match (see bug 1333).
+        // Mirrors the description set smsFindSendButton already trusts.
+        val exactSendPhrases = listOf("send message", "send sms", "send mms", "send encrypted message")
+
+        fun describesExact(node: AccessibilityNodeInfo): Boolean {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: return false
+            return exactSendPhrases.any { desc.contains(it) }
+        }
+
         fun describes(node: AccessibilityNodeInfo): Boolean {
             val desc = node.contentDescription?.toString()?.lowercase() ?: return false
             return desc.contains("send") || desc.contains("submit")
@@ -3086,8 +3098,14 @@ class ScreenAgentTools @Inject constructor(
             return r.centerY() in (inputRect.top - 20)..(inputRect.bottom + 20)
         }
 
+        // Priority 0: exact send-button phrase, same row first, then anywhere.
+        var best = clickables.firstOrNull { describesExact(it) && verticallyInRow(it) }
+            ?: clickables.firstOrNull { describesExact(it) }
+
         // Priority 1: described send button in the same row as the input.
-        var best = clickables.firstOrNull { describes(it) && verticallyInRow(it) }
+        if (best == null) {
+            best = clickables.firstOrNull { describes(it) && verticallyInRow(it) }
+        }
 
         // Priority 2: any described send button anywhere.
         if (best == null) {
@@ -8484,10 +8502,43 @@ class ScreenAgentTools @Inject constructor(
         inputNode.recycle()
         rootNode.recycle()
 
-        return if (clicked) {
+        if (!clicked) {
+            return SendResult(success = false, error = "Could not click send button")
+        }
+
+        // Verify the message actually sent. performAction(ACTION_CLICK) returning
+        // true only means the action was dispatched, not that the message left —
+        // clicking the wrong control (e.g. a voice/record button) also returns
+        // true (see bug 1333). A real send clears the compose field, so poll the
+        // input: if the draft is gone the send happened; if it's still there we
+        // hit the wrong button. Assumes the app clears its input on send (true
+        // for Signal/WhatsApp/SMS/Messenger/Telegram).
+        val verifyDeadline = System.currentTimeMillis() + 1200
+        var sentConfirmed = false
+        while (System.currentTimeMillis() < verifyDeadline) {
+            val checkRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
+            if (checkRoot != null) {
+                val checkInput = args.findInput(checkRoot)
+                val currentText = checkInput?.text?.toString() ?: ""
+                checkInput?.recycle()
+                checkRoot.recycle()
+                if (currentText.isBlank() || !currentText.contains(args.message.trim())) {
+                    sentConfirmed = true
+                    break
+                }
+            }
+            delay(100)
+        }
+
+        return if (sentConfirmed) {
             SendResult(success = true, sent = true)
         } else {
-            SendResult(success = false, error = "Could not click send button")
+            Log.w(TAG, "sendDraftedMessageCore: clicked send but input still holds the draft; reporting not sent")
+            SendResult(
+                success = true,
+                sent = false,
+                error = "Send button click did not send the message; text left in input"
+            )
         }
     }
 
