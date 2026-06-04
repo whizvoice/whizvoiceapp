@@ -3076,30 +3076,6 @@ class ScreenAgentTools @Inject constructor(
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickableChildren(root, clickables)
 
-        // TEMP DIAGNOSTIC (bug 1333): log every clickable candidate, and every
-        // node whose description mentions "send"/"submit" regardless of clickable
-        // state, to see whether a real send button exists but is filtered out
-        // (e.g. a Compose send button with clickable=false / ACTION_CLICK only).
-        Log.d(TAG, "findSendButton DIAG: ${clickables.size} clickable candidate(s)")
-        clickables.forEach { c ->
-            val r = Rect().also { c.getBoundsInScreen(it) }
-            Log.d(TAG, "  [clickable] desc='${c.contentDescription}' cls=${c.className} bounds=$r")
-        }
-        fun diagScanSend(n: AccessibilityNodeInfo, depth: Int) {
-            if (depth > 60) return
-            val d = n.contentDescription?.toString()?.lowercase()
-            if (d != null && (d.contains("send") || d.contains("submit"))) {
-                val r = Rect().also { n.getBoundsInScreen(it) }
-                Log.d(TAG, "  [send-desc] desc='${n.contentDescription}' clickable=${n.isClickable} cls=${n.className} bounds=$r")
-            }
-            for (i in 0 until n.childCount) {
-                val ch = n.getChild(i) ?: continue
-                diagScanSend(ch, depth + 1)
-                ch.recycle()
-            }
-        }
-        diagScanSend(root, 0)
-
         // High-confidence send-button phrases, tried before the loose "send"
         // match. Phrase matching (e.g. "send message") cleanly excludes voice
         // buttons like "Record and send audio attachment", which merely contain
@@ -8498,27 +8474,27 @@ class ScreenAgentTools @Inject constructor(
         var freshRoot: AccessibilityNodeInfo = rootNode
         var freshInput: AccessibilityNodeInfo = inputNode
         var sendButton: AccessibilityNodeInfo? = null
-        // 2500ms: Signal's Compose input can take ~1.6s after SET_TEXT to swap the
-        // voice button for the real send arrow; the poll must outlast that render
-        // (bug 1333) now that we no longer settle for the voice button.
-        val sendDeadline = System.currentTimeMillis() + 2500
-        while (System.currentTimeMillis() < sendDeadline) {
+        // 2500ms upper bound: Signal's Compose input can take ~1.6s after SET_TEXT
+        // to swap the voice button for the real send arrow, so the wait must
+        // outlast that render (bug 1333) now that we no longer settle for the
+        // voice button. waitForCondition exits the instant a send button appears.
+        waitForCondition(maxWaitMs = 2500, maxIntervalMs = 200) {
             val polledRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
-            if (polledRoot != null) {
-                val polledInput = args.findInput(polledRoot) ?: inputNode
-                val polledButton = args.findSendButton(polledRoot, polledInput)
-                if (polledButton != null) {
-                    if (freshRoot !== rootNode) freshRoot.recycle()
-                    if (freshInput !== inputNode) freshInput.recycle()
-                    freshRoot = polledRoot
-                    freshInput = polledInput
-                    sendButton = polledButton
-                    break
-                }
+                ?: return@waitForCondition false
+            val polledInput = args.findInput(polledRoot) ?: inputNode
+            val polledButton = args.findSendButton(polledRoot, polledInput)
+            if (polledButton != null) {
+                if (freshRoot !== rootNode) freshRoot.recycle()
+                if (freshInput !== inputNode) freshInput.recycle()
+                freshRoot = polledRoot
+                freshInput = polledInput
+                sendButton = polledButton
+                true
+            } else {
                 if (polledInput !== inputNode) polledInput.recycle()
                 polledRoot.recycle()
+                false
             }
-            delay(100)
         }
 
         if (sendButton == null) {
@@ -8549,21 +8525,15 @@ class ScreenAgentTools @Inject constructor(
         // input: if the draft is gone the send happened; if it's still there we
         // hit the wrong button. Assumes the app clears its input on send (true
         // for Signal/WhatsApp/SMS/Messenger/Telegram).
-        val verifyDeadline = System.currentTimeMillis() + 1200
-        var sentConfirmed = false
-        while (System.currentTimeMillis() < verifyDeadline) {
+        val sentConfirmed = waitForCondition(maxWaitMs = 1200, maxIntervalMs = 200) {
             val checkRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
-            if (checkRoot != null) {
-                val checkInput = args.findInput(checkRoot)
-                val currentText = checkInput?.text?.toString() ?: ""
-                checkInput?.recycle()
-                checkRoot.recycle()
-                if (currentText.isBlank() || !currentText.contains(args.message.trim())) {
-                    sentConfirmed = true
-                    break
-                }
-            }
-            delay(100)
+                ?: return@waitForCondition false
+            val checkInput = args.findInput(checkRoot)
+            val currentText = checkInput?.text?.toString() ?: ""
+            checkInput?.recycle()
+            checkRoot.recycle()
+            // Sent once the field clears (or no longer holds the draft).
+            currentText.isBlank() || !currentText.contains(args.message.trim())
         }
 
         return if (sentConfirmed) {
