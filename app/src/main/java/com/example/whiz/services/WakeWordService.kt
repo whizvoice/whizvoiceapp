@@ -421,9 +421,35 @@ class WakeWordService : Service() {
                         lastExternalRecheckTime = nowRecheck
                     }
 
-                    // CASE A: an external app holds the mic — genuine yield. Release and
-                    // recreate (the only path that still releases the mic). Ordered first so
-                    // an external recorder always wins over our own recognizer.
+                    // CASE B (checked FIRST): the app's OWN recognizer is mid-conversation.
+                    // Keeping our VOICE_RECOGNITION capture open CONCURRENTLY with the
+                    // recognizer's VOICE_COMMUNICATION pipe degraded our mic on-device (input
+                    // dropped to near-silence and didn't recover). So instead of coexisting we
+                    // STOP our capture — freeing the mic for the recognizer — but keep the
+                    // AudioRecord object. Restarting it (below) is far cheaper than
+                    // release+recreate and needs no debounce, so the screen-off handoff has
+                    // only a tiny gap. (The recognizer's pipe shows up under a different
+                    // session id, so isExternalRecorderActive may also be true here — the
+                    // isListening check takes precedence so we don't treat our own
+                    // recognition as a third-party app.)
+                    if (speechRecognitionService.isListening.value) {
+                        audioRecord?.let { rec ->
+                            if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                                try {
+                                    rec.stop()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error stopping AudioRecord for recognizer", e)
+                                }
+                                frameFill = 0
+                                Log.d(TAG, "Capture paused (stopped, not released): main speech recognizer active")
+                            }
+                        }
+                        delay(200)
+                        continue
+                    }
+
+                    // CASE A: a genuine third-party app holds the mic (our recognizer is NOT
+                    // listening) — fully yield: release + recreate.
                     if (isExternalRecorderActive) {
                         audioRecord?.let { rec ->
                             try {
@@ -435,36 +461,21 @@ class WakeWordService : Service() {
                             audioRecord = null
                             // Audio gap will desync the engine ring buffer; reset frame on resume.
                             frameFill = 0
-                            engine?.inferenceEnabled = true  // clean state for the recreate path
                             Log.d(TAG, "Yielded (released): external recorder active")
                         }
                         delay(200)
                         continue
                     }
 
-                    // CASE B: the app's own recognizer is mid-conversation — suspend INFERENCE
-                    // but keep the mic open and the ring buffer filling. No release, so the
-                    // screen-off handoff has no capture gap. Falls through to the read+feed loop.
-                    if (speechRecognitionService.isListening.value) {
-                        if (engine?.inferenceEnabled != false) {
-                            engine?.inferenceEnabled = false
-                            Log.d(TAG, "Inference suspended (capture-only): main speech recognizer active")
-                        }
-                    } else {
-                        // CASE C: nothing else wants the mic — ensure inference is live. On the
-                        // capture-only -> live transition this is just a flag flip: inference
-                        // resumes on the next tick on the already-continuous buffer (no reset).
-                        if (engine?.inferenceEnabled == false) {
-                            engine?.inferenceEnabled = true
-                            Log.d(TAG, "Inference resumed (capture-only -> live): recognizer cleared")
-                        }
-                    }
-
-                    // Resume from a Case A external release: recreate the AudioRecord. The
-                    // debounce + warm reset now apply ONLY here, never to the recognizer handoff.
+                    // Resume — two paths:
+                    //  - audioRecord == null      -> recreate after a Case A external release
+                    //                                (debounce guards against pause/resume flap).
+                    //  - audioRecord stopped      -> fast restart after a recognizer session
+                    //                                (no realloc, no debounce). This is the
+                    //                                screen-off handoff — only a tiny gap.
                     if (audioRecord == null) {
                         delay(RESUME_DEBOUNCE_MS)
-                        if (isExternalRecorderActive) continue
+                        if (isExternalRecorderActive || speechRecognitionService.isListening.value) continue
                         val fresh = createAudioRecord(bufferSize)
                         if (fresh == null) {
                             delay(500)
@@ -472,11 +483,14 @@ class WakeWordService : Service() {
                         }
                         audioRecord = fresh
                         fresh.startRecording()
-                        // Warm reset: discard the discontinuous pre-yield audio but keep the
-                        // engine warm so inference resumes on the next ~320 ms tick instead of
-                        // waiting ~2 s for the ring buffer to refill.
                         engine?.softReset()
                         Log.d(TAG, "Resumed: created fresh AudioRecord after external yield")
+                    } else if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord?.startRecording()
+                        // Warm reset: discard the brief stopped-window discontinuity but keep
+                        // the engine warm so inference resumes on the next ~320 ms tick.
+                        engine?.softReset()
+                        Log.d(TAG, "Capture resumed (restart, no realloc): recognizer cleared")
                     }
 
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
