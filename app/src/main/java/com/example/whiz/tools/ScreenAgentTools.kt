@@ -3076,6 +3076,30 @@ class ScreenAgentTools @Inject constructor(
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickableChildren(root, clickables)
 
+        // TEMP DIAGNOSTIC (bug 1333): log every clickable candidate, and every
+        // node whose description mentions "send"/"submit" regardless of clickable
+        // state, to see whether a real send button exists but is filtered out
+        // (e.g. a Compose send button with clickable=false / ACTION_CLICK only).
+        Log.d(TAG, "findSendButton DIAG: ${clickables.size} clickable candidate(s)")
+        clickables.forEach { c ->
+            val r = Rect().also { c.getBoundsInScreen(it) }
+            Log.d(TAG, "  [clickable] desc='${c.contentDescription}' cls=${c.className} bounds=$r")
+        }
+        fun diagScanSend(n: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 60) return
+            val d = n.contentDescription?.toString()?.lowercase()
+            if (d != null && (d.contains("send") || d.contains("submit"))) {
+                val r = Rect().also { n.getBoundsInScreen(it) }
+                Log.d(TAG, "  [send-desc] desc='${n.contentDescription}' clickable=${n.isClickable} cls=${n.className} bounds=$r")
+            }
+            for (i in 0 until n.childCount) {
+                val ch = n.getChild(i) ?: continue
+                diagScanSend(ch, depth + 1)
+                ch.recycle()
+            }
+        }
+        diagScanSend(root, 0)
+
         // High-confidence send-button phrases, tried before the loose "send"
         // match. Phrase matching (e.g. "send message") cleanly excludes voice
         // buttons like "Record and send audio attachment", which merely contain
@@ -3088,9 +3112,20 @@ class ScreenAgentTools @Inject constructor(
             return exactSendPhrases.any { desc.contains(it) }
         }
 
+        // Voice/record buttons (e.g. Signal's "Record and send audio attachment")
+        // contain "send" but are never the target of a text send. Excluding them
+        // is always safe here — this flow only ever taps a text-send button — and
+        // it lets the send-button poll keep waiting for the real send arrow to
+        // render instead of settling for the voice button in the brief window
+        // before Signal re-renders the input row (bug 1333 timing race).
+        fun isVoiceOrRecord(node: AccessibilityNodeInfo): Boolean {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: return false
+            return desc.contains("record") || desc.contains("audio") || desc.contains("voice")
+        }
+
         fun describes(node: AccessibilityNodeInfo): Boolean {
             val desc = node.contentDescription?.toString()?.lowercase() ?: return false
-            return desc.contains("send") || desc.contains("submit")
+            return (desc.contains("send") || desc.contains("submit")) && !isVoiceOrRecord(node)
         }
 
         fun verticallyInRow(node: AccessibilityNodeInfo): Boolean {
@@ -3112,18 +3147,13 @@ class ScreenAgentTools @Inject constructor(
             best = clickables.firstOrNull { describes(it) }
         }
 
-        // Priority 3: rightmost clickable in the input row (icon-only buttons).
-        if (best == null) {
-            best = clickables
-                .filter { node ->
-                    val r = Rect().also { node.getBoundsInScreen(it) }
-                    verticallyInRow(node) && r.left >= inputRect.right - 20
-                }
-                .maxByOrNull { node ->
-                    val r = Rect().also { node.getBoundsInScreen(it) }
-                    r.left
-                }
-        }
+        // NOTE: deliberately no "rightmost clickable in the row" icon fallback.
+        // Position can't distinguish the send arrow from the camera/attachment
+        // icons that occupy the same far-right slot when the field is empty, and
+        // such a fallback always returns *something*, short-circuiting the
+        // send-button poll before the real send arrow renders (bug 1333). We only
+        // click a node that *describes itself* as send/submit; if none appears,
+        // the caller leaves the draft in the input for manual/agent send.
 
         clickables.filter { it !== best }.forEach { it.recycle() }
         if (best != null) {
@@ -3262,6 +3292,9 @@ class ScreenAgentTools @Inject constructor(
                 },
                 onSendButtonNotFound = { root ->
                     Log.w(TAG, "sendGenericMessage: peek heuristic found no send button in $targetPackage; text drafted in input")
+                    // Capture Whiz's view at poll-timeout so we can see whether the
+                    // real send arrow ever rendered during the wait (bug 1333).
+                    dumpUIHierarchy(root, "send_button_not_found", "Poll timed out without finding a non-voice send button; text left in input")
                 },
             ))
         } catch (e: Exception) {
@@ -8465,7 +8498,10 @@ class ScreenAgentTools @Inject constructor(
         var freshRoot: AccessibilityNodeInfo = rootNode
         var freshInput: AccessibilityNodeInfo = inputNode
         var sendButton: AccessibilityNodeInfo? = null
-        val sendDeadline = System.currentTimeMillis() + 1500
+        // 2500ms: Signal's Compose input can take ~1.6s after SET_TEXT to swap the
+        // voice button for the real send arrow; the poll must outlast that render
+        // (bug 1333) now that we no longer settle for the voice button.
+        val sendDeadline = System.currentTimeMillis() + 2500
         while (System.currentTimeMillis() < sendDeadline) {
             val polledRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
             if (polledRoot != null) {
@@ -8534,6 +8570,13 @@ class ScreenAgentTools @Inject constructor(
             SendResult(success = true, sent = true)
         } else {
             Log.w(TAG, "sendDraftedMessageCore: clicked send but input still holds the draft; reporting not sent")
+            // Auto-capture Whiz's own view of the screen to Supabase so we can
+            // see which send-button nodes were actually available at send time
+            // (bug 1333 diagnostics) — no bug button / logcat timing needed.
+            accessibilityService.getRootNodeForPackage(args.targetPackage)?.let { failRoot ->
+                dumpUIHierarchy(failRoot, "send_verification_failed", "Send click did not clear the input; wrong button likely tapped")
+                failRoot.recycle()
+            }
             SendResult(
                 success = true,
                 sent = false,
