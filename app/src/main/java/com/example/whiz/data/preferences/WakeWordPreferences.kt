@@ -295,10 +295,18 @@ class WakeWordPreferences @Inject constructor(
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
         private const val KEY_VAD_ENABLED = "vad_enabled"
-        // Lowered from 0.45 → 0.35 to accommodate screen-off cosine scores running
-        // ~0.06–0.10 lower than screen-on (different HAL processing path even with the
-        // same VOICE_RECOGNITION source). 0.35 covers the observed screen-off floor
-        // (~0.38) with a small margin.
-        const val DEFAULT_VERIFIER_THRESHOLD = 0.35f
+        // Lowered 0.45 → 0.35 → 0.20 over time to accommodate genuine-voice cosine
+        // scores running well below the original floor in real conditions.
+        // On-device measurement 2026-06-04 (Pixel 8, prod): the enrolled user's own
+        // voice, screen-off + close + quiet, scored 0.314/0.317/0.318 on CAM++ while
+        // the wake-word classifier scored 0.97–0.99 — i.e. detection was perfect but
+        // the 0.35 gate rejected every genuine fire. Noise/distance and natural pitch
+        // variation push the cosine even lower. 0.20 leaves headroom below the observed
+        // ~0.31 floor so the gate admits the genuine speaker across those conditions.
+        // Tradeoff: at 0.20 impostor rejection is weak — this prioritizes not missing
+        // the real user over keeping out other voices. There is no runtime/UI setter
+        // for this value (setVerifierThreshold is never called), so this constant is
+        // the only lever; changing it requires a rebuild + reinstall.
+        const val DEFAULT_VERIFIER_THRESHOLD = 0.20f
     }
 }

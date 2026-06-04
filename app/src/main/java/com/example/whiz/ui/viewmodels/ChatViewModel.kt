@@ -207,6 +207,29 @@ class ChatViewModel @Inject constructor(
         initialValue = emptyList()
     )
 
+    // Request IDs the server has resolved — reply received, cancelled/deleted, or reported
+    // not-pending on chat load. Lets the thinking indicator come down even when the trailing
+    // message is still a USER message (tool-only/textless completions, or clock-skew that
+    // sorts the assistant reply before its user message). In-memory; cleared on chat switch.
+    private val _resolvedRequestIds = MutableStateFlow<Set<String>>(emptySet())
+
+    private fun markRequestResolved(requestId: String?) {
+        if (requestId.isNullOrEmpty()) return
+        _resolvedRequestIds.update { it + requestId }
+    }
+
+    // Thinking-indicator signal: show whenever the conversation is awaiting a reply — the
+    // last text message is from the USER and that request hasn't been resolved by the server.
+    // Derived locally from the messages flow, so it shows instantly and survives navigation
+    // and process restart with no round-trip; the server's reply/verdict takes it down via
+    // _resolvedRequestIds. (Distinct from isResponding, which still drives the mic buttons.)
+    val showThinking: StateFlow<Boolean> = combine(messages, _resolvedRequestIds) { msgs, resolved ->
+        val last = msgs.lastOrNull()
+        last != null && last.type == MessageType.USER &&
+            (last.requestId == null || last.requestId !in resolved)
+    }.distinctUntilChanged()
+     .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     // Helper function to update responding state based on current chat's pending requests
     private fun updateRespondingStateForCurrentChat() {
         try {
@@ -701,6 +724,10 @@ class ChatViewModel @Inject constructor(
                         Log.d(TAG, "🔥 CANCELLATION: REMOVING from pendingRequests: requestId=${event.cancelledRequestId}")
                         pendingRequests.remove(event.cancelledRequestId)
                         whizServerRepository.untrackRequest(event.cancelledRequestId)
+                        // Server resolved this request (cancelled). If it's the trailing message the
+                        // thinking indicator comes down; if a newer user message superseded it, that
+                        // newer message keeps the indicator up.
+                        markRequestResolved(event.cancelledRequestId)
                         Log.d(TAG, "🔥 CANCELLATION: Pending requests map after removing: $pendingRequests")
                         // 🔧 DON'T update responding state here - animation should continue until
                         // a real (non-cancelled) response arrives. This prevents the typing indicator
@@ -712,6 +739,10 @@ class ChatViewModel @Inject constructor(
                         if (event.requestId != null && event.reason == "superseded_by_new_request") {
                             supersededRequestIds.add(event.requestId)
                         }
+
+                        // Server resolved this request (its message is being deleted/superseded), so it
+                        // will never produce a visible reply — take the indicator down for it.
+                        markRequestResolved(event.requestId)
 
                         if (event.requestId != null && pendingRequests.containsKey(event.requestId)) {
                             Log.d(TAG, "🗑️ Removing superseded request ${event.requestId} from pendingRequests")
@@ -1115,6 +1146,9 @@ class ChatViewModel @Inject constructor(
                                                 // Fallback: add at end if no request ID
                                                 repository.addAssistantMessageOptimistic(targetChatId, messageContentForChat)
                                             }
+                                            // Server replied — mark resolved so the indicator comes down even if
+                                            // clock skew sorts this reply before its user message in the list.
+                                            markRequestResolved(event.requestId)
                                             // Update responding state AFTER message is inserted so typing indicator
                                             // doesn't disappear before the new message appears
                                             updateRespondingStateForCurrentChat()
@@ -1408,6 +1442,13 @@ class ChatViewModel @Inject constructor(
                 // Clear superseded request tracking on chat load
                 supersededRequestIds.clear()
 
+                // Reset server-resolved tracking when switching to a different chat. Keep it on
+                // same-chat re-entry, since the reconcile below is gated on !isSameChat and would
+                // not re-resolve a request we already took the indicator down for.
+                if (!isSameChat) {
+                    _resolvedRequestIds.value = emptySet()
+                }
+
                 // 🔧 Clear pending requests for OTHER chats only - preserve requests for current chat
                 // This fixes the bug where thinking indicator disappears when navigating away and back
                 try {
@@ -1593,22 +1634,30 @@ class ChatViewModel @Inject constructor(
                     Log.d(TAG, "🔌 Skipping WebSocket reconnect - manually disconnected")
                 }
                 
-                // Check server for pending requests to restore thinking indicator
-                // Only needed when switching chats (Fix 1 handles same-chat case by preserving pendingRequests)
+                // Reconcile the thinking indicator against the server's view of in-flight requests.
+                // The indicator shows locally whenever the last message is from the USER (see
+                // showThinking); here we ask the server whether that trailing request is actually still
+                // pending. If the server has no record of it as pending — it completed, failed, or was a
+                // textless/tool-only turn that left no reply — mark it resolved so the indicator comes
+                // down. If it is genuinely pending, ensure it stays shown. The endpoint unions the
+                // optimistic-ID session key, so a just-migrated new chat reports correctly.
                 if (configUseRemoteAgent && !isSameChat && _chatId.value > 0) {
                     try {
-                        val serverPendingIds = repository.getPendingRequests(_chatId.value)
-                        if (serverPendingIds.isNotEmpty()) {
-                            Log.d(TAG, "🔥 Server reports ${serverPendingIds.size} pending requests for chat ${_chatId.value}: $serverPendingIds")
-                            for (requestId in serverPendingIds) {
-                                if (!pendingRequests.containsKey(requestId)) {
-                                    pendingRequests[requestId] = _chatId.value
-                                }
+                        val trailingRequestId = messages.value.lastOrNull()
+                            ?.takeIf { it.type == MessageType.USER }
+                            ?.requestId
+                        if (trailingRequestId != null) {
+                            val serverPendingIds = repository.getPendingRequests(_chatId.value)
+                            if (serverPendingIds.contains(trailingRequestId)) {
+                                Log.d(TAG, "🔥 Server reports trailing request $trailingRequestId still pending for chat ${_chatId.value} - keeping thinking indicator")
+                                _resolvedRequestIds.update { it - trailingRequestId }
+                            } else {
+                                Log.d(TAG, "🔥 Server reports trailing request $trailingRequestId is not pending for chat ${_chatId.value} - clearing thinking indicator")
+                                markRequestResolved(trailingRequestId)
                             }
-                            updateRespondingStateForCurrentChat()
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error checking pending requests from server", e)
+                        Log.e(TAG, "Error reconciling pending request state from server", e)
                     }
                 }
 
