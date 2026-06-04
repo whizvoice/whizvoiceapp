@@ -210,6 +210,7 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val elementId: Int? = null,
         val textSet: String? = null,
+        val submitted: Boolean? = null,
         val error: String? = null
     )
 
@@ -1451,8 +1452,8 @@ class ScreenAgentTools @Inject constructor(
      * last getUi snapshot. Otherwise target the input-focused editable, falling
      * back to the sole editable on screen.
      */
-    suspend fun insertText(text: String, elementId: Int? = null): InsertTextResult {
-        Log.i(TAG, "insertText called, elementId=$elementId, textLength=${text.length}")
+    suspend fun insertText(text: String, elementId: Int? = null, submit: Boolean = false): InsertTextResult {
+        Log.i(TAG, "insertText called, elementId=$elementId, textLength=${text.length}, submit=$submit")
         trackAction("insertText: id=$elementId")
         val accessibilityService = WhizAccessibilityService.getInstance()
             ?: return InsertTextResult(
@@ -1514,11 +1515,18 @@ class ScreenAgentTools @Inject constructor(
                 text
             )
             val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
-            if (ok) InsertTextResult(
-                success = true,
-                elementId = elementId,
-                textSet = text
-            ) else InsertTextResult(
+            if (ok) {
+                val submitted = if (submit) {
+                    delay(300) // Brief delay for text to settle before pressing Enter
+                    performImeEnter(target)
+                } else null
+                InsertTextResult(
+                    success = true,
+                    elementId = elementId,
+                    textSet = text,
+                    submitted = submitted
+                )
+            } else InsertTextResult(
                 success = false,
                 elementId = elementId,
                 error = "ACTION_SET_TEXT returned false"
@@ -1530,6 +1538,23 @@ class ScreenAgentTools @Inject constructor(
                 elementId = elementId,
                 error = "Exception: ${e.message}"
             )
+        }
+    }
+
+    /**
+     * Press Enter / trigger the keyboard's IME action (Search, Go, Done, etc.) on the given node.
+     * Uses ACTION_IME_ENTER on Android 11+ (API 30), falling back to KEYCODE_ENTER on older versions.
+     */
+    private fun performImeEnter(node: AccessibilityNodeInfo): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        } else {
+            try {
+                Runtime.getRuntime().exec("input keyevent 66").waitFor() == 0
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
+                false
+            }
         }
     }
 
@@ -3474,20 +3499,7 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Triggering IME action...")
                     delay(300) // Brief delay for text to be set
 
-                    val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                        Log.d(TAG, "Using ACTION_IME_ENTER (Android 11+)")
-                        searchField.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                    } else {
-                        // Fallback for older Android versions: use KEYCODE_ENTER
-                        Log.d(TAG, "Android < 11, using KEYCODE_ENTER fallback")
-                        try {
-                            val process = Runtime.getRuntime().exec("input keyevent 66")
-                            process.waitFor() == 0
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                            false
-                        }
-                    }
+                    val imeActionPerformed = performImeEnter(searchField)
                     if (imeActionPerformed) {
                         Log.i(TAG, "✅ Successfully triggered IME action")
                     } else {
@@ -5497,21 +5509,10 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun pressEnterToSubmitSearch(rootNode: AccessibilityNodeInfo): Boolean {
         Log.d(TAG, "Pressing Enter to submit Google Maps search")
-        val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
-                ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
-            val result = searchFields?.firstOrNull()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false
-            searchFields?.forEach { it.recycle() }
-            result
-        } else {
-            try {
-                val process = Runtime.getRuntime().exec("input keyevent 66")
-                process.waitFor() == 0
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                false
-            }
-        }
+        val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
+            ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+        val imeActionPerformed = searchFields?.firstOrNull()?.let { performImeEnter(it) } ?: false
+        searchFields?.forEach { it.recycle() }
 
         if (imeActionPerformed) {
             Log.d(TAG, "Successfully submitted search via Enter key")
@@ -5559,22 +5560,11 @@ class ScreenAgentTools @Inject constructor(
 
         // No exact match found - press Enter to submit the search exactly as typed
         Log.d(TAG, "No clickable suggestions found, trying to press Enter to submit search")
-        val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            // Find the search field and perform IME action
-            val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
-                ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
-            val result = searchFields?.firstOrNull()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false
-            searchFields?.forEach { it.recycle() }
-            result
-        } else {
-            try {
-                val process = Runtime.getRuntime().exec("input keyevent 66")
-                process.waitFor() == 0
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                false
-            }
-        }
+        // Find the search field and perform IME action
+        val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
+            ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+        val imeActionPerformed = searchFields?.firstOrNull()?.let { performImeEnter(it) } ?: false
+        searchFields?.forEach { it.recycle() }
 
         if (imeActionPerformed) {
             Log.d(TAG, "Successfully submitted search via Enter key")
@@ -7157,18 +7147,7 @@ class ScreenAgentTools @Inject constructor(
                 val searchField = searchFields[0]
 
                 // Try to perform IME action (Enter)
-                val result = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    searchField.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                } else {
-                    // Fall back to keyevent
-                    try {
-                        val process = Runtime.getRuntime().exec("input keyevent 66")
-                        process.waitFor() == 0
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                        false
-                    }
-                }
+                val result = performImeEnter(searchField)
 
                 searchFields.forEach { it.recycle() }
                 Log.d(TAG, "Submitted YouTube Music search via Enter key: $result")

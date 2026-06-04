@@ -2557,12 +2557,14 @@ class ToolExecutor @Inject constructor(
             } else {
                 null
             }
-            Log.i(TAG, "agent_insert_text invoked, element_id=$elementId, textLen=${text.length}")
-            val result = screenAgentTools.insertText(text, elementId)
+            val submit = params.optBoolean("submit", false)
+            Log.i(TAG, "agent_insert_text invoked, element_id=$elementId, textLen=${text.length}, submit=$submit")
+            val result = screenAgentTools.insertText(text, elementId, submit)
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.elementId?.let { put("element_id", it) }
                 result.textSet?.let { put("text_set", it) }
+                result.submitted?.let { put("submitted", it) }
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_insert_text result for requestId=$requestId: ${resultJson.toString(2)}")
