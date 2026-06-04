@@ -295,18 +295,20 @@ class WakeWordPreferences @Inject constructor(
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
         private const val KEY_VAD_ENABLED = "vad_enabled"
-        // Lowered 0.45 → 0.35 → 0.20 over time to accommodate genuine-voice cosine
-        // scores running well below the original floor in real conditions.
-        // On-device measurement 2026-06-04 (Pixel 8, prod): the enrolled user's own
-        // voice, screen-off + close + quiet, scored 0.314/0.317/0.318 on CAM++ while
-        // the wake-word classifier scored 0.97–0.99 — i.e. detection was perfect but
-        // the 0.35 gate rejected every genuine fire. Noise/distance and natural pitch
-        // variation push the cosine even lower. 0.20 leaves headroom below the observed
-        // ~0.31 floor so the gate admits the genuine speaker across those conditions.
-        // Tradeoff: at 0.20 impostor rejection is weak — this prioritizes not missing
-        // the real user over keeping out other voices. There is no runtime/UI setter
-        // for this value (setVerifierThreshold is never called), so this constant is
-        // the only lever; changing it requires a rebuild + reinstall.
+        // Lowered 0.45 → 0.35 over time to accommodate genuine-voice CAM++ cosine scores
+        // running below the original floor (screen-off HAL path + natural pitch variation).
+        // On-device measurements 2026-06-04 (Pixel 8, prod): wake-word classifier scored
+        // 0.97–0.99 (detection perfect) every time, but verifier cosine for the same genuine
+        // voice scattered ~0.17–0.45 (observed 0.166 / 0.31 / 0.31 / 0.32 / 0.449 / 0.449) on
+        // essentially identical utterances seconds apart. We briefly dropped this to 0.10 while
+        // voice match was the suspect, but the dominant reliability issue turned out to be the
+        // screen-off buffer-refill dead zone (fixed separately via softReset on resume), NOT the
+        // verifier. Reverted to 0.20: keeps reasonable impostor protection, while accepting that
+        // a rare very-low genuine fire (~0.166) may still be rejected.
+        // If genuine fires still get rejected after the dead-zone fix, the honest next step is
+        // disabling voice match (isVoiceMatchEnabled=false), not lowering this further. There is
+        // no runtime/UI setter for this value (setVerifierThreshold is never called), so this
+        // constant is the only lever; changing it requires a rebuild + reinstall.
         const val DEFAULT_VERIFIER_THRESHOLD = 0.20f
     }
 }

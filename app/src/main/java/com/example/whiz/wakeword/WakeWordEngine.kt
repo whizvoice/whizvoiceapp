@@ -107,6 +107,18 @@ class WakeWordEngine(
 
     var inferenceIntervalFrames: Int = 4  // ~320 ms at 80 ms/frame
 
+    /**
+     * Capture-only mode. When false, [feed] still writes PCM to the ring buffer and
+     * advances the sample/cadence counters (so the 2 s buffer stays temporally
+     * continuous), but runs no VAD, no mel→embedding→classifier inference, and emits
+     * no detections or raw scores. Flipping back to true resumes detection on the next
+     * [inferenceIntervalFrames] tick with NO buffer-refill deadzone — the buffer already
+     * holds the most recent real audio. Used to suspend wake-word detection while the
+     * app's main recognizer is mid-conversation, without releasing the microphone.
+     */
+    @Volatile
+    var inferenceEnabled: Boolean = true
+
     private val ringBuffer = FloatArray(AUDIO_BUFFER_SAMPLES)
     private var writePos = 0
     private var totalSamplesWritten = 0L
@@ -133,14 +145,21 @@ class WakeWordEngine(
         }
         val nowMs = System.currentTimeMillis()
 
-        vad?.let { pumpVad(samples, nowMs, it) }
-
+        // Ring-buffer write + counters run in BOTH modes so the 2 s buffer stays
+        // temporally continuous and the inference cadence stays aligned — capture-only
+        // mode keeps filling the buffer with real audio, so re-enabling inference has
+        // no buffer-refill deadzone.
         for (s in samples) {
             ringBuffer[writePos] = s
             writePos = (writePos + 1) % AUDIO_BUFFER_SAMPLES
         }
         totalSamplesWritten += samples.size
         framesSinceLastInference++
+
+        // Capture-only: keep the buffer warm, skip all VAD / inference / emission.
+        if (!inferenceEnabled) return
+
+        vad?.let { pumpVad(samples, nowMs, it) }
 
         if (totalSamplesWritten < AUDIO_BUFFER_SAMPLES) return
         if (framesSinceLastInference < inferenceIntervalFrames) return
