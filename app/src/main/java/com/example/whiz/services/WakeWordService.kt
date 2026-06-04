@@ -54,7 +54,6 @@ class WakeWordService : Service() {
         private const val ACTION_TOGGLE = "com.example.whiz.ACTION_TOGGLE_WAKE_WORD"
         const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val SAMPLE_RATE = 16000
-        private const val DETECTION_COOLDOWN_MS = 5000L
 
         // Ring buffer: 25 seconds of 16kHz mono 16-bit PCM = 800000 bytes
         private const val RING_BUFFER_SECONDS = 25
@@ -210,8 +209,6 @@ class WakeWordService : Service() {
     @Volatile
     private var isPaused = false
     @Volatile
-    private var lastDetectionTime = 0L
-    @Volatile
     private var isExternalRecorderActive = false
     private var ownAudioSessionId: Int = 0
     private var audioManager: AudioManager? = null
@@ -359,12 +356,6 @@ class WakeWordService : Service() {
                 // Detection events flow → activity launch
                 detectionEventsJob = launch {
                     engine?.detections?.collect { event ->
-                        val now = System.currentTimeMillis()
-                        if (now - lastDetectionTime < DETECTION_COOLDOWN_MS) {
-                            Log.d(TAG, "Cooldown active, ignoring detection (score=${event.confidence})")
-                            return@collect
-                        }
-                        lastDetectionTime = now
                         Log.d(TAG, "Wake word detected: score=${event.confidence}")
                         val score = event.confidence.toDouble()
                         wakeWordPreferences.recordDetection("hey_whiz", score, true, "{}", score)
