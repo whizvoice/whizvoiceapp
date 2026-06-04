@@ -24,6 +24,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.common.api.ApiException
 import androidx.health.connect.client.PermissionController
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -93,6 +95,12 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
         @Volatile
         var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand Google Contacts consent when a contact lookup needs the
+        // People API. onResult receives the one-time server auth code (to be sent to the
+        // server for a refresh token), or null if the user cancelled / it failed.
+        @Volatile
+        var requestGoogleContactsConsentCallback: ((onResult: (authCode: String?) -> Unit) -> Unit)? = null
 
         // Callback for on-demand Health Connect permission when agent_log_health_data needs a write perm.
         // `permissions` is the set of HC permission strings to request; callback receives the granted subset.
@@ -222,6 +230,30 @@ class MainActivity : ComponentActivity() {
         }
         calendarPermissionOnGranted = null
         calendarPermissionOnDenied = null
+    }
+
+    // Google Contacts consent launcher (on-demand, triggered by a contact lookup that
+    // needs the People API). Extracts the server auth code from the sign-in result.
+    private var googleContactsConsentOnResult: ((String?) -> Unit)? = null
+
+    private val requestGoogleContactsConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val onResult = googleContactsConsentOnResult
+        googleContactsConsentOnResult = null
+        val authCode = try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                .getResult(ApiException::class.java)
+            Log.d(TAG, "Google Contacts consent result: serverAuthCode present=${account?.serverAuthCode != null}")
+            account?.serverAuthCode
+        } catch (e: ApiException) {
+            Log.w(TAG, "Google Contacts consent cancelled/failed: status=${e.statusCode}")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing Google Contacts consent result", e)
+            null
+        }
+        onResult?.invoke(authCode)
     }
 
     // Health Connect permission launcher (on-demand, triggered by agent_log_health_data)
@@ -434,6 +466,19 @@ class MainActivity : ComponentActivity() {
             calendarPermissionOnGranted = onGranted
             calendarPermissionOnDenied = onDenied
             showCalendarPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand Google Contacts consent (used by contact lookup)
+        requestGoogleContactsConsentCallback = { onResult ->
+            Log.d(TAG, "requestGoogleContactsConsentCallback invoked - launching Google Contacts consent")
+            try {
+                googleContactsConsentOnResult = onResult
+                requestGoogleContactsConsentLauncher.launch(authRepository.createContactsConsentIntent())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch Google Contacts consent", e)
+                googleContactsConsentOnResult = null
+                onResult(null)
+            }
         }
 
         // Set up static callback for on-demand Health Connect permission (used by agent_log_health_data)
@@ -1258,6 +1303,7 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
+        requestGoogleContactsConsentCallback = null
         requestHealthConnectPermissionCallback = null
         openHealthAppSettingsCallback = null
 

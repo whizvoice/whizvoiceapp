@@ -364,6 +364,9 @@ class ToolExecutor @Inject constructor(
                         }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
+                    "agent_request_google_contacts_consent" -> {
+                        executeGoogleContactsConsent(toolName, requestId)
+                    }
                     "agent_log_health_data" -> {
                         executeLogHealthData(requestId, params)
                     }
@@ -2080,6 +2083,79 @@ class ToolExecutor @Inject constructor(
                 )
             )
         }
+    }
+
+    /**
+     * On-demand Google Contacts consent. Mirrors the contacts-permission pattern:
+     * emit a waiting status (so the server extends the tool deadline), launch the
+     * Google consent UI via MainActivity, and return the one-time server auth code.
+     * Returns {server_auth_code} on grant, {declined:true} on cancel, {timed_out:true}
+     * if no response — the server stores/clears the refresh token accordingly.
+     */
+    private suspend fun executeGoogleContactsConsent(toolName: String, requestId: String) {
+        val callback = MainActivity.requestGoogleContactsConsentCallback
+        if (callback == null) {
+            Log.w(TAG, "No Google Contacts consent callback registered (no foreground Activity)")
+            _toolResults.emit(ToolExecutionResult.Success(
+                toolName = toolName,
+                requestId = requestId,
+                result = JSONObject().put("declined", true).put("reason", "No UI available for consent")
+            ))
+            return
+        }
+
+        Log.i(TAG, "🔗 Requesting Google Contacts consent")
+        _toolResults.emit(ToolExecutionResult.Status(
+            toolName = toolName,
+            requestId = requestId,
+            status = "waiting_for_google_contacts_consent",
+            message = "Google Contacts access required. Waiting for user to grant."
+        ))
+
+        // OAuth consent can take longer than the server's 60s abandoned-execution reaper
+        // window, so heartbeat the waiting status every 30s. Each one refreshes the
+        // server-side deadline + execution timestamp so the pending tool isn't reaped.
+        val heartbeat = scope.launch {
+            while (true) {
+                delay(30_000L)
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_google_contacts_consent",
+                    message = "Still waiting for Google Contacts access..."
+                ))
+            }
+        }
+
+        // Empty string = user cancelled; non-empty = auth code; null (timeout) handled below.
+        val outcome = try {
+            withTimeoutOrNull(90_000L) {
+                suspendCancellableCoroutine<String> { cont ->
+                    callback { authCode ->
+                        if (cont.isActive) cont.resume(authCode ?: "")
+                    }
+                }
+            }
+        } finally {
+            heartbeat.cancel()
+        }
+
+        val result = JSONObject()
+        when {
+            outcome == null -> {
+                Log.i(TAG, "🔗 Google Contacts consent timed out")
+                result.put("timed_out", true)
+            }
+            outcome.isEmpty() -> {
+                Log.i(TAG, "🔗 User declined Google Contacts consent")
+                result.put("declined", true)
+            }
+            else -> {
+                Log.i(TAG, "🔗 Google Contacts consent granted (auth code captured)")
+                result.put("server_auth_code", outcome)
+            }
+        }
+        _toolResults.emit(ToolExecutionResult.Success(toolName = toolName, requestId = requestId, result = result))
     }
 
     // Method to list available tools (useful for discovery)
