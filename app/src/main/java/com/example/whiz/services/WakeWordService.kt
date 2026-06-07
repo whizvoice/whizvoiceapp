@@ -238,6 +238,9 @@ class WakeWordService : Service() {
         super.onCreate()
         Log.d(TAG, "onCreate")
         createNotificationChannel()
+        // One-time wipe of detection metrics polluted by the Vosk→ONNX migration (no-op after
+        // the first run). Lets post-migration aggregates accumulate on a clean 0–1 scale.
+        wakeWordPreferences.resetStaleMetricsOnce()
         isRunning = true
         instance = this
     }
@@ -353,7 +356,7 @@ class WakeWordService : Service() {
                 }
                 Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD${if (verifier != null) " + CAM++" else ""})")
 
-                // Detection events flow → activity launch
+                // Detection events flow → activity launch + telemetry upload (outcome=fired)
                 detectionEventsJob = launch {
                     engine?.detections?.collect { event ->
                         Log.d(TAG, "Wake word detected: score=${event.confidence}")
@@ -361,11 +364,28 @@ class WakeWordService : Service() {
                         wakeWordPreferences.recordDetection("hey_whiz", score, true, "{}", score)
                         val stats = wakeWordPreferences.getStats("hey_whiz")
                         Log.d(TAG, "Stats[hey_whiz]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.3f".format(stats.mean)}")
-                        captureDetectionAudio("hey_whiz", score, true, "{}", score)
+                        val verdict = engine?.lastVerifierVerdict
+                        captureDetectionAudio(
+                            "hey_whiz", score, accepted = true, rawVoskJson = "{}", classifierScore = score,
+                            cosine = verdict?.score, decision = verdict?.decision, outcome = "fired"
+                        )
                         // Pin buffer "warm" so a follow-up utterance doesn't get swallowed by
                         // a fresh 2 s buffer-fill deadzone. Inference resumes immediately.
                         engine?.softReset()
                         onWakeWordDetected()
+                    }
+                }
+
+                // Verifier-rejected fires → telemetry upload only (no action). Captures the
+                // voice-match rejections that otherwise never reach the server.
+                launch {
+                    engine?.rejectedDetections?.collect { rej ->
+                        Log.d(TAG, "Verifier-rejected fire: score=${rej.confidence} cosine=${rej.cosine} — uploading telemetry")
+                        captureDetectionAudio(
+                            "hey_whiz", rej.confidence.toDouble(), accepted = false, rawVoskJson = "{}",
+                            classifierScore = rej.confidence.toDouble(),
+                            cosine = rej.cosine, decision = rej.decision, outcome = "verifier_rejected"
+                        )
                     }
                 }
 
@@ -837,7 +857,10 @@ class WakeWordService : Service() {
         confidence: Double,
         accepted: Boolean,
         rawVoskJson: String,
-        classifierScore: Double = -1.0
+        classifierScore: Double = -1.0,
+        cosine: Float? = null,
+        decision: String? = null,
+        outcome: String = "fired"
     ) {
         // Trim to last 3 seconds for wake word clips
         val pcmSnapshot = audioRingBuffer?.snapshot(WAKE_WORD_CLIP_SIZE)
@@ -850,8 +873,8 @@ class WakeWordService : Service() {
             audioDir.mkdirs()
             val wavFile = File(audioDir, "detection_${timestamp}_${confStr}.wav")
             saveWavFile(pcmSnapshot, wavFile)
-            Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM)")
-            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson, classifierScore)
+            Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM, outcome=$outcome)")
+            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson, classifierScore, cosine, decision, outcome)
             enforceAudioStorageCap(audioDir)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save detection audio", e)
@@ -870,7 +893,10 @@ class WakeWordService : Service() {
         confidence: Double,
         accepted: Boolean,
         rawVoskJson: String,
-        classifierScore: Double = -1.0
+        classifierScore: Double = -1.0,
+        cosine: Float? = null,
+        decision: String? = null,
+        outcome: String = "fired"
     ) {
         serviceScope.launch {
             try {
@@ -883,6 +909,7 @@ class WakeWordService : Service() {
 
                 // raw_vosk_json: legacy field name (Vosk pipeline removed). Server contract
                 // unchanged; sending "{}" until the endpoint can drop or rename the field.
+                // verifier_* / outcome: empty string means "not applicable" (server maps "" → NULL).
                 apiService.uploadWakeWordAudio(
                     file = filePart,
                     phrase = phrase.toRequestBody(textType),
@@ -890,7 +917,10 @@ class WakeWordService : Service() {
                     accepted = accepted.toString().toRequestBody(textType),
                     timestamp = System.currentTimeMillis().toString().toRequestBody(textType),
                     rawVoskJson = rawVoskJson.toRequestBody(textType),
-                    classifierScore = classifierScore.toString().toRequestBody(textType)
+                    classifierScore = classifierScore.toString().toRequestBody(textType),
+                    verifierCosine = (cosine?.toString() ?: "").toRequestBody(textType),
+                    verifierDecision = (decision ?: "").toRequestBody(textType),
+                    outcome = outcome.toRequestBody(textType)
                 )
                 wavFile.delete()
                 Log.d(TAG, "Uploaded and deleted wake word audio: ${wavFile.name}")

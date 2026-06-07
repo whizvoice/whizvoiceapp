@@ -235,6 +235,9 @@ interface ApiService {
         @Part("accepted") accepted: RequestBody,
         @Part("timestamp") timestamp: RequestBody,
         @Part("raw_vosk_json") rawVoskJson: RequestBody,
-        @Part("classifier_score") classifierScore: RequestBody
+        @Part("classifier_score") classifierScore: RequestBody,
+        @Part("verifier_cosine") verifierCosine: RequestBody,
+        @Part("verifier_decision") verifierDecision: RequestBody,
+        @Part("outcome") outcome: RequestBody
     ): WakeWordAudioResponse
 } 

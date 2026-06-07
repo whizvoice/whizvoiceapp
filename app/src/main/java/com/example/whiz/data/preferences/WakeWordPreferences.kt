@@ -289,12 +289,40 @@ class WakeWordPreferences @Inject constructor(
         editor.apply()
     }
 
+    /**
+     * One-time reset of the detection-metrics aggregates. The running count/accepted/mean/m2
+     * Welford aggregates were polluted by the Vosk→ONNX migration: Vosk-era confidence ran on a
+     * 0–300+ scale while the ONNX classifier outputs 0–1, so the blended mean/stdDev are
+     * meaningless (e.g. hey_whiz mean ≈ 154 on a 0–1 scale) and ~916 stale non-accepted entries
+     * inflate the count. Clears the aggregates once — guarded by a version flag so we never wipe
+     * again — plus the stale human-readable mirrors (stats.txt / detections.jsonl), which
+     * regenerate cleanly on the next detection. Bump [CURRENT_METRICS_RESET_VERSION] to force
+     * another reset after a future scoring change.
+     */
+    fun resetStaleMetricsOnce() {
+        if (prefs.getInt(KEY_METRICS_RESET_VERSION, 0) >= CURRENT_METRICS_RESET_VERSION) return
+        clearMetrics()
+        prefs.edit().putInt(KEY_METRICS_RESET_VERSION, CURRENT_METRICS_RESET_VERSION).apply()
+        try {
+            context.getExternalFilesDir(null)?.let { dir ->
+                File(dir, "wake_word_stats.txt").delete()
+                File(dir, "wake_word_detections.jsonl").delete()
+            }
+        } catch (e: Exception) {
+            Log.w("WakeWordPreferences", "Failed to delete stale stats mirrors", e)
+        }
+        Log.d("WakeWordPreferences", "Reset stale pre-ONNX detection metrics (migration v$CURRENT_METRICS_RESET_VERSION)")
+    }
+
     companion object {
         private const val KEY_ENABLED = "wake_word_enabled"
         private const val KEY_VOICE_MATCH_ENABLED = "voice_match_enabled"
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
         private const val KEY_VAD_ENABLED = "vad_enabled"
+        // One-time metrics-reset guard. Bump to force another reset after a scoring change.
+        private const val KEY_METRICS_RESET_VERSION = "metrics_reset_version"
+        private const val CURRENT_METRICS_RESET_VERSION = 1
         // Lowered 0.45 → 0.35 over time to accommodate genuine-voice CAM++ cosine scores
         // running below the original floor (screen-off HAL path + natural pitch variation).
         // On-device measurements 2026-06-04 (Pixel 8, prod): wake-word classifier scored

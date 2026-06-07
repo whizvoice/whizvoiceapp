@@ -19,6 +19,17 @@ data class DetectionEvent(val timestampMs: Long, val confidence: Float)
 
 data class TimedDetection(val event: DetectionEvent, val captureTimeMs: Long)
 
+/**
+ * A smoother fire (classifier sustained ≥ threshold) that the speaker verifier REJECTED.
+ * Surfaced for telemetry upload only — it does NOT trigger the wake-word action.
+ */
+data class RejectedDetection(
+    val timestampMs: Long,
+    val confidence: Float,
+    val cosine: Float?,
+    val decision: String,
+)
+
 interface WakeWordEngineApi : AutoCloseable {
     fun feed(samples: FloatArray)
     val detections: SharedFlow<DetectionEvent>
@@ -94,6 +105,11 @@ class WakeWordEngine(
         MutableSharedFlow<Float>(replay = 0, extraBufferCapacity = 16)
     /** Raw classifier scores emitted on every inference run (before debouncing). */
     val rawScores: SharedFlow<Float> = _rawScores.asSharedFlow()
+
+    private val _rejectedDetections =
+        MutableSharedFlow<RejectedDetection>(replay = 0, extraBufferCapacity = 16)
+    /** Smoother fires rejected by the speaker verifier — for telemetry upload, not action. */
+    val rejectedDetections: SharedFlow<RejectedDetection> = _rejectedDetections.asSharedFlow()
 
     private val debouncer = Debouncer(threshold = 0.5f, framesRequired = 3)
 
@@ -207,6 +223,14 @@ class WakeWordEngine(
                     _detections.tryEmit(DetectionEvent(timestampMs = nowMs, confidence = score))
                 } else {
                     Log.d(TAG, "verifier rejected @ score=${"%.3f".format(score)} verdict=$verdict")
+                    _rejectedDetections.tryEmit(
+                        RejectedDetection(
+                            timestampMs = nowMs,
+                            confidence = score,
+                            cosine = verdict.score,
+                            decision = verdict.decision,
+                        )
+                    )
                 }
             }
         } else {
