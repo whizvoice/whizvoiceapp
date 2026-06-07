@@ -319,8 +319,9 @@ class MainActivity : ComponentActivity() {
             }
         )
         inactivityTimer.reset()
-        // onCreate runs before onResume; mark as paused for foreground state until onResume fires.
-        inactivityTimer.pause("foreground")
+        // No foreground pause: screen-off and app-switch time both count toward the
+        // 3-min idle window so the app auto-closes even when the phone is off (bug #1347).
+        // onResume calls checkExpired() to close immediately if the deadline already passed.
 
         lifecycleScope.launch {
             toolExecutor.activeToolCount.collect { count ->
@@ -332,15 +333,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        lifecycleScope.launch {
-            voiceManager.isListening.collect { listening ->
-                if (listening) {
-                    inactivityTimer.resume("mic-off")
-                } else {
-                    inactivityTimer.pause("mic-off")
-                }
-            }
-        }
+        // No "mic-off" gating: auto-close is a pure idle timer measured from the last user
+        // interaction (reset in onUserInteraction), so it also fires while the phone is off
+        // and the mic has stopped (bug #1347). Only "tool" pauses it (don't close mid-tool).
 
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
@@ -1192,7 +1187,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
         if (::inactivityTimer.isInitialized) {
-            inactivityTimer.resume("foreground")
+            // Screen-off / app-switch time counts as idle; close now if the 3-min
+            // deadline already elapsed while we were away (bug #1347).
+            inactivityTimer.checkExpired()
         }
 
         // Stop bubble overlay when MainActivity comes to foreground
@@ -1251,9 +1248,8 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
-        if (::inactivityTimer.isInitialized) {
-            inactivityTimer.pause("foreground")
-        }
+        // Intentionally do NOT pause the inactivity timer here: backgrounding (incl.
+        // screen-off) must keep counting toward the 3-min auto-close (bug #1347).
         // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
 
         // Check if bubble overlay is active and in TTS mode before stopping TTS
