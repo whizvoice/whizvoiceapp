@@ -1091,6 +1091,9 @@ class ToolExecutor @Inject constructor(
 
             // Kill the process to close everything
             Log.i(TAG, "Killing process to close app")
+            // Flag this as an intentional self-exit so next launch's ApplicationExitInfo pass
+            // doesn't misreport the resulting SIGNALED exit as a crash (process_death).
+            com.example.whiz.WhizApplication.flagIntentionalExit(context)
             android.os.Process.killProcess(android.os.Process.myPid())
 
         } catch (e: Exception) {
