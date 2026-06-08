@@ -42,6 +42,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -364,6 +367,7 @@ class WakeWordService : Service() {
                         wakeWordPreferences.recordDetection("hey_whiz", score, true, "{}", score)
                         val stats = wakeWordPreferences.getStats("hey_whiz")
                         Log.d(TAG, "Stats[hey_whiz]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.3f".format(stats.mean)}")
+                        writeFunnelFile()
                         val verdict = engine?.lastVerifierVerdict
                         captureDetectionAudio(
                             "hey_whiz", score, accepted = true, rawVoskJson = "{}", classifierScore = score,
@@ -550,6 +554,7 @@ class WakeWordService : Service() {
                             "Heartbeat: processed $frameCount audio chunks, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}, " +
                                 "rms min=$minStr max=${"%.4f".format(rmsMax)} mean=${"%.4f".format(rmsMean)}"
                         )
+                        writeFunnelFile()
                         lastHeartbeatTime = now
                         frameCount = 0
                         rmsSum = 0.0
@@ -878,6 +883,22 @@ class WakeWordService : Service() {
             enforceAudioStorageCap(audioDir)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save detection audio", e)
+        }
+    }
+
+    /**
+     * Dump the per-gate detection funnel to a pullable file:
+     *   adb shell cat /sdcard/Android/data/<pkg>/files/wake_word_funnel.txt
+     * Counts are cumulative since the engine (service) started.
+     */
+    private fun writeFunnelFile() {
+        try {
+            val funnel = engine?.gateFunnel ?: return
+            val dir = getExternalFilesDir(null) ?: return
+            val label = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            File(dir, "wake_word_funnel.txt").writeText(funnel.format(label))
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write funnel file", e)
         }
     }
 

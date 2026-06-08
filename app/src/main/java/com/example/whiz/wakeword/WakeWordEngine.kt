@@ -9,6 +9,7 @@ import com.example.whiz.wakeword.detection.AdaptiveThresholdController
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
 import com.example.whiz.wakeword.detection.VadGate
+import com.example.whiz.wakeword.metrics.GateFunnel
 import com.example.whiz.wakeword.metrics.MetricsSource
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -68,6 +69,9 @@ class WakeWordEngine(
     /** Verdict from the most recent verifier run, or null if verifier didn't run for this fire. */
     @Volatile var lastVerifierVerdict: SpeakerVerifier.Verdict? = null
         private set
+
+    /** Per-gate pass/block counters since construction, for the pullable stats funnel. */
+    val gateFunnel = GateFunnel()
 
     private var inferencesTotal: Long = 0L
     private val latenciesMs = ArrayDeque<Long>(LATENCY_WINDOW)
@@ -183,6 +187,7 @@ class WakeWordEngine(
 
         if (vad?.shouldSkipInference(atMs = nowMs) == true) {
             vad.maybeRecordSkip(atMs = nowMs)
+            gateFunnel.recordSkip()
             vadSkipCount++
             if (vadSkipCount % 25L == 1L) Log.d(TAG, "vad skipped inference (cumulative=$vadSkipCount)")
             return
@@ -200,6 +205,7 @@ class WakeWordEngine(
         adaptiveThreshold?.onNonFireScore(score)
 
         // Log every interesting score, plus a periodic heartbeat
+        gateFunnel.recordInference()
         inferenceCount++
         if (score >= 0.10f || inferenceCount % 30L == 0L) {
             val thr = smoother?.let { adaptiveThreshold?.effectiveThreshold(baseStage1Threshold) ?: baseStage1Threshold } ?: debouncer.threshold
@@ -212,16 +218,20 @@ class WakeWordEngine(
             }
             if (vad != null && !vad.allowsFireAt(atMs = nowMs)) {
                 if (score >= 0.10f) Log.d(TAG, "vad veto fire @ score=${"%.3f".format(score)}")
+                gateFunnel.recordVeto()
                 return
             }
             if (smoother.onScore(score, atMs = nowMs)) {
+                gateFunnel.recordFire()
                 Log.d(TAG, "smoother fired @ score=${"%.3f".format(score)} — running verifier")
                 val verdict = verifier?.verify(captureBuffer())
                 lastVerifierVerdict = verdict
                 if (verdict == null || verdict.gatePassed) {
+                    gateFunnel.recordAccept()
                     Log.d(TAG, "DETECTION emit @ score=${"%.3f".format(score)} verdict=$verdict")
                     _detections.tryEmit(DetectionEvent(timestampMs = nowMs, confidence = score))
                 } else {
+                    gateFunnel.recordReject()
                     Log.d(TAG, "verifier rejected @ score=${"%.3f".format(score)} verdict=$verdict")
                     _rejectedDetections.tryEmit(
                         RejectedDetection(

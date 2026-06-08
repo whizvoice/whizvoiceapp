@@ -307,6 +307,7 @@ class WakeWordPreferences @Inject constructor(
             context.getExternalFilesDir(null)?.let { dir ->
                 File(dir, "wake_word_stats.txt").delete()
                 File(dir, "wake_word_detections.jsonl").delete()
+                File(dir, "wake_word_funnel.txt").delete()
             }
         } catch (e: Exception) {
             Log.w("WakeWordPreferences", "Failed to delete stale stats mirrors", e)
@@ -322,7 +323,9 @@ class WakeWordPreferences @Inject constructor(
         private const val KEY_VAD_ENABLED = "vad_enabled"
         // One-time metrics-reset guard. Bump to force another reset after a scoring change.
         private const val KEY_METRICS_RESET_VERSION = "metrics_reset_version"
-        private const val CURRENT_METRICS_RESET_VERSION = 1
+        // v2 (2026-06-08): wipe the pre-funnel detection stats so the new per-gate funnel
+        // and the detection aggregates start from one clean, same-window baseline.
+        private const val CURRENT_METRICS_RESET_VERSION = 2
         // Lowered 0.45 → 0.35 over time to accommodate genuine-voice CAM++ cosine scores
         // running below the original floor (screen-off HAL path + natural pitch variation).
         // On-device measurements 2026-06-04 (Pixel 8, prod): wake-word classifier scored
