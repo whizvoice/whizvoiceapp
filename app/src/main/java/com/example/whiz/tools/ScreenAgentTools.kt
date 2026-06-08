@@ -3855,11 +3855,16 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for YouTube Music to be ready (max 3 seconds)
+            // Wait for YouTube Music to be ready. Ceiling 8s (was 3s): this is an entry
+            // point that cold-launches YT Music (above), so slow cold-start / network-handoff
+            // foregrounding can blow past 3s and report a false "did not become ready" — the
+            // same failure mode fixed for Maps directions. Intelligent wait: returns the instant
+            // YT Music foregrounds, so the higher ceiling costs nothing on the common path and
+            // only the genuine never-ready case waits longer.
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.youtube.music",
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
             if (!appReady) {
@@ -4398,11 +4403,18 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
+            // Wait for Google Maps to be ready. Ceiling 8s (was 3s) to tolerate slow
+            // cold-start / network-handoff foregrounding (Wi-Fi→cellular), which blew past
+            // the old 3s window and reported a false "did not become ready" failure while
+            // Maps was still coming to the foreground (dump 1349). This is an intelligent
+            // wait — it returns the instant Maps foregrounds, so the higher ceiling costs
+            // nothing on the common path; only the genuine never-ready case waits longer.
+            // 8s + the 10s directions wait (below) = 18s, safely under the 25s server timeout
+            // (whizvoice/maps_tools.py:563).
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
             if (!appReady) {
