@@ -1219,6 +1219,10 @@ class ToolExecutor @Inject constructor(
                 put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
+                // Surface what ACTUALLY played so the assistant can confirm truthfully and
+                // flag a mismatch with the request, instead of free-forming from the query.
+                result.nowPlaying?.let { put("played_title", it) }
+                result.nowPlayingArtist?.let { put("played_artist", it) }
             }
 
             Log.i(TAG, "[TOOL_RESULT] Music play result for requestId=$requestId: ${resultJson.toString(2)}")

@@ -150,7 +150,8 @@ class ScreenAgentTools @Inject constructor(
         val action: String,
         val query: String? = null,
         val error: String? = null,
-        val nowPlaying: String? = null
+        val nowPlaying: String? = null,
+        val nowPlayingArtist: String? = null
     )
 
     data class MapsActionResult(
@@ -3784,17 +3785,21 @@ class ScreenAgentTools @Inject constructor(
                 // For songs/videos, wait for mini player to show the playing title
                 delay(2000)
                 val verifyRoot = accessibilityService.getCurrentRootNode()
-                val nowPlaying = if (verifyRoot != null) {
-                    val title = getMiniPlayerTitle(verifyRoot)
+                var nowPlaying: String? = null
+                var nowPlayingArtist: String? = null
+                if (verifyRoot != null) {
+                    nowPlaying = getMiniPlayerTitle(verifyRoot)
+                    nowPlayingArtist = getMiniPlayerArtist(verifyRoot)
                     verifyRoot.recycle()
-                    title
-                } else null
+                }
 
                 return MusicActionResult(
                     success = true,
                     action = "play_song",
                     query = query,
-                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query
+                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query,
+                    // Prefer the artist actually showing in the player; fall back to the clicked row's byline.
+                    nowPlayingArtist = nowPlayingArtist ?: clickResult.clickedArtist
                 )
             } else {
                 // For albums/playlists/artists, clicking opens the page — playback may not start immediately
@@ -3802,7 +3807,8 @@ class ScreenAgentTools @Inject constructor(
                     success = true,
                     action = "play_song",
                     query = query,
-                    nowPlaying = clickResult.clickedTitle ?: query
+                    nowPlaying = clickResult.clickedTitle ?: query,
+                    nowPlayingArtist = clickResult.clickedArtist
                 )
             }
         } catch (e: Exception) {
@@ -7428,8 +7434,40 @@ class ScreenAgentTools @Inject constructor(
      */
     private data class ClickResultInfo(
         val clicked: Boolean,
-        val clickedTitle: String? = null
+        val clickedTitle: String? = null,
+        val clickedArtist: String? = null
     )
+
+    /**
+     * Extract the artist/byline from a search result row node.
+     * YT Music result rows carry a "•"-delimited byline (e.g. "Song • Judy Garland • Album • 3:45")
+     * in a child's text or contentDescription. The first segment is the type indicator
+     * ("Song"/"Video"/...) and the second is the artist. Returns null if no byline is found.
+     * Used so we can report the artist of the row we actually clicked (truthful playback).
+     */
+    private fun extractArtistFromResultRow(rowNode: AccessibilityNodeInfo): String? {
+        val allChildren = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rowNode, allChildren)
+        try {
+            for (child in allChildren) {
+                val byline = (child.text?.toString() ?: child.contentDescription?.toString()) ?: continue
+                if (!byline.contains("•")) continue
+                val segments = byline.split("•").map { it.trim() }.filter { it.isNotEmpty() }
+                // Expect [type, artist, ...]; the artist is the segment after the type indicator.
+                if (segments.size >= 2) {
+                    val artist = segments[1]
+                    // Guard against the artist slot actually being metadata (duration/view count).
+                    if (!artist.matches(Regex("\\d+:\\d+")) &&
+                        !artist.matches(Regex("\\d+(\\.\\d+)?[KMB]?\\s*(plays|views)?", RegexOption.IGNORE_CASE))) {
+                        return artist
+                    }
+                }
+            }
+            return null
+        } finally {
+            allChildren.forEach { it.recycle() }
+        }
+    }
 
     /**
      * Extract the song title from a search result row node.
@@ -7515,6 +7553,7 @@ class ScreenAgentTools @Inject constructor(
             // Find clickable result rows (Button class, long-clickable)
             var matchingRow: AccessibilityNodeInfo? = null
             var matchingTitle: String? = null
+            var matchingArtist: String? = null
 
             for (node in allNodes) {
                 val className = node.className?.toString() ?: ""
@@ -7524,11 +7563,13 @@ class ScreenAgentTools @Inject constructor(
 
                     // Check if this row contains a matching type indicator in its children
                     if (rowContainsTypeIndicator(node, acceptableTypes)) {
-                        // Extract the title from this row
+                        // Extract the title and artist from this row
                         val title = extractTitleFromResultRow(node)
-                        Log.d(TAG, "Found matching result row with title: '$title'")
+                        val artist = extractArtistFromResultRow(node)
+                        Log.d(TAG, "Found matching result row with title: '$title', artist: '$artist'")
                         matchingRow = node
                         matchingTitle = title
+                        matchingArtist = artist
                         break
                     }
                 }
@@ -7537,7 +7578,7 @@ class ScreenAgentTools @Inject constructor(
             if (matchingRow != null) {
                 // Click the matching result row
                 val clicked = accessibilityService.clickNode(matchingRow)
-                Log.d(TAG, "Clicked matching result row: $clicked, title: '$matchingTitle'")
+                Log.d(TAG, "Clicked matching result row: $clicked, title: '$matchingTitle', artist: '$matchingArtist'")
                 allNodes.forEach { it.recycle() }
 
                 // For List-type and Podcast-type content, clicking the row opens the detail page
@@ -7549,14 +7590,14 @@ class ScreenAgentTools @Inject constructor(
                     val playClicked = clickPlayButtonOnDetailPage(accessibilityService, contentType)
                     if (playClicked) {
                         Log.d(TAG, "Successfully clicked Play button on detail page")
-                        return ClickResultInfo(true, matchingTitle)
+                        return ClickResultInfo(true, matchingTitle, matchingArtist)
                     } else {
                         Log.w(TAG, "Could not find Play button on detail page")
-                        return ClickResultInfo(false, matchingTitle)
+                        return ClickResultInfo(false, matchingTitle, matchingArtist)
                     }
                 }
 
-                return ClickResultInfo(clicked, matchingTitle)
+                return ClickResultInfo(clicked, matchingTitle, matchingArtist)
             }
 
             allNodes.forEach { it.recycle() }
@@ -7729,6 +7770,37 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
+        return null
+    }
+
+    /**
+     * Get the artist/byline of the currently playing song, paralleling getMiniPlayerTitle.
+     * The subtitle view-id is not guaranteed stable across YT Music versions, so we try a few
+     * known/likely candidates and degrade gracefully to null. Callers fall back to the clicked
+     * row's byline artist when this returns null. Reports the artist that is ACTUALLY playing so
+     * the assistant can confirm truthfully (and flag a mismatch with what was requested).
+     */
+    private fun getMiniPlayerArtist(rootNode: AccessibilityNodeInfo): String? {
+        val candidateIds = listOf(
+            "com.google.android.apps.youtube.music:id/mini_player_subtitle",
+            "com.google.android.apps.youtube.music:id/subtitle",
+            "com.google.android.apps.youtube.music:id/watch_header_subtitle"
+        )
+        for (id in candidateIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            if (nodes != null && nodes.isNotEmpty()) {
+                val raw = nodes[0].text?.toString()
+                nodes.forEach { it.recycle() }
+                if (!raw.isNullOrBlank()) {
+                    // Some subtitle nodes are "Artist • Album • Year"; keep just the artist segment.
+                    val artist = if (raw.contains("•")) {
+                        raw.split("•").map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: raw
+                    } else raw
+                    Log.d(TAG, "Found now-playing artist in player ($id): $artist")
+                    return artist
+                }
+            }
+        }
         return null
     }
 
