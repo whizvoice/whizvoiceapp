@@ -75,6 +75,14 @@ class AudioFocusManager @Inject constructor(
         duckingFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             .setAudioAttributes(audioAttributes)
             .setAcceptsDelayedFocusGain(false)
+            // LOAD-BEARING: without this, when another app (e.g. Google Maps voice navigation, a
+            // different uid) grabs GAIN_TRANSIENT_MAY_DUCK focus, Android SILENTLY auto-ducks us and
+            // never calls onAudioFocusChange — so we never re-request and get left ducked *under*
+            // the other app. setWillPauseWhenDucked(true) opts us out of silent auto-ducking: we
+            // receive AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK instead and attemptDuckingReRequest() puts
+            // us back on top so the other app ducks for us. Do not remove. (Verified red->green by
+            // run_screen_agent_tests.py::test_google_maps_directions.)
+            .setWillPauseWhenDucked(true)
             .setOnAudioFocusChangeListener(this)
             .build()
 
