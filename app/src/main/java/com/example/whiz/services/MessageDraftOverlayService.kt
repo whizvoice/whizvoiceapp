@@ -221,8 +221,11 @@ class MessageDraftOverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
+            // NOTE: intentionally touchable (no FLAG_NOT_TOUCHABLE) so the draft ScrollView
+            // can be scrolled. FLAG_NOT_FOCUSABLE keeps the overlay from stealing IME/input
+            // focus (touch scrolling does not need focus). While shown, the overlay is modal
+            // over the input/keyboard region — capturing those touches is intended.
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
