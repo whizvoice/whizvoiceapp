@@ -24,9 +24,7 @@ import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.wakeword.WakeWordEngine
 import com.example.whiz.wakeword.detection.CamPlusOrtEmbedder
 import com.example.whiz.wakeword.detection.ScoreSmoother
-import com.example.whiz.wakeword.detection.SileroOrtScorer
 import com.example.whiz.wakeword.detection.SpeakerVerifier
-import com.example.whiz.wakeword.detection.VadGate
 import com.example.whiz.wakeword.enrollment.EnrolledEmbeddingStore
 import dagger.hilt.android.AndroidEntryPoint
 import okhttp3.MediaType.Companion.toMediaType
@@ -80,11 +78,6 @@ class WakeWordService : Service() {
         private const val SMOOTHER_ENTER_THRESHOLD = 0.92f
         private const val SMOOTHER_HYSTERESIS = 0.20f
         private const val SMOOTHER_REFRACTORY_MS = 1000
-
-        // VAD gate defaults.
-        private const val VAD_SPEECH_THRESHOLD = 0.5f
-        private const val VAD_SILENCE_WINDOWS_BEFORE_SKIP = 50  // ~1.6 s @ 32 ms/window
-        private const val VAD_PRE_WINDOW_LOOKBACK_MS = 2000L
 
         @Volatile
         var isRunning = false
@@ -204,7 +197,6 @@ class WakeWordService : Service() {
     private var detectionEventsJob: Job? = null
     private var audioRecord: AudioRecord? = null
     private var engine: WakeWordEngine? = null
-    private var sileroScorer: SileroOrtScorer? = null
     private var camPlusEmbedder: CamPlusOrtEmbedder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
@@ -313,24 +305,7 @@ class WakeWordService : Service() {
         detectionJob = serviceScope.launch {
             try {
                 // Build wake-word engine. Verifier is wired in commit 4; null here means
-                // stage-1 only (no voice match). VAD + smoother + self-echo gate enabled.
-                val vadEnabled = wakeWordPreferences.isVadEnabledOnce()
-                val scorer = if (vadEnabled) {
-                    try {
-                        SileroOrtScorer(this@WakeWordService).also { sileroScorer = it }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Silero VAD init failed; running without VAD gate", e)
-                        null
-                    }
-                } else null
-                val vad = scorer?.let {
-                    VadGate(
-                        scorer = it,
-                        speechThreshold = VAD_SPEECH_THRESHOLD,
-                        silenceWindowsBeforeSkip = VAD_SILENCE_WINDOWS_BEFORE_SKIP,
-                        preWindowLookbackMs = VAD_PRE_WINDOW_LOOKBACK_MS,
-                    )
-                }
+                // stage-1 only (no voice match).
                 val smoother = ScoreSmoother(
                     windowSize = SMOOTHER_WINDOW,
                     enterThreshold = SMOOTHER_ENTER_THRESHOLD,
@@ -348,7 +323,6 @@ class WakeWordService : Service() {
                     WakeWordEngine(
                         context = this@WakeWordService,
                         smoother = smoother,
-                        vad = vad,
                         verifier = verifier,
                         baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
                         adaptiveThreshold = null,  // Phase C, out of scope
@@ -357,7 +331,7 @@ class WakeWordService : Service() {
                     Log.e(TAG, "WakeWordEngine init failed — stopping detection", e)
                     return@launch
                 }
-                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD${if (verifier != null) " + CAM++" else ""})")
+                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier${if (verifier != null) " + CAM++" else ""})")
 
                 // Detection events flow → activity launch + telemetry upload (outcome=fired)
                 detectionEventsJob = launch {
@@ -782,12 +756,6 @@ class WakeWordService : Service() {
             Log.w(TAG, "Error closing WakeWordEngine", e)
         }
         try {
-            sileroScorer?.close()
-            sileroScorer = null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing Silero scorer", e)
-        }
-        try {
             camPlusEmbedder?.close()
             camPlusEmbedder = null
         } catch (e: Exception) {
@@ -893,10 +861,15 @@ class WakeWordService : Service() {
      */
     private fun writeFunnelFile() {
         try {
-            val funnel = engine?.gateFunnel ?: return
+            val eng = engine ?: return
             val dir = getExternalFilesDir(null) ?: return
             val label = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
-            File(dir, "wake_word_funnel.txt").writeText(funnel.format(label))
+            // Funnel + inference latency (latency must stay < interval, else cadence can't keep up).
+            val lat = eng.snapshot()
+            val latLine = "inference latency ms: p50=${lat["latency_ms_p50"]} " +
+                "p95=${lat["latency_ms_p95"]} p99=${lat["latency_ms_p99"]} " +
+                "(interval ~${eng.inferenceIntervalFrames * 80} ms)"
+            File(dir, "wake_word_funnel.txt").writeText(eng.gateFunnel.format(label) + "\n" + latLine + "\n")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write funnel file", e)
         }

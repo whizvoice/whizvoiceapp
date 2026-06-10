@@ -73,13 +73,6 @@ class WakeWordPreferences @Inject constructor(
         prefs.edit().putInt(KEY_VERIFIER_THRESHOLD_BITS, threshold.toBits()).apply()
     }
 
-    /** Silero VAD gate toggle. Defaults ON (battery savings). */
-    fun isVadEnabledOnce(): Boolean = prefs.getBoolean(KEY_VAD_ENABLED, true)
-
-    fun setVadEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_VAD_ENABLED, enabled).apply()
-    }
-
     // --- Wake word detection metrics (Welford's online algorithm) ---
 
     private fun metricsKey(phrase: String, field: String): String =
@@ -320,7 +313,6 @@ class WakeWordPreferences @Inject constructor(
         private const val KEY_VOICE_MATCH_ENABLED = "voice_match_enabled"
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
-        private const val KEY_VAD_ENABLED = "vad_enabled"
         // One-time metrics-reset guard. Bump to force another reset after a scoring change.
         private const val KEY_METRICS_RESET_VERSION = "metrics_reset_version"
         // v2 (2026-06-08): wipe the pre-funnel detection stats so the new per-gate funnel

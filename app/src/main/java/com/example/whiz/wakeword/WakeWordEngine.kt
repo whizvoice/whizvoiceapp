@@ -8,7 +8,6 @@ import android.util.Log
 import com.example.whiz.wakeword.detection.AdaptiveThresholdController
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
-import com.example.whiz.wakeword.detection.VadGate
 import com.example.whiz.wakeword.metrics.GateFunnel
 import com.example.whiz.wakeword.metrics.MetricsSource
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -58,7 +57,6 @@ class WakeWordEngine(
     context: Context,
     classifierAsset: String = DEFAULT_CLASSIFIER_ASSET,
     private val smoother: ScoreSmoother? = null,
-    private val vad: VadGate? = null,
     private val verifier: SpeakerVerifier? = null,
     private val baseStage1Threshold: Float = 0f,
     private val adaptiveThreshold: AdaptiveThresholdController? = null,
@@ -125,12 +123,18 @@ class WakeWordEngine(
         get() = debouncer.framesRequired
         set(value) { debouncer.framesRequired = value }
 
-    var inferenceIntervalFrames: Int = 4  // ~320 ms at 80 ms/frame
+    // 2 frames = ~160 ms. Halved from 4 (~320 ms): the classifier is sharply
+    // alignment-sensitive (a "Hey Whiz" can swing ~0.09–0.12 across 2 s-window phases),
+    // so a 320 ms tick grid aliases past the narrow high-scoring window and misses real
+    // utterances. Offline sweep on bug-report misses (1367/1368/1373): worst-case
+    // detection 8/12 → 10/12 attempts at 160 ms. 80 ms recovers one more but costs 4×.
+    // Safe as long as one inference (~26 ONNX calls) stays < 160 ms on target hardware.
+    var inferenceIntervalFrames: Int = 2  // ~160 ms at 80 ms/frame
 
     /**
      * Capture-only mode. When false, [feed] still writes PCM to the ring buffer and
      * advances the sample/cadence counters (so the 2 s buffer stays temporally
-     * continuous), but runs no VAD, no mel→embedding→classifier inference, and emits
+     * continuous), but runs no mel→embedding→classifier inference, and emits
      * no detections or raw scores. Flipping back to true resumes detection on the next
      * [inferenceIntervalFrames] tick with NO buffer-refill deadzone — the buffer already
      * holds the most recent real audio. Used to suspend wake-word detection while the
@@ -143,9 +147,6 @@ class WakeWordEngine(
     private var writePos = 0
     private var totalSamplesWritten = 0L
     private var framesSinceLastInference = 0
-
-    private val vadAccum = FloatArray(VAD_WINDOW_SAMPLES)
-    private var vadFill = 0
 
     init {
         melSession = loadModel(context, "melspectrogram.onnx")
@@ -176,22 +177,12 @@ class WakeWordEngine(
         totalSamplesWritten += samples.size
         framesSinceLastInference++
 
-        // Capture-only: keep the buffer warm, skip all VAD / inference / emission.
+        // Capture-only: keep the buffer warm, skip all inference / emission.
         if (!inferenceEnabled) return
-
-        vad?.let { pumpVad(samples, nowMs, it) }
 
         if (totalSamplesWritten < AUDIO_BUFFER_SAMPLES) return
         if (framesSinceLastInference < inferenceIntervalFrames) return
         framesSinceLastInference = 0
-
-        if (vad?.shouldSkipInference(atMs = nowMs) == true) {
-            vad.maybeRecordSkip(atMs = nowMs)
-            gateFunnel.recordSkip()
-            vadSkipCount++
-            if (vadSkipCount % 25L == 1L) Log.d(TAG, "vad skipped inference (cumulative=$vadSkipCount)")
-            return
-        }
 
         val ordered = FloatArray(AUDIO_BUFFER_SAMPLES)
         for (i in 0 until AUDIO_BUFFER_SAMPLES) {
@@ -215,11 +206,6 @@ class WakeWordEngine(
         if (smoother != null) {
             adaptiveThreshold?.let { ctrl ->
                 smoother.setEnterThreshold(ctrl.effectiveThreshold(baseStage1Threshold))
-            }
-            if (vad != null && !vad.allowsFireAt(atMs = nowMs)) {
-                if (score >= 0.10f) Log.d(TAG, "vad veto fire @ score=${"%.3f".format(score)}")
-                gateFunnel.recordVeto()
-                return
             }
             if (smoother.onScore(score, atMs = nowMs)) {
                 gateFunnel.recordFire()
@@ -253,21 +239,6 @@ class WakeWordEngine(
     }
 
     private var inferenceCount: Long = 0L
-    private var vadSkipCount: Long = 0L
-
-    private fun pumpVad(samples: FloatArray, sampleStartMs: Long, gate: VadGate) {
-        var srcIdx = 0
-        while (srcIdx < samples.size) {
-            val take = minOf(VAD_WINDOW_SAMPLES - vadFill, samples.size - srcIdx)
-            System.arraycopy(samples, srcIdx, vadAccum, vadFill, take)
-            vadFill += take; srcIdx += take
-            if (vadFill == VAD_WINDOW_SAMPLES) {
-                val windowMs = sampleStartMs + ((srcIdx - VAD_WINDOW_SAMPLES) * 1000L) / SAMPLE_RATE_HZ
-                gate.onWindow(vadAccum.copyOf(), atMs = windowMs)
-                vadFill = 0
-            }
-        }
-    }
 
     /** Snapshot the current 2 s ring buffer as PCM16, chronologically ordered. */
     fun captureBuffer(): ShortArray {
@@ -285,7 +256,6 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = 0L
         framesSinceLastInference = 0
-        vadFill = 0
         debouncer.reset()
         smoother?.reset()
     }
@@ -301,7 +271,6 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = AUDIO_BUFFER_SAMPLES.toLong()
         framesSinceLastInference = 0
-        vadFill = 0
         debouncer.reset()
         smoother?.reset()
     }
@@ -414,8 +383,5 @@ class WakeWordEngine(
         // Rolling window of inference-latency samples for p50/p95/p99.
         // 256 ≈ 80 s of history at default inferenceIntervalFrames cadence (~320 ms).
         private const val LATENCY_WINDOW = 256
-
-        // Silero v6 fixed PCM-frame size (32 ms @ 16 kHz).
-        private const val VAD_WINDOW_SAMPLES = 512
     }
 }
