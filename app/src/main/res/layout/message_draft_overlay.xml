@@ -26,7 +26,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="WhizVoice Draft"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:textColor="?attr/colorOnSecondaryContainer"
             android:textStyle="bold"
             android:layout_marginBottom="4dp"/>
@@ -43,7 +43,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="?attr/colorOnSecondaryContainer"
-                android:textSize="16sp"
+                android:textSize="20sp"
                 android:lineSpacingMultiplier="1.2"/>
 
         </ScrollView>
