@@ -108,7 +108,10 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val message: String? = null,
         val error: String? = null,
-        val overlayShown: Boolean = false
+        val overlayShown: Boolean = false,
+        // Text actually rendered in the overlay (read back from the view), or null
+        // if the overlay never became visible.
+        val displayedText: String? = null
     )
 
     data class SendResult(
@@ -8491,11 +8494,24 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
         updatedRoot.recycle()
 
+        // startService is async, so `overlayStarted` only means the intent was sent.
+        // Wait for the service to confirm the overlay view is actually attached and
+        // visible (set in a post{} after addView), then report the real outcome and
+        // the text that's actually on screen.
+        val overlayVisible = overlayStarted && waitForCondition(maxWaitMs = 1500) {
+            MessageDraftOverlayService.overlayVisible
+        }
+
         return DraftResult(
-            success = overlayStarted,
+            success = overlayVisible,
             message = args.message,
-            overlayShown = overlayStarted,
-            error = if (!overlayStarted) "Failed to show draft overlay" else null,
+            overlayShown = overlayVisible,
+            displayedText = if (overlayVisible) MessageDraftOverlayService.displayedDraftText else null,
+            error = when {
+                !overlayStarted -> "Failed to show draft overlay"
+                !overlayVisible -> "Overlay created but not visible on screen"
+                else -> null
+            },
         )
     }
 

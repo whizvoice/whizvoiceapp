@@ -638,8 +638,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                // Add reminder for the LLM to wait for user confirmation
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_whatsapp_send_message; tell the user the draft could not be displayed."
+                })
             }
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -755,8 +760,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                // Add reminder for the LLM to wait for user confirmation
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_sms_send_message; tell the user the draft could not be displayed."
+                })
             }
 
             Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -831,7 +841,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_send_message; tell the user the draft could not be displayed."
+                })
             }
 
             Log.i(TAG, "[TOOL_RESULT] Generic draft message result for requestId=$requestId: ${resultJson.toString(2)}")
