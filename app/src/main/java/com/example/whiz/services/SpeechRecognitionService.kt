@@ -665,12 +665,9 @@ class SpeechRecognitionService @Inject constructor(
                     // different downstream use (merge-vs-pick-longer in onResults); here we're just
                     // picking which partial to deliver, so a moderate reset is worth catching too.
                     val currentPartial = _transcriptionState.value
-                    val partialToDeliver = when {
-                        currentPartial.isBlank() -> peakPartialText.trim()
-                        // peakPartialText.length >= 1.5 * currentPartial.length, in integer arithmetic
-                        peakPartialText.length * 2 >= currentPartial.length * 3 -> peakPartialText.trim()
-                        else -> currentPartial
-                    }
+                    // Deliver the latest partial, but prefer the peak partial if it's >= 1.5x longer
+                    // (head-drop after a buffer reset). Shared rule — see preferPeakIfDominant().
+                    val partialToDeliver = preferPeakIfDominant(currentPartial, peakPartialText)
                     if (partialToDeliver.isNotBlank() && !manualStopInProgress) {
                         Log.d(TAG, "[VOICE_TRACE] onError DELIVER_PARTIAL_ON_TERMINAL_ERROR text='$partialToDeliver' (current='$currentPartial', peak='$peakPartialText') error=$error")
                         try {
@@ -712,6 +709,15 @@ class SpeechRecognitionService @Inject constructor(
                     savedPartialForConcatenation = ""
                     savedPartialIsAfterFinalResult = false
                     savedPartialTimeoutJob?.cancel()
+                }
+
+                // Shared finalization rule: if the longest partial seen this session is >= 1.5x
+                // longer than the final, the final likely dropped the head of the utterance — prefer
+                // the peak. Mirrors onSegmentResults / onError via preferPeakIfDominant().
+                val finalBeforePeakCheck = finalText
+                finalText = preferPeakIfDominant(finalText, peakPartialText)
+                if (finalText != finalBeforePeakCheck.trim()) {
+                    Log.w(TAG, "[DEBUG] 🔝 peak partial '$finalText' overrode shorter final '$finalBeforePeakCheck'")
                 }
 
                 Log.d(TAG, "[DEBUG] Final transcription: '$finalText'")
@@ -863,7 +869,14 @@ class SpeechRecognitionService @Inject constructor(
                         ""
                     }
                 } else {
-                    segmentText
+                    // Non-blank final: prefer the peak partial only if it's >= 1.5x longer, i.e. the
+                    // final dropped the head of the utterance after a partial-buffer reset. Shared
+                    // rule with onResults / onError — see preferPeakIfDominant().
+                    val chosen = preferPeakIfDominant(segmentText, peakPartialText)
+                    if (chosen != segmentText.trim()) {
+                        Log.w(TAG, "🔄 SEGMENTED: peak partial '$chosen' overrode shorter final '$segmentText' (peak: $peakPartialLength)")
+                    }
+                    chosen
                 }
 
                 if (effectiveText.isNotBlank()) {
@@ -938,6 +951,30 @@ class SpeechRecognitionService @Inject constructor(
         }
     }
 
+
+    /**
+     * Shared finalization rule for all three result paths (onResults / onSegmentResults / onError)
+     * so they can't drift apart again.
+     *
+     * `authoritative` is the recognizer's preferred text for this utterance — a final result, or the
+     * latest partial on a terminal error. We keep it, because it's normally the most-processed (best)
+     * hypothesis. The ONE exception: if the longest partial we saw this segment (`peakText`) is
+     * >= 1.5x longer than `authoritative`, the authoritative text almost certainly dropped the head
+     * of the utterance after a partial-buffer reset (e.g. partials reached "turn off the bedroom
+     * lights" but the final came back "lights") — so we prefer the peak. On a blank/absent
+     * authoritative result we fall back to the peak outright.
+     *
+     * The 1.5x threshold matches the onError path (loosened from 2x in ed640f91); kept as-is to avoid
+     * regressing normal self-corrections where the final is genuinely the better, shorter hypothesis.
+     */
+    private fun preferPeakIfDominant(authoritative: String, peakText: String): String {
+        return when {
+            authoritative.isBlank() -> peakText.trim()
+            // peakText.length >= 1.5 * authoritative.length, in integer arithmetic
+            peakText.length * 2 >= authoritative.length * 3 -> peakText.trim()
+            else -> authoritative.trim()
+        }
+    }
 
     private fun finalizeTranscription(context: String) {
         val finalText = _transcriptionState.value.trim()
