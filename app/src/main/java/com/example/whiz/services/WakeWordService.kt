@@ -367,6 +367,18 @@ class WakeWordService : Service() {
                     }
                 }
 
+                // Near-misses → telemetry upload only. Captures utterances that scored in the
+                // near-miss band but never fired — the miss audio that previously left no trace.
+                launch {
+                    engine?.nearMisses?.collect { score ->
+                        Log.d(TAG, "Near-miss: score=$score — uploading telemetry")
+                        captureDetectionAudio(
+                            "hey_whiz", score.toDouble(), accepted = false, rawVoskJson = "{}",
+                            classifierScore = score.toDouble(), outcome = "near_miss"
+                        )
+                    }
+                }
+
                 val bufferSize = maxOf(
                     AudioRecord.getMinBufferSize(
                         SAMPLE_RATE,

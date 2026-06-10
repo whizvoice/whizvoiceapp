@@ -6,6 +6,7 @@ import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.util.Log
 import com.example.whiz.wakeword.detection.AdaptiveThresholdController
+import com.example.whiz.wakeword.detection.EnergyGate
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
 import com.example.whiz.wakeword.metrics.GateFunnel
@@ -113,6 +114,15 @@ class WakeWordEngine(
     /** Smoother fires rejected by the speaker verifier — for telemetry upload, not action. */
     val rejectedDetections: SharedFlow<RejectedDetection> = _rejectedDetections.asSharedFlow()
 
+    private val _nearMisses =
+        MutableSharedFlow<Float>(replay = 0, extraBufferCapacity = 8)
+    /** Classifier peaked in [NEAR_MISS_FLOOR, fire) but never fired — for miss telemetry. */
+    val nearMisses: SharedFlow<Float> = _nearMisses.asSharedFlow()
+
+    /** RMS-energy silence gate — cheap battery skip (replaces the removed Silero VAD). */
+    private val energyGate = EnergyGate(ENERGY_RMS_THRESHOLD, ENERGY_SILENCE_FRAMES_BEFORE_SKIP)
+    private var lastNearMissMs: Long = Long.MIN_VALUE
+
     private val debouncer = Debouncer(threshold = 0.5f, framesRequired = 3)
 
     override var threshold: Float
@@ -180,9 +190,18 @@ class WakeWordEngine(
         // Capture-only: keep the buffer warm, skip all inference / emission.
         if (!inferenceEnabled) return
 
+        // Track per-frame audio energy on every frame so the silence counter stays accurate.
+        energyGate.onFrame(frameRms(samples))
+
         if (totalSamplesWritten < AUDIO_BUFFER_SAMPLES) return
         if (framesSinceLastInference < inferenceIntervalFrames) return
         framesSinceLastInference = 0
+
+        // Cheap battery skip: don't run the cascade through sustained near-silence.
+        if (energyGate.shouldSkip()) {
+            gateFunnel.recordSkip()
+            return
+        }
 
         val ordered = FloatArray(AUDIO_BUFFER_SAMPLES)
         for (i in 0 until AUDIO_BUFFER_SAMPLES) {
@@ -201,6 +220,16 @@ class WakeWordEngine(
         if (score >= 0.10f || inferenceCount % 30L == 0L) {
             val thr = smoother?.let { adaptiveThreshold?.effectiveThreshold(baseStage1Threshold) ?: baseStage1Threshold } ?: debouncer.threshold
             Log.d(TAG, "inf #$inferenceCount score=${"%.3f".format(score)} thr=${"%.3f".format(thr)}")
+        }
+
+        // Near-miss telemetry: classifier peaked below the fire threshold but high enough to
+        // likely be a missed wake word. Debounced to ~one per utterance. (fire scores >=
+        // baseStage1Threshold are handled by the smoother below, so they're excluded here.)
+        if (score >= NEAR_MISS_FLOOR && score < baseStage1Threshold &&
+            nowMs - lastNearMissMs >= NEAR_MISS_REFRACTORY_MS) {
+            lastNearMissMs = nowMs
+            Log.d(TAG, "near-miss @ score=${"%.3f".format(score)}")
+            _nearMisses.tryEmit(score)
         }
 
         if (smoother != null) {
@@ -240,6 +269,13 @@ class WakeWordEngine(
 
     private var inferenceCount: Long = 0L
 
+    /** RMS of one PCM frame (float32 in [-1,1]) for the energy silence gate. */
+    private fun frameRms(samples: FloatArray): Float {
+        var sumSq = 0.0
+        for (s in samples) sumSq += s.toDouble() * s
+        return kotlin.math.sqrt(sumSq / samples.size).toFloat()
+    }
+
     /** Snapshot the current 2 s ring buffer as PCM16, chronologically ordered. */
     fun captureBuffer(): ShortArray {
         val out = ShortArray(AUDIO_BUFFER_SAMPLES)
@@ -256,6 +292,7 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = 0L
         framesSinceLastInference = 0
+        energyGate.reset()
         debouncer.reset()
         smoother?.reset()
     }
@@ -271,6 +308,7 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = AUDIO_BUFFER_SAMPLES.toLong()
         framesSinceLastInference = 0
+        energyGate.reset()
         debouncer.reset()
         smoother?.reset()
     }
@@ -383,5 +421,18 @@ class WakeWordEngine(
         // Rolling window of inference-latency samples for p50/p95/p99.
         // 256 ≈ 80 s of history at default inferenceIntervalFrames cadence (~320 ms).
         private const val LATENCY_WINDOW = 256
+
+        // RMS-energy silence gate (replaces the Silero VAD skip). Measured 2026-06-09 on
+        // Pixel 8: genuine "Hey Whiz" peaks at >=0.10 RMS, a quiet room is ~0.005 — so 0.02
+        // skips an idle room (~4x above silence) but never a wake word (~5x below speech).
+        // Skip only after ~1.6 s of sustained sub-threshold audio (20 frames @ 80 ms).
+        private const val ENERGY_RMS_THRESHOLD = 0.02f
+        private const val ENERGY_SILENCE_FRAMES_BEFORE_SKIP = 20
+
+        // Near-miss telemetry band: classifier peaked in [floor, fire-threshold) but never
+        // fired. Floor 0.5 catches genuine weak utterances (observed lowest ~0.65) while
+        // excluding non-matches (other speaker ~0.07). Debounced to one per ~1.5 s.
+        private const val NEAR_MISS_FLOOR = 0.5f
+        private const val NEAR_MISS_REFRACTORY_MS = 1500L
     }
 }
