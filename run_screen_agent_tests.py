@@ -143,7 +143,7 @@ def start_logcat():
     # Start logcat and capture output (filtered to WhizVoice app to avoid buffer overflow)
     logcat_file = os.path.join(output_dir, 'screen_agent_logcat.log')
     _logcat_process = subprocess.Popen(
-        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*', 'SpeechRecognition:*', 'AudioPipeRecorder:*'],
+        ['adb', 'logcat', '-s', 'WhizVoice:*', 'ScreenAgentTools:*', 'WhizAccessibilityService:*', 'WhizRepository:*', 'ChatViewModel:*', 'WebSocketManager:*', 'SpeechRecognition:*', 'AudioPipeRecorder:*', 'AudioFocusManager:*', 'VoiceManager:*'],
         stdout=open(logcat_file, 'w'),
         stderr=subprocess.STDOUT
     )
@@ -158,6 +158,96 @@ def stop_logcat():
         _logcat_process.wait()
         _logcat_process = None
 
+
+def get_audio_focus_commands():
+    """Parse the focus-command history from `dumpsys audio`.
+
+    The "focus commands as seen by MediaFocusControl" section is a persistent ring buffer of
+    every requestAudioFocus()/abandonAudioFocus() the system has processed, with a timestamp,
+    the calling package, and (for requests) the AudioAttributes usage. This is a stable,
+    version-independent record of who held audio focus and when — much more reliable than
+    scraping a transient app log line.
+
+    Returns a list of dicts ordered oldest->newest: {'time','action','pack','usage','raw'}.
+    """
+    import re
+    out = subprocess.run(['adb', 'shell', 'dumpsys', 'audio'], capture_output=True, text=True).stdout
+    pattern = re.compile(
+        r'(\d\d-\d\d \d\d:\d\d:\d\d:\d\d\d)\s+(requestAudioFocus|abandonAudioFocus)\(\).*?callingPack=(\S+)'
+    )
+    usage_pattern = re.compile(r'AA=(\S+?)/')
+    commands = []
+    for line in out.splitlines():
+        m = pattern.search(line)
+        if not m:
+            continue
+        usage_m = usage_pattern.search(line)
+        commands.append({
+            'time': m.group(1),
+            'action': 'request' if m.group(2) == 'requestAudioFocus' else 'abandon',
+            'pack': m.group(3),
+            'usage': usage_m.group(1) if usage_m else None,
+            'raw': line.strip(),
+        })
+    return commands
+
+
+def assert_whiz_reasserts_ducking_over_maps(tester, step_name):
+    """Audio-ducking regression check (real Google Maps = a genuinely different uid).
+
+    While Whiz is in a continuous-listening session it holds ducking focus
+    (AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK). When Maps voice navigation grabs its own MAY_DUCK focus,
+    Android silently auto-ducks Whiz — and with the default willPauseWhenDucked(false) it does NOT
+    call Whiz's listener, so Whiz never re-requests and is left softer than (ducked under) Maps.
+
+    We detect the bug by the ABSENCE of the focus-loss callback. The fix
+    (setWillPauseWhenDucked(true)) makes Android deliver AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK to Whiz's
+    listener (logged by AudioFocusManager); without it that callback never fires. We deliberately do
+    NOT key off Whiz re-issuing requestAudioFocus(): Whiz requests ducking constantly during normal
+    voice activity, so such a request lands near a Maps grab by coincidence even in the buggy state
+    (observed: Maps grab at 22:19:02 -> unrelated Whiz request at 22:19:05).
+
+    Requires Maps to be actively giving turn-by-turn voice navigation during the monitoring window
+    (that is when it grabs MAY_DUCK focus). The caller must have started driving navigation first.
+    """
+    maps_pkg = 'com.google.android.apps.maps'
+
+    def maps_nav_grabs():
+        return [c for c in get_audio_focus_commands()
+                if c['pack'] == maps_pkg and (c['usage'] or '').find('NAVIGATION_GUIDANCE') >= 0]
+
+    grabs_before = {c['raw'] for c in maps_nav_grabs()}
+
+    # The unambiguous fixed-vs-buggy signal: does Whiz's listener actually receive the duck callback?
+    # wait_for_logcat clears the buffer and watches live, so a match means the callback fired DURING
+    # active Maps navigation. In the buggy state it never fires -> timeout.
+    result = tester.wait_for_logcat(
+        "AudioFocusManager",
+        "AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK",
+        timeout=45.0,
+        clear_first=True,
+    )
+
+    if result.get('matched'):
+        print(f"✅ Audio ducking OK: Whiz received the duck callback and can re-assert "
+              f"({result.get('line')})")
+        return
+
+    # No callback. Distinguish a real regression from "Maps wasn't actually navigating".
+    new_grabs = [c for c in maps_nav_grabs() if c['raw'] not in grabs_before]
+    tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", step_name)
+    if not new_grabs:
+        assert False, (
+            "Could not evaluate audio ducking: Google Maps did not grab NAVIGATION_GUIDANCE audio "
+            "focus during the monitoring window, so turn-by-turn voice navigation wasn't active."
+        )
+    assert False, (
+        "AUDIO DUCKING REGRESSION: Google Maps grabbed navigation audio focus "
+        f"{len(new_grabs)} time(s) during the window, but Whiz never received an "
+        "AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK callback — Android auto-ducked it silently, so Whiz is "
+        "left ducked UNDER Maps (softer than Maps) and cannot re-assert ducking. "
+        "Fix: setWillPauseWhenDucked(true) on the AudioFocusRequest."
+    )
 
 
 def check_on_new_chat_screen(tester):
@@ -305,7 +395,10 @@ def login_if_needed(tester):
 
         # Click "Sign in with Google" button
         tester.tap(500, 1450)
-        time.sleep(2)
+        # Wait for the Google account picker to appear. On a fresh reinstall this is the
+        # first-time "Choose an account / Google will share your name…" consent screen, which
+        # can take several seconds to render — a short wait makes the account tap below miss it.
+        time.sleep(6)
 
         # Click to log in as REDACTED_TEST_EMAIL
         tester.tap(500, 1300)
@@ -1062,6 +1155,14 @@ def test_google_maps_directions(tester):
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show {store_name} directions"
+
+        # --- Audio ducking regression check ---
+        # The agent's get_directions starts turn-by-turn DRIVING navigation, so Maps is now speaking
+        # guidance and repeatedly grabbing AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK focus. Whiz is in a
+        # continuous-listening session — the exact field condition where Whiz gets ducked UNDER Maps.
+        # Anchored here (the reliable driving step) rather than the brittle transit step below, which
+        # never starts voice navigation. Verify Whiz is notified of the duck (and can re-assert).
+        assert_whiz_reasserts_ducking_over_maps(tester, "ducking_check")
 
         # Send a voice transcription to change destination to secondary address
         # Note: Using a destination that's far enough that navigation won't complete immediately
