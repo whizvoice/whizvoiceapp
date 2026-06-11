@@ -2537,9 +2537,13 @@ class ScreenAgentTools @Inject constructor(
                         if (searchResultRootNode != null) {
                             Log.d(TAG, "Looking for search results to click...")
 
-                            // Find the search results RecyclerView
-                            // Try both IDs - zero_state_search_chat_results is used in modern Google Messages
+                            // Find the search results container.
+                            // Newer Google Messages renders results into a ListView
+                            // (zero_state_search_list_view); modern builds used a
+                            // zero_state_search_chat_results RecyclerView; older builds
+                            // used zero_state_search_results. Try them in that order.
                             val searchResultsIds = listOf(
+                                "com.google.android.apps.messaging:id/zero_state_search_list_view",
                                 "com.google.android.apps.messaging:id/zero_state_search_chat_results",
                                 "com.google.android.apps.messaging:id/zero_state_search_results"
                             )
@@ -2602,10 +2606,17 @@ class ScreenAgentTools @Inject constructor(
                                                 stillInSearch.forEach { it.recycle() }
 
                                                 // Find search results again and click
-                                                // After first click, results may be in zero_state_search_chat_results instead
+                                                // After first click, results may be in the
+                                                // newer list view or the chat_results container
                                                 var searchResultsAgain = validationRootNode.findAccessibilityNodeInfosByViewId(
-                                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                                    "com.google.android.apps.messaging:id/zero_state_search_list_view"
                                                 )
+
+                                                if (searchResultsAgain == null || searchResultsAgain.isEmpty()) {
+                                                    searchResultsAgain = validationRootNode.findAccessibilityNodeInfosByViewId(
+                                                        "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+                                                    )
+                                                }
 
                                                 if (searchResultsAgain == null || searchResultsAgain.isEmpty()) {
                                                     // Try the original results container
@@ -3371,6 +3382,31 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
 
+    /**
+     * Checks whether SMS search results have appeared. Handles multiple Google Messages
+     * versions: older builds render results into the `zero_state_search_chat_results`
+     * RecyclerView, while newer builds use a `zero_state_search_list_view` ListView. For
+     * the ListView we require at least one child so an empty (no-results) list — which is
+     * always present in the tree — doesn't register as "results appeared".
+     */
+    private fun smsSearchResultsAppeared(root: AccessibilityNodeInfo): Boolean {
+        val chatResults = root.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
+        )
+        if (chatResults != null && chatResults.isNotEmpty()) {
+            chatResults.forEach { it.recycle() }
+            return true
+        }
+        chatResults?.forEach { it.recycle() }
+
+        val listView = root.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.messaging:id/zero_state_search_list_view"
+        )
+        val hasListResults = listView != null && listView.any { it.childCount > 0 }
+        listView?.forEach { it.recycle() }
+        return hasListResults
+    }
+
     private suspend fun performSMSSearch(rootNode: AccessibilityNodeInfo, searchQuery: String, accessibilityService: WhizAccessibilityService): Boolean {
         try {
             Log.i(TAG, "Attempting to open SMS search and search for: $searchQuery")
@@ -3502,11 +3538,7 @@ class ScreenAgentTools @Inject constructor(
                         val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
                             val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                             if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
+                                val hasResults = smsSearchResultsAppeared(currentRoot)
                                 currentRoot.recycle()
                                 hasResults
                             } else {
@@ -3530,11 +3562,7 @@ class ScreenAgentTools @Inject constructor(
                                 val resultsAppearedAfterKeycode = waitForCondition(maxWaitMs = 3000) {
                                     val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                                     if (currentRoot != null) {
-                                        val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                        )
-                                        val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                        chatResults?.forEach { it.recycle() }
+                                        val hasResults = smsSearchResultsAppeared(currentRoot)
                                         currentRoot.recycle()
                                         hasResults
                                     } else false
@@ -3601,11 +3629,7 @@ class ScreenAgentTools @Inject constructor(
                         val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
                             val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
                             if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
+                                val hasResults = smsSearchResultsAppeared(currentRoot)
                                 currentRoot.recycle()
                                 hasResults
                             } else {
