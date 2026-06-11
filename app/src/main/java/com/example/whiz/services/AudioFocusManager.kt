@@ -43,7 +43,7 @@ class AudioFocusManager @Inject constructor(
         // (Google Maps nav, YouTube Music — both on STREAM_MUSIC). So while a listening session is
         // active we lower STREAM_MUSIC directly to this fraction of the user's level. Whiz's own TTS
         // is on STREAM_VOICE_CALL (USAGE_VOICE_COMMUNICATION, see TTSManager) so it is unaffected.
-        private const val MEDIA_DUCK_FRACTION = 0.4f
+        private const val MEDIA_DUCK_FRACTION = 0.1f
         private const val DUCK_PREFS_NAME = "audio_focus_ducking"
         private const val KEY_SAVED_MUSIC_VOLUME = "saved_music_volume"
     }

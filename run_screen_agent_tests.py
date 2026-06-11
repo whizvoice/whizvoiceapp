@@ -159,95 +159,48 @@ def stop_logcat():
         _logcat_process = None
 
 
-def get_audio_focus_commands():
-    """Parse the focus-command history from `dumpsys audio`.
-
-    The "focus commands as seen by MediaFocusControl" section is a persistent ring buffer of
-    every requestAudioFocus()/abandonAudioFocus() the system has processed, with a timestamp,
-    the calling package, and (for requests) the AudioAttributes usage. This is a stable,
-    version-independent record of who held audio focus and when — much more reliable than
-    scraping a transient app log line.
-
-    Returns a list of dicts ordered oldest->newest: {'time','action','pack','usage','raw'}.
-    """
+def get_music_stream_volume():
+    """Read the current STREAM_MUSIC (media) volume index from `dumpsys audio`'s STREAM_MUSIC block.
+    Returns an int, or None if it couldn't be parsed."""
     import re
     out = subprocess.run(['adb', 'shell', 'dumpsys', 'audio'], capture_output=True, text=True).stdout
-    pattern = re.compile(
-        r'(\d\d-\d\d \d\d:\d\d:\d\d:\d\d\d)\s+(requestAudioFocus|abandonAudioFocus)\(\).*?callingPack=(\S+)'
-    )
-    usage_pattern = re.compile(r'AA=(\S+?)/')
-    commands = []
-    for line in out.splitlines():
-        m = pattern.search(line)
-        if not m:
-            continue
-        usage_m = usage_pattern.search(line)
-        commands.append({
-            'time': m.group(1),
-            'action': 'request' if m.group(2) == 'requestAudioFocus' else 'abandon',
-            'pack': m.group(3),
-            'usage': usage_m.group(1) if usage_m else None,
-            'raw': line.strip(),
-        })
-    return commands
+    block = re.search(r'- STREAM_MUSIC:(.*?)(?:\n\s*- STREAM|\Z)', out, re.S)
+    if block:
+        m = re.search(r'streamVolume:\s*(\d+)', block.group(1))
+        if m:
+            return int(m.group(1))
+    return None
 
 
-def assert_whiz_reasserts_ducking_over_maps(tester, step_name):
-    """Audio-ducking regression check (real Google Maps = a genuinely different uid).
+def get_music_stream_max():
+    """Read the STREAM_MUSIC max volume index from `dumpsys audio`. Returns an int, or None."""
+    import re
+    out = subprocess.run(['adb', 'shell', 'dumpsys', 'audio'], capture_output=True, text=True).stdout
+    block = re.search(r'- STREAM_MUSIC:(.*?)(?:\n\s*- STREAM|\Z)', out, re.S)
+    if block:
+        m = re.search(r'Max:\s*(\d+)', block.group(1))
+        if m:
+            return int(m.group(1))
+    return None
 
-    While Whiz is in a continuous-listening session it holds ducking focus
-    (AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK). When Maps voice navigation grabs its own MAY_DUCK focus,
-    Android silently auto-ducks Whiz — and with the default willPauseWhenDucked(false) it does NOT
-    call Whiz's listener, so Whiz never re-requests and is left softer than (ducked under) Maps.
 
-    We detect the bug by the ABSENCE of the focus-loss callback. The fix
-    (setWillPauseWhenDucked(true)) makes Android deliver AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK to Whiz's
-    listener (logged by AudioFocusManager); without it that callback never fires. We deliberately do
-    NOT key off Whiz re-issuing requestAudioFocus(): Whiz requests ducking constantly during normal
-    voice activity, so such a request lands near a Maps grab by coincidence even in the buggy state
-    (observed: Maps grab at 22:19:02 -> unrelated Whiz request at 22:19:05).
+def set_music_stream_volume(target, max_steps=40):
+    """Set STREAM_MUSIC to `target` using volume-key events and return the final volume.
 
-    Requires Maps to be actively giving turn-by-turn voice navigation during the monitoring window
-    (that is when it grabs MAY_DUCK focus). The caller must have started driving navigation first.
+    This Pixel has no `media` shell command; on Android 11+ the volume rocker controls STREAM_MUSIC
+    by default, so VOLUME_UP/DOWN keyevents move it. Presses one key at a time and re-reads until it
+    hits the target (handles the first-press-just-shows-slider behavior). If it can't reach target
+    within max_steps (e.g. keys aren't controlling media), the caller can detect it via the return.
     """
-    maps_pkg = 'com.google.android.apps.maps'
-
-    def maps_nav_grabs():
-        return [c for c in get_audio_focus_commands()
-                if c['pack'] == maps_pkg and (c['usage'] or '').find('NAVIGATION_GUIDANCE') >= 0]
-
-    grabs_before = {c['raw'] for c in maps_nav_grabs()}
-
-    # The unambiguous fixed-vs-buggy signal: does Whiz's listener actually receive the duck callback?
-    # wait_for_logcat clears the buffer and watches live, so a match means the callback fired DURING
-    # active Maps navigation. In the buggy state it never fires -> timeout.
-    result = tester.wait_for_logcat(
-        "AudioFocusManager",
-        "AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK",
-        timeout=45.0,
-        clear_first=True,
-    )
-
-    if result.get('matched'):
-        print(f"✅ Audio ducking OK: Whiz received the duck callback and can re-assert "
-              f"({result.get('line')})")
-        return
-
-    # No callback. Distinguish a real regression from "Maps wasn't actually navigating".
-    new_grabs = [c for c in maps_nav_grabs() if c['raw'] not in grabs_before]
-    tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", step_name)
-    if not new_grabs:
-        assert False, (
-            "Could not evaluate audio ducking: Google Maps did not grab NAVIGATION_GUIDANCE audio "
-            "focus during the monitoring window, so turn-by-turn voice navigation wasn't active."
-        )
-    assert False, (
-        "AUDIO DUCKING REGRESSION: Google Maps grabbed navigation audio focus "
-        f"{len(new_grabs)} time(s) during the window, but Whiz never received an "
-        "AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK callback — Android auto-ducked it silently, so Whiz is "
-        "left ducked UNDER Maps (softer than Maps) and cannot re-assert ducking. "
-        "Fix: setWillPauseWhenDucked(true) on the AudioFocusRequest."
-    )
+    import time
+    for _ in range(max_steps):
+        cur = get_music_stream_volume()
+        if cur is None or cur == target:
+            return cur
+        key = 'KEYCODE_VOLUME_UP' if cur < target else 'KEYCODE_VOLUME_DOWN'
+        subprocess.run(['adb', 'shell', 'input', 'keyevent', key], capture_output=True)
+        time.sleep(0.2)
+    return get_music_stream_volume()
 
 
 def check_on_new_chat_screen(tester):
@@ -1156,14 +1109,6 @@ def test_google_maps_directions(tester):
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions", existing_screenshot=screenshot_path)
         assert validation_result, f"Failed to show {store_name} directions"
 
-        # --- Audio ducking regression check ---
-        # The agent's get_directions starts turn-by-turn DRIVING navigation, so Maps is now speaking
-        # guidance and repeatedly grabbing AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK focus. Whiz is in a
-        # continuous-listening session — the exact field condition where Whiz gets ducked UNDER Maps.
-        # Anchored here (the reliable driving step) rather than the brittle transit step below, which
-        # never starts voice navigation. Verify Whiz is notified of the duck (and can re-assert).
-        assert_whiz_reasserts_ducking_over_maps(tester, "ducking_check")
-
         # Send a voice transcription to change destination to secondary address
         # Note: Using a destination that's far enough that navigation won't complete immediately
         subprocess.run([
@@ -1236,6 +1181,87 @@ def test_google_maps_directions(tester):
     finally:
         # Always clean up Google Maps to prevent overlay from interfering with future tests
         cleanup_google_maps()
+
+
+def test_media_stream_partial_duck(tester):
+    """Verify Whiz partial-ducks the media stream (STREAM_MUSIC) while a listening session is active
+    and restores it when the session ends.
+
+    The apps we want quieter so the mic hears the user — YouTube Music, Google Maps nav, all media —
+    play on STREAM_MUSIC. Whiz's own TTS is on STREAM_VOICE_CALL, so lowering STREAM_MUSIC does not
+    touch Whiz's voice (nor alarms/calls). Because those apps ignore focus-based ducking, Whiz lowers
+    STREAM_MUSIC directly to ~40% while listening (AudioFocusManager.applyMediaStreamDuck).
+
+    Session control without a bubble: opening a chat turns continuous listening ON (-> duck),
+    returning to My Chats turns it OFF (-> restore). We read the duck/restore from AudioFocusManager
+    logcat plus the live STREAM_MUSIC index, so the assertions are exact.
+    """
+    import re
+    import time
+
+    # The exact duck fraction (AudioFocusManager.MEDIA_DUCK_FRACTION) is tunable; this test just
+    # verifies a MEANINGFUL duck (at least ~40% reduction) and a clean restore, so it survives tuning.
+    def audiofocus_log():
+        return subprocess.run(['adb', 'logcat', '-d', '-s', 'AudioFocusManager:D'],
+                              capture_output=True, text=True).stdout
+
+    # Start at My Chats — continuous listening is OFF there, so there is no active duck yet.
+    success, error_msg = navigate_to_my_chats(tester, "media_stream_duck")
+    assert success, error_msg
+
+    # Set media volume to 50% so the partial duck is clearly observable regardless of how low the
+    # device was left; the original is restored at the end (finally). No `media` command on this
+    # Pixel, so we drive it with volume keys (which control STREAM_MUSIC on Android 11+).
+    original_volume = get_music_stream_volume()
+    max_volume = get_music_stream_max() or 25
+    target_volume = max(4, round(max_volume * 0.5))
+
+    try:
+        set_to = set_music_stream_volume(target_volume)
+        if set_to != target_volume:
+            pytest.skip(f"Could not set STREAM_MUSIC to {target_volume} via volume keys (got {set_to}); "
+                        "volume keys may not be controlling media on this device.")
+        baseline = target_volume
+        time.sleep(3)  # let the volume slider auto-dismiss before tapping
+
+        # Open a new chat -> continuous listening turns on -> requestDuckingFocus() -> media duck.
+        subprocess.run(['adb', 'logcat', '-c'], check=False)
+        tester.tap(950, 2225)
+        time.sleep(4)
+
+        log = audiofocus_log()
+        m = re.search(r'Media stream ducked: STREAM_MUSIC (\d+) -> (\d+)', log)
+        if not m:
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "media_stream_duck", "no_duck")
+            assert False, ("STREAM_MUSIC was not partial-ducked when the listening session started.\n"
+                           f"AudioFocusManager log tail:\n{log[-2000:]}")
+        orig, ducked = int(m.group(1)), int(m.group(2))
+        assert orig == baseline, f"duck recorded STREAM_MUSIC={orig}, expected {baseline}"
+        assert ducked <= round(orig * 0.6), (
+            f"expected a meaningful media duck (<=60% of {orig}), got {orig} -> {ducked}")
+        live = get_music_stream_volume()
+        assert live == ducked, f"live STREAM_MUSIC is {live}, expected ducked value {ducked}"
+        pct = round(ducked / orig * 100) if orig else 0
+        print(f"✅ Media duck: STREAM_MUSIC {orig} -> {ducked} ({pct}%) while listening")
+
+        # End the session by returning to My Chats (continuous listening turns off) -> restore.
+        subprocess.run(['adb', 'logcat', '-c'], check=False)
+        success, error_msg = navigate_to_my_chats(tester, "media_stream_duck")
+        assert success, error_msg
+        time.sleep(3)
+
+        log2 = audiofocus_log()
+        assert 'Media stream restored: STREAM_MUSIC' in log2, (
+            "STREAM_MUSIC was not restored when the listening session ended.\n"
+            f"AudioFocusManager log tail:\n{log2[-2000:]}")
+        live2 = get_music_stream_volume()
+        assert live2 == baseline, f"STREAM_MUSIC not restored (got {live2}, expected {baseline})"
+        print(f"✅ Media restore: STREAM_MUSIC -> {baseline} after the session ended")
+    finally:
+        # Put the user's original media volume back, whatever happened above.
+        if original_volume is not None:
+            restored = set_music_stream_volume(original_volume)
+            print(f"↩️  Restored device media volume to {restored} (was {original_volume} before test)")
 
 
 def test_sms_draft_message(tester):
@@ -1441,14 +1467,14 @@ def test_sms_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
-        # Click delete button (may vary by SMS app)
-        print("🗑️  Tapping delete button at (800, 200)...")
-        tester.tap(800, 200)
+        # Click "Delete" in the long-press context menu (Google Messages, confirmed coords)
+        print("🗑️  Tapping delete button at (695, 1937)...")
+        tester.tap(695, 1937)
         time.sleep(2)
 
-        # Click confirm delete
-        print("✔️  Confirming delete at (750, 1490)...")
-        tester.tap(750, 1490)
+        # Confirm in the "Delete for everyone" dialog (the Delete button, bottom-right)
+        print("✔️  Confirming delete at (809, 1539)...")
+        tester.tap(809, 1539)
         time.sleep(2)
 
         print("\n========================================")
