@@ -600,6 +600,15 @@ class VoiceManager @Inject constructor(
     }
 
     private fun performDesyncCheck(reason: String) {
+        // Media-duck safety reconcile: if we're no longer in a listening posture (session off,
+        // backgrounded without a bubble, or screen-locked), make sure ducking — and with it the
+        // STREAM_MUSIC partial-duck — is released, even on paths the explicit abandon sites miss.
+        // Reuses the ducking re-request policy, so it does NOT flap on TTS and keeps the duck while a
+        // bubble owns the session. abandonDuckingFocus() is idempotent, so this is cheap/safe.
+        if (audioFocusManager.shouldReRequestDucking?.invoke() != true) {
+            audioFocusManager.abandonDuckingFocus()
+        }
+
         val shouldListen = shouldBeListening()
         val actuallyListening = speechRecognitionService.isListening.value
 
@@ -613,6 +622,10 @@ class VoiceManager @Inject constructor(
                 startContinuousListening()
             } else {
                 Log.w(TAG, "DESYNC_CHECK ($reason): Max retries reached, backing off for ${DESYNC_BACKOFF_MS}ms")
+                // Recognizer is terminally stuck (mic dead but session still enabled): release ducking
+                // and restore STREAM_MUSIC — there is no live mic to protect, so don't leave the user's
+                // media volume lowered. If the recognizer recovers on a later retry it re-ducks.
+                audioFocusManager.abandonDuckingFocus()
                 desyncCheckJob?.cancel()
                 desyncCheckJob = coroutineScope.launch {
                     delay(DESYNC_BACKOFF_MS)
