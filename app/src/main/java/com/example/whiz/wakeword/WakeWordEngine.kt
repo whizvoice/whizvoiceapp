@@ -5,11 +5,11 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.util.Log
-import com.example.whiz.wakeword.audio.SelfEchoGate
 import com.example.whiz.wakeword.detection.AdaptiveThresholdController
+import com.example.whiz.wakeword.detection.EnergyGate
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
-import com.example.whiz.wakeword.detection.VadGate
+import com.example.whiz.wakeword.metrics.GateFunnel
 import com.example.whiz.wakeword.metrics.MetricsSource
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -19,6 +19,17 @@ import java.nio.FloatBuffer
 data class DetectionEvent(val timestampMs: Long, val confidence: Float)
 
 data class TimedDetection(val event: DetectionEvent, val captureTimeMs: Long)
+
+/**
+ * A smoother fire (classifier sustained ≥ threshold) that the speaker verifier REJECTED.
+ * Surfaced for telemetry upload only — it does NOT trigger the wake-word action.
+ */
+data class RejectedDetection(
+    val timestampMs: Long,
+    val confidence: Float,
+    val cosine: Float?,
+    val decision: String,
+)
 
 interface WakeWordEngineApi : AutoCloseable {
     fun feed(samples: FloatArray)
@@ -47,8 +58,6 @@ class WakeWordEngine(
     context: Context,
     classifierAsset: String = DEFAULT_CLASSIFIER_ASSET,
     private val smoother: ScoreSmoother? = null,
-    private val vad: VadGate? = null,
-    private val selfEchoGate: SelfEchoGate? = null,
     private val verifier: SpeakerVerifier? = null,
     private val baseStage1Threshold: Float = 0f,
     private val adaptiveThreshold: AdaptiveThresholdController? = null,
@@ -59,6 +68,9 @@ class WakeWordEngine(
     /** Verdict from the most recent verifier run, or null if verifier didn't run for this fire. */
     @Volatile var lastVerifierVerdict: SpeakerVerifier.Verdict? = null
         private set
+
+    /** Per-gate pass/block counters since construction, for the pullable stats funnel. */
+    val gateFunnel = GateFunnel()
 
     private var inferencesTotal: Long = 0L
     private val latenciesMs = ArrayDeque<Long>(LATENCY_WINDOW)
@@ -97,6 +109,20 @@ class WakeWordEngine(
     /** Raw classifier scores emitted on every inference run (before debouncing). */
     val rawScores: SharedFlow<Float> = _rawScores.asSharedFlow()
 
+    private val _rejectedDetections =
+        MutableSharedFlow<RejectedDetection>(replay = 0, extraBufferCapacity = 16)
+    /** Smoother fires rejected by the speaker verifier — for telemetry upload, not action. */
+    val rejectedDetections: SharedFlow<RejectedDetection> = _rejectedDetections.asSharedFlow()
+
+    private val _nearMisses =
+        MutableSharedFlow<Float>(replay = 0, extraBufferCapacity = 8)
+    /** Classifier peaked in [NEAR_MISS_FLOOR, fire) but never fired — for miss telemetry. */
+    val nearMisses: SharedFlow<Float> = _nearMisses.asSharedFlow()
+
+    /** RMS-energy silence gate — cheap battery skip (replaces the removed Silero VAD). */
+    private val energyGate = EnergyGate(ENERGY_RMS_THRESHOLD, ENERGY_SILENCE_FRAMES_BEFORE_SKIP)
+    private var lastNearMissMs: Long = Long.MIN_VALUE
+
     private val debouncer = Debouncer(threshold = 0.5f, framesRequired = 3)
 
     override var threshold: Float
@@ -107,15 +133,30 @@ class WakeWordEngine(
         get() = debouncer.framesRequired
         set(value) { debouncer.framesRequired = value }
 
-    var inferenceIntervalFrames: Int = 4  // ~320 ms at 80 ms/frame
+    // 2 frames = ~160 ms. Halved from 4 (~320 ms): the classifier is sharply
+    // alignment-sensitive (a "Hey Whiz" can swing ~0.09–0.12 across 2 s-window phases),
+    // so a 320 ms tick grid aliases past the narrow high-scoring window and misses real
+    // utterances. Offline sweep on bug-report misses (1367/1368/1373): worst-case
+    // detection 8/12 → 10/12 attempts at 160 ms. 80 ms recovers one more but costs 4×.
+    // Safe as long as one inference (~26 ONNX calls) stays < 160 ms on target hardware.
+    var inferenceIntervalFrames: Int = 2  // ~160 ms at 80 ms/frame
+
+    /**
+     * Capture-only mode. When false, [feed] still writes PCM to the ring buffer and
+     * advances the sample/cadence counters (so the 2 s buffer stays temporally
+     * continuous), but runs no mel→embedding→classifier inference, and emits
+     * no detections or raw scores. Flipping back to true resumes detection on the next
+     * [inferenceIntervalFrames] tick with NO buffer-refill deadzone — the buffer already
+     * holds the most recent real audio. Used to suspend wake-word detection while the
+     * app's main recognizer is mid-conversation, without releasing the microphone.
+     */
+    @Volatile
+    var inferenceEnabled: Boolean = true
 
     private val ringBuffer = FloatArray(AUDIO_BUFFER_SAMPLES)
     private var writePos = 0
     private var totalSamplesWritten = 0L
     private var framesSinceLastInference = 0
-
-    private val vadAccum = FloatArray(VAD_WINDOW_SAMPLES)
-    private var vadFill = 0
 
     init {
         melSession = loadModel(context, "melspectrogram.onnx")
@@ -135,8 +176,10 @@ class WakeWordEngine(
         }
         val nowMs = System.currentTimeMillis()
 
-        vad?.let { pumpVad(samples, nowMs, it) }
-
+        // Ring-buffer write + counters run in BOTH modes so the 2 s buffer stays
+        // temporally continuous and the inference cadence stays aligned — capture-only
+        // mode keeps filling the buffer with real audio, so re-enabling inference has
+        // no buffer-refill deadzone.
         for (s in samples) {
             ringBuffer[writePos] = s
             writePos = (writePos + 1) % AUDIO_BUFFER_SAMPLES
@@ -144,19 +187,19 @@ class WakeWordEngine(
         totalSamplesWritten += samples.size
         framesSinceLastInference++
 
+        // Capture-only: keep the buffer warm, skip all inference / emission.
+        if (!inferenceEnabled) return
+
+        // Track per-frame audio energy on every frame so the silence counter stays accurate.
+        energyGate.onFrame(frameRms(samples))
+
         if (totalSamplesWritten < AUDIO_BUFFER_SAMPLES) return
         if (framesSinceLastInference < inferenceIntervalFrames) return
         framesSinceLastInference = 0
 
-        if (selfEchoGate?.isBlocking(atMs = nowMs) == true) {
-            selfEchoBlockedCount++
-            if (selfEchoBlockedCount % 25L == 1L) Log.d(TAG, "selfEcho blocked (cumulative=$selfEchoBlockedCount)")
-            return
-        }
-        if (vad?.shouldSkipInference(atMs = nowMs) == true) {
-            vad.maybeRecordSkip(atMs = nowMs)
-            vadSkipCount++
-            if (vadSkipCount % 25L == 1L) Log.d(TAG, "vad skipped inference (cumulative=$vadSkipCount)")
+        // Cheap battery skip: don't run the cascade through sustained near-silence.
+        if (energyGate.shouldSkip()) {
+            gateFunnel.recordSkip()
             return
         }
 
@@ -172,29 +215,47 @@ class WakeWordEngine(
         adaptiveThreshold?.onNonFireScore(score)
 
         // Log every interesting score, plus a periodic heartbeat
+        gateFunnel.recordInference()
         inferenceCount++
         if (score >= 0.10f || inferenceCount % 30L == 0L) {
             val thr = smoother?.let { adaptiveThreshold?.effectiveThreshold(baseStage1Threshold) ?: baseStage1Threshold } ?: debouncer.threshold
             Log.d(TAG, "inf #$inferenceCount score=${"%.3f".format(score)} thr=${"%.3f".format(thr)}")
         }
 
+        // Near-miss telemetry: classifier peaked below the fire threshold but high enough to
+        // likely be a missed wake word. Debounced to ~one per utterance. (fire scores >=
+        // baseStage1Threshold are handled by the smoother below, so they're excluded here.)
+        if (score >= NEAR_MISS_FLOOR && score < baseStage1Threshold &&
+            nowMs - lastNearMissMs >= NEAR_MISS_REFRACTORY_MS) {
+            lastNearMissMs = nowMs
+            Log.d(TAG, "near-miss @ score=${"%.3f".format(score)}")
+            _nearMisses.tryEmit(score)
+        }
+
         if (smoother != null) {
             adaptiveThreshold?.let { ctrl ->
                 smoother.setEnterThreshold(ctrl.effectiveThreshold(baseStage1Threshold))
             }
-            if (vad != null && !vad.allowsFireAt(atMs = nowMs)) {
-                if (score >= 0.10f) Log.d(TAG, "vad veto fire @ score=${"%.3f".format(score)}")
-                return
-            }
             if (smoother.onScore(score, atMs = nowMs)) {
+                gateFunnel.recordFire()
                 Log.d(TAG, "smoother fired @ score=${"%.3f".format(score)} — running verifier")
                 val verdict = verifier?.verify(captureBuffer())
                 lastVerifierVerdict = verdict
                 if (verdict == null || verdict.gatePassed) {
+                    gateFunnel.recordAccept()
                     Log.d(TAG, "DETECTION emit @ score=${"%.3f".format(score)} verdict=$verdict")
                     _detections.tryEmit(DetectionEvent(timestampMs = nowMs, confidence = score))
                 } else {
+                    gateFunnel.recordReject()
                     Log.d(TAG, "verifier rejected @ score=${"%.3f".format(score)} verdict=$verdict")
+                    _rejectedDetections.tryEmit(
+                        RejectedDetection(
+                            timestampMs = nowMs,
+                            confidence = score,
+                            cosine = verdict.score,
+                            decision = verdict.decision,
+                        )
+                    )
                 }
             }
         } else {
@@ -207,21 +268,12 @@ class WakeWordEngine(
     }
 
     private var inferenceCount: Long = 0L
-    private var selfEchoBlockedCount: Long = 0L
-    private var vadSkipCount: Long = 0L
 
-    private fun pumpVad(samples: FloatArray, sampleStartMs: Long, gate: VadGate) {
-        var srcIdx = 0
-        while (srcIdx < samples.size) {
-            val take = minOf(VAD_WINDOW_SAMPLES - vadFill, samples.size - srcIdx)
-            System.arraycopy(samples, srcIdx, vadAccum, vadFill, take)
-            vadFill += take; srcIdx += take
-            if (vadFill == VAD_WINDOW_SAMPLES) {
-                val windowMs = sampleStartMs + ((srcIdx - VAD_WINDOW_SAMPLES) * 1000L) / SAMPLE_RATE_HZ
-                gate.onWindow(vadAccum.copyOf(), atMs = windowMs)
-                vadFill = 0
-            }
-        }
+    /** RMS of one PCM frame (float32 in [-1,1]) for the energy silence gate. */
+    private fun frameRms(samples: FloatArray): Float {
+        var sumSq = 0.0
+        for (s in samples) sumSq += s.toDouble() * s
+        return kotlin.math.sqrt(sumSq / samples.size).toFloat()
     }
 
     /** Snapshot the current 2 s ring buffer as PCM16, chronologically ordered. */
@@ -240,7 +292,7 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = 0L
         framesSinceLastInference = 0
-        vadFill = 0
+        energyGate.reset()
         debouncer.reset()
         smoother?.reset()
     }
@@ -256,7 +308,7 @@ class WakeWordEngine(
         writePos = 0
         totalSamplesWritten = AUDIO_BUFFER_SAMPLES.toLong()
         framesSinceLastInference = 0
-        vadFill = 0
+        energyGate.reset()
         debouncer.reset()
         smoother?.reset()
     }
@@ -370,7 +422,17 @@ class WakeWordEngine(
         // 256 ≈ 80 s of history at default inferenceIntervalFrames cadence (~320 ms).
         private const val LATENCY_WINDOW = 256
 
-        // Silero v6 fixed PCM-frame size (32 ms @ 16 kHz).
-        private const val VAD_WINDOW_SAMPLES = 512
+        // RMS-energy silence gate (replaces the Silero VAD skip). Measured 2026-06-09 on
+        // Pixel 8: genuine "Hey Whiz" peaks at >=0.10 RMS, a quiet room is ~0.005 — so 0.02
+        // skips an idle room (~4x above silence) but never a wake word (~5x below speech).
+        // Skip only after ~1.6 s of sustained sub-threshold audio (20 frames @ 80 ms).
+        private const val ENERGY_RMS_THRESHOLD = 0.02f
+        private const val ENERGY_SILENCE_FRAMES_BEFORE_SKIP = 20
+
+        // Near-miss telemetry band: classifier peaked in [floor, fire-threshold) but never
+        // fired. Floor 0.5 catches genuine weak utterances (observed lowest ~0.65) while
+        // excluding non-matches (other speaker ~0.07). Debounced to one per ~1.5 s.
+        private const val NEAR_MISS_FLOOR = 0.5f
+        private const val NEAR_MISS_REFRACTORY_MS = 1500L
     }
 }

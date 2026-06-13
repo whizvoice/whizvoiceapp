@@ -527,7 +527,8 @@ fun ChatScreen(
     val inputText by viewModel.inputText.collectAsState()
     val isInputFromVoice by viewModel.isInputFromVoice.collectAsState()
     val chatTitle by viewModel.chatTitle.collectAsState()
-    val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching
+    val isResponding by viewModel.isResponding.collectAsState() // Agent thinking/fetching (drives mic buttons)
+    val showThinking by viewModel.showThinking.collectAsState() // Typing indicator: awaiting a reply
     val connectionError by viewModel.connectionError.collectAsState() // General connection errors
     val authErrorMessage by viewModel.showAuthErrorDialog.collectAsState() // For API key/specific auth dialogs
     val navigateToLogin by viewModel.navigateToLogin.collectAsState() // For forced login navigation
@@ -918,7 +919,7 @@ fun ChatScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(if (isSpeaking) Color.Black.copy(alpha = 0.03f) else Color.Transparent),
-                                showTypingIndicator = isResponding && !isSpeaking,
+                                showTypingIndicator = showThinking && !isSpeaking,
                                 onLongPressMessage = ::copyMessageToClipboard
                             )
                         }

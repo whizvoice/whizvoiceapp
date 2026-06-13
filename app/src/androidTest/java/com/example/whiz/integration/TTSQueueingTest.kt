@@ -38,7 +38,8 @@ import android.util.Log
  * - Continue feeding partials for 1 second after assistant message arrives
  * - Stop feeding partials (simulate user finishing)
  * - Verify user's message was sent
- * - Verify queued TTS starts playing
+ * - Verify the queued response is SUPERSEDED (dropped) once the user's utterance is sent
+ *   as a new message (new user input supersedes a prior turn's queued TTS)
  */
 @UninstallModules(AppModule::class)
 @HiltAndroidTest
@@ -337,29 +338,48 @@ class TTSQueueingTest : BaseIntegrationTest() {
             speechRecognitionService.testSendFinalTranscription(finalTranscription)
             Log.d(TAG, "📤 Final transcription sent: '$finalTranscription'")
 
-            // Step 10: Verify TTS starts playing NOW (after user finished)
-            Log.d(TAG, "🔊 Step 10: Verifying queued TTS starts playing...")
+            // Step 10: Verify the queued response is SUPERSEDED (dropped), not played.
+            // Sending the final transcription as a new user message supersedes any TTS queued
+            // from a prior turn — ChatViewModel.sendUserInput clears pendingTTSMessage on a new
+            // user input. The old queued response must NOT start playing.
+            Log.d(TAG, "🔊 Step 10: Verifying queued TTS was superseded (dropped) after user sent message...")
 
-            // Wait for TTS to start with a timeout
-            // Should start quickly since assistant message already arrived during partials
-            var ttsStarted = false
-            val ttsStartTime = System.currentTimeMillis()
-            val ttsTimeout = 7000L // 7 seconds - message usually arrives during partials so TTS starts fast, but slower devices / networks need more headroom
+            // Read the private pendingTTSMessage field via reflection (same approach as
+            // ComposeTestHelper.sendVoiceMessage, which reflects into VoiceManager internals).
+            val pendingTTSField = com.example.whiz.ui.viewmodels.ChatViewModel::class.java
+                .getDeclaredField("pendingTTSMessage")
+                .apply { isAccessible = true }
 
-            while (!ttsStarted && (System.currentTimeMillis() - ttsStartTime) < ttsTimeout) {
-                val isSpeakingNow = capturedViewModel?.isSpeaking?.value ?: false
+            // The supersede (pendingTTSMessage = null) runs synchronously near the top of
+            // sendUserInput, so it always happens. Poll a short window for it to take effect.
+            // The new message's own response needs a server round-trip (~2s+ per logs), so it
+            // cannot legitimately start TTS within this window — any isSpeaking here is the
+            // stale queued response wrongly playing.
+            var superseded = false
+            val supersedeStart = System.currentTimeMillis()
+            val supersedeTimeout = 1500L
+
+            while ((System.currentTimeMillis() - supersedeStart) < supersedeTimeout) {
+                val vm = capturedViewModel
+                val isSpeakingNow = vm?.isSpeaking?.value ?: false
                 if (isSpeakingNow) {
-                    ttsStarted = true
-                    Log.d(TAG, "✅ Queued TTS successfully started playing after user finished (after ${System.currentTimeMillis() - ttsStartTime}ms)")
+                    Log.e(TAG, "❌ FAILURE: queued TTS started playing — it should have been superseded by the new user message")
+                    failWithScreenshot("tts_not_superseded", "Queued TTS played instead of being superseded")
+                    throw AssertionError("Queued TTS should be superseded (dropped) when the user sends a new message")
+                }
+                val pending = vm?.let { pendingTTSField.get(it) as String? }
+                if (pending == null) {
+                    superseded = true
+                    Log.d(TAG, "✅ Queued TTS correctly superseded (pendingTTSMessage cleared) after ${System.currentTimeMillis() - supersedeStart}ms")
                     break
                 }
                 delay(100)
             }
 
-            if (!ttsStarted) {
-                Log.e(TAG, "❌ FAILURE: TTS did not start playing after user finished speaking")
-                failWithScreenshot("tts_not_started_after_finish", "TTS did not start after user finished")
-                throw AssertionError("Queued TTS should start playing after user finishes")
+            if (!superseded) {
+                Log.e(TAG, "❌ FAILURE: queued TTS was not superseded — pendingTTSMessage still set after new user message")
+                failWithScreenshot("tts_not_superseded", "pendingTTSMessage not cleared after new user message")
+                throw AssertionError("Queued TTS should be superseded (pendingTTSMessage cleared) when the user sends a new message")
             }
 
             // Step 9: Verify the user's message was sent

@@ -31,10 +31,16 @@ class AuthApi @Inject constructor(
     /**
      * Authenticate with Google token
      */
-    suspend fun authenticateWithGoogle(googleIdToken: String): Result<AuthResponse> = withContext(Dispatchers.IO) {
+    suspend fun authenticateWithGoogle(
+        googleIdToken: String,
+        serverAuthCode: String? = null
+    ): Result<AuthResponse> = withContext(Dispatchers.IO) {
         try {
             val jsonBody = JSONObject().apply {
                 put("token", googleIdToken)
+                // One-time code the server exchanges for a Google Contacts refresh token.
+                // Only present when the user granted the contacts scopes (interactive sign-in).
+                serverAuthCode?.let { put("server_auth_code", it) }
             }
             
             val requestBody = jsonBody.toString().toRequestBody(JSON)

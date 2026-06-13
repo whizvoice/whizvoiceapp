@@ -24,6 +24,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.common.api.ApiException
 import androidx.health.connect.client.PermissionController
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -93,6 +95,12 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand calendar permission when save calendar event needs WRITE_CALENDAR
         @Volatile
         var requestCalendarPermissionCallback: ((onGranted: () -> Unit, onDenied: () -> Unit) -> Unit)? = null
+
+        // Callback for on-demand Google Contacts consent when a contact lookup needs the
+        // People API. onResult receives the one-time server auth code (to be sent to the
+        // server for a refresh token), or null if the user cancelled / it failed.
+        @Volatile
+        var requestGoogleContactsConsentCallback: ((onResult: (authCode: String?) -> Unit) -> Unit)? = null
 
         // Callback for on-demand Health Connect permission when agent_log_health_data needs a write perm.
         // `permissions` is the set of HC permission strings to request; callback receives the granted subset.
@@ -224,6 +232,30 @@ class MainActivity : ComponentActivity() {
         calendarPermissionOnDenied = null
     }
 
+    // Google Contacts consent launcher (on-demand, triggered by a contact lookup that
+    // needs the People API). Extracts the server auth code from the sign-in result.
+    private var googleContactsConsentOnResult: ((String?) -> Unit)? = null
+
+    private val requestGoogleContactsConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val onResult = googleContactsConsentOnResult
+        googleContactsConsentOnResult = null
+        val authCode = try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                .getResult(ApiException::class.java)
+            Log.d(TAG, "Google Contacts consent result: serverAuthCode present=${account?.serverAuthCode != null}")
+            account?.serverAuthCode
+        } catch (e: ApiException) {
+            Log.w(TAG, "Google Contacts consent cancelled/failed: status=${e.statusCode}")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing Google Contacts consent result", e)
+            null
+        }
+        onResult?.invoke(authCode)
+    }
+
     // Health Connect permission launcher (on-demand, triggered by agent_log_health_data)
     private var healthConnectPermissionOnResult: ((Set<String>) -> Unit)? = null
     private var healthConnectPermissionsToRequest: Set<String> = emptySet()
@@ -287,8 +319,9 @@ class MainActivity : ComponentActivity() {
             }
         )
         inactivityTimer.reset()
-        // onCreate runs before onResume; mark as paused for foreground state until onResume fires.
-        inactivityTimer.pause("foreground")
+        // No foreground pause: screen-off and app-switch time both count toward the
+        // 3-min idle window so the app auto-closes even when the phone is off (bug #1347).
+        // onResume calls checkExpired() to close immediately if the deadline already passed.
 
         lifecycleScope.launch {
             toolExecutor.activeToolCount.collect { count ->
@@ -300,15 +333,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        lifecycleScope.launch {
-            voiceManager.isListening.collect { listening ->
-                if (listening) {
-                    inactivityTimer.resume("mic-off")
-                } else {
-                    inactivityTimer.pause("mic-off")
-                }
-            }
-        }
+        // No "mic-off" gating: auto-close is a pure idle timer measured from the last user
+        // interaction (reset in onUserInteraction), so it also fires while the phone is off
+        // and the mic has stopped (bug #1347). Only "tool" pauses it (don't close mid-tool).
 
         // Enhanced intent logging to detect launch source
         logDetailedIntentInfo(intent, "onCreate")
@@ -434,6 +461,19 @@ class MainActivity : ComponentActivity() {
             calendarPermissionOnGranted = onGranted
             calendarPermissionOnDenied = onDenied
             showCalendarPermissionDialog.value = true
+        }
+
+        // Set up static callback for on-demand Google Contacts consent (used by contact lookup)
+        requestGoogleContactsConsentCallback = { onResult ->
+            Log.d(TAG, "requestGoogleContactsConsentCallback invoked - launching Google Contacts consent")
+            try {
+                googleContactsConsentOnResult = onResult
+                requestGoogleContactsConsentLauncher.launch(authRepository.createContactsConsentIntent())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to launch Google Contacts consent", e)
+                googleContactsConsentOnResult = null
+                onResult(null)
+            }
         }
 
         // Set up static callback for on-demand Health Connect permission (used by agent_log_health_data)
@@ -1147,7 +1187,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         Log.d("MainActivity", "Main Activity Resumed")
         if (::inactivityTimer.isInitialized) {
-            inactivityTimer.resume("foreground")
+            // Screen-off / app-switch time counts as idle; close now if the 3-min
+            // deadline already elapsed while we were away (bug #1347).
+            inactivityTimer.checkExpired()
         }
 
         // Stop bubble overlay when MainActivity comes to foreground
@@ -1206,9 +1248,8 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         Log.d("MainActivity", "Main Activity Paused")
-        if (::inactivityTimer.isInitialized) {
-            inactivityTimer.pause("foreground")
-        }
+        // Intentionally do NOT pause the inactivity timer here: backgrounding (incl.
+        // screen-off) must keep counting toward the 3-min auto-close (bug #1347).
         // Note: App lifecycle is now automatically tracked by ProcessLifecycleOwner in AppLifecycleService
 
         // Check if bubble overlay is active and in TTS mode before stopping TTS
@@ -1258,6 +1299,7 @@ class MainActivity : ComponentActivity() {
         requestUnlockCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
+        requestGoogleContactsConsentCallback = null
         requestHealthConnectPermissionCallback = null
         openHealthAppSettingsCallback = null
 

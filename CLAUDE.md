@@ -28,6 +28,14 @@ To figure out the right UTC timestamps, look at WebSocket log timestamps in logc
 
 When i ask you to run or stream logcat, i mean stream logcat from the connected android device onto a file on the computer. We have a lot of logs and logcat rotates quickly, so just pulling it isn't enough.
 
+- Start the stream BEFORE reproducing the issue; a `-d` dump after the fact loses lines that already rotated out of the ring buffer.
+- A plain `adb logcat > file` redirect block-buffers — the file stays empty until several KB accumulate, so you can't read it incrementally mid-stream. Force line buffering by piping through grep:
+  ```
+  adb logcat -v time -s WakeWordEngine:D WakeWordService:D \
+    | grep --line-buffered -E "." > logfile.log
+  ```
+- Filter by tag (`-s Tag:D ...`) up front to keep the file readable and small.
+
 ### Standard Integration Tests
 
 You can run tests with run_tests_on_debug.sh script from whizvoiceapp . Note that often you will want to run a specific test with the --test option (check --help for more details) and use the option to skip unit tests. e.g.

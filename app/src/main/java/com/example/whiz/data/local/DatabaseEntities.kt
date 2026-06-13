@@ -147,7 +147,7 @@ fun MessageEntity.toMessageCreate(): ApiService.MessageCreate {
 }
 
 // Helper function to parse ISO timestamp to millis
-private fun parseTimestampToMillis(timestamp: String): Long {
+internal fun parseTimestampToMillis(timestamp: String): Long {
     // First, try to parse as epoch millis if it's a number
     if (timestamp.all { it.isDigit() }) {
         try {

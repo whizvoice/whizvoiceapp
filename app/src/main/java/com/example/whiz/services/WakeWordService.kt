@@ -22,12 +22,9 @@ import com.example.whiz.accessibility.AccessibilityManager
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.wakeword.WakeWordEngine
-import com.example.whiz.wakeword.audio.SelfEchoGate
 import com.example.whiz.wakeword.detection.CamPlusOrtEmbedder
 import com.example.whiz.wakeword.detection.ScoreSmoother
-import com.example.whiz.wakeword.detection.SileroOrtScorer
 import com.example.whiz.wakeword.detection.SpeakerVerifier
-import com.example.whiz.wakeword.detection.VadGate
 import com.example.whiz.wakeword.enrollment.EnrolledEmbeddingStore
 import dagger.hilt.android.AndroidEntryPoint
 import okhttp3.MediaType.Companion.toMediaType
@@ -43,6 +40,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -55,7 +55,6 @@ class WakeWordService : Service() {
         private const val ACTION_TOGGLE = "com.example.whiz.ACTION_TOGGLE_WAKE_WORD"
         const val EXTRA_AUDIO_ONLY = "audio_only"
         private const val SAMPLE_RATE = 16000
-        private const val DETECTION_COOLDOWN_MS = 5000L
 
         // Ring buffer: 25 seconds of 16kHz mono 16-bit PCM = 800000 bytes
         private const val RING_BUFFER_SECONDS = 25
@@ -79,14 +78,6 @@ class WakeWordService : Service() {
         private const val SMOOTHER_ENTER_THRESHOLD = 0.92f
         private const val SMOOTHER_HYSTERESIS = 0.20f
         private const val SMOOTHER_REFRACTORY_MS = 1000
-
-        // VAD gate defaults.
-        private const val VAD_SPEECH_THRESHOLD = 0.5f
-        private const val VAD_SILENCE_WINDOWS_BEFORE_SKIP = 50  // ~1.6 s @ 32 ms/window
-        private const val VAD_PRE_WINDOW_LOOKBACK_MS = 2000L
-
-        // Self-echo gate tail (matches prototype Phase A default).
-        private const val SELF_ECHO_TAIL_MS = 300
 
         @Volatile
         var isRunning = false
@@ -206,16 +197,12 @@ class WakeWordService : Service() {
     private var detectionEventsJob: Job? = null
     private var audioRecord: AudioRecord? = null
     private var engine: WakeWordEngine? = null
-    private var sileroScorer: SileroOrtScorer? = null
-    private var selfEchoGate: SelfEchoGate? = null
     private var camPlusEmbedder: CamPlusOrtEmbedder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile
     private var isAudioOnly = false
     @Volatile
     private var isPaused = false
-    @Volatile
-    private var lastDetectionTime = 0L
     @Volatile
     private var isExternalRecorderActive = false
     private var ownAudioSessionId: Int = 0
@@ -246,6 +233,9 @@ class WakeWordService : Service() {
         super.onCreate()
         Log.d(TAG, "onCreate")
         createNotificationChannel()
+        // One-time wipe of detection metrics polluted by the Vosk→ONNX migration (no-op after
+        // the first run). Lets post-migration aggregates accumulate on a clean 0–1 scale.
+        wakeWordPreferences.resetStaleMetricsOnce()
         isRunning = true
         instance = this
     }
@@ -315,31 +305,13 @@ class WakeWordService : Service() {
         detectionJob = serviceScope.launch {
             try {
                 // Build wake-word engine. Verifier is wired in commit 4; null here means
-                // stage-1 only (no voice match). VAD + smoother + self-echo gate enabled.
-                val vadEnabled = wakeWordPreferences.isVadEnabledOnce()
-                val scorer = if (vadEnabled) {
-                    try {
-                        SileroOrtScorer(this@WakeWordService).also { sileroScorer = it }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Silero VAD init failed; running without VAD gate", e)
-                        null
-                    }
-                } else null
-                val vad = scorer?.let {
-                    VadGate(
-                        scorer = it,
-                        speechThreshold = VAD_SPEECH_THRESHOLD,
-                        silenceWindowsBeforeSkip = VAD_SILENCE_WINDOWS_BEFORE_SKIP,
-                        preWindowLookbackMs = VAD_PRE_WINDOW_LOOKBACK_MS,
-                    )
-                }
+                // stage-1 only (no voice match).
                 val smoother = ScoreSmoother(
                     windowSize = SMOOTHER_WINDOW,
                     enterThreshold = SMOOTHER_ENTER_THRESHOLD,
                     hysteresis = SMOOTHER_HYSTERESIS,
                     refractoryMs = SMOOTHER_REFRACTORY_MS,
                 )
-                selfEchoGate = SelfEchoGate(tailMs = SELF_ECHO_TAIL_MS)
 
                 // Voice match: construct CAM++ verifier iff the user enrolled AND turned the toggle on.
                 val verifier = if (wakeWordPreferences.isVoiceMatchEnabledOnce()) {
@@ -351,8 +323,6 @@ class WakeWordService : Service() {
                     WakeWordEngine(
                         context = this@WakeWordService,
                         smoother = smoother,
-                        vad = vad,
-                        selfEchoGate = selfEchoGate,
                         verifier = verifier,
                         baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
                         adaptiveThreshold = null,  // Phase C, out of scope
@@ -361,27 +331,51 @@ class WakeWordService : Service() {
                     Log.e(TAG, "WakeWordEngine init failed — stopping detection", e)
                     return@launch
                 }
-                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier + Silero VAD${if (verifier != null) " + CAM++" else ""})")
+                Log.d(TAG, "WakeWordEngine initialized (mel + embedding + classifier${if (verifier != null) " + CAM++" else ""})")
 
-                // Detection events flow → activity launch
+                // Detection events flow → activity launch + telemetry upload (outcome=fired)
                 detectionEventsJob = launch {
                     engine?.detections?.collect { event ->
-                        val now = System.currentTimeMillis()
-                        if (now - lastDetectionTime < DETECTION_COOLDOWN_MS) {
-                            Log.d(TAG, "Cooldown active, ignoring detection (score=${event.confidence})")
-                            return@collect
-                        }
-                        lastDetectionTime = now
                         Log.d(TAG, "Wake word detected: score=${event.confidence}")
                         val score = event.confidence.toDouble()
                         wakeWordPreferences.recordDetection("hey_whiz", score, true, "{}", score)
                         val stats = wakeWordPreferences.getStats("hey_whiz")
                         Log.d(TAG, "Stats[hey_whiz]: count=${stats.count}, accepted=${stats.acceptedCount}, mean=${"%.3f".format(stats.mean)}")
-                        captureDetectionAudio("hey_whiz", score, true, "{}", score)
+                        writeFunnelFile()
+                        val verdict = engine?.lastVerifierVerdict
+                        captureDetectionAudio(
+                            "hey_whiz", score, accepted = true, rawVoskJson = "{}", classifierScore = score,
+                            cosine = verdict?.score, decision = verdict?.decision, outcome = "fired"
+                        )
                         // Pin buffer "warm" so a follow-up utterance doesn't get swallowed by
                         // a fresh 2 s buffer-fill deadzone. Inference resumes immediately.
                         engine?.softReset()
                         onWakeWordDetected()
+                    }
+                }
+
+                // Verifier-rejected fires → telemetry upload only (no action). Captures the
+                // voice-match rejections that otherwise never reach the server.
+                launch {
+                    engine?.rejectedDetections?.collect { rej ->
+                        Log.d(TAG, "Verifier-rejected fire: score=${rej.confidence} cosine=${rej.cosine} — uploading telemetry")
+                        captureDetectionAudio(
+                            "hey_whiz", rej.confidence.toDouble(), accepted = false, rawVoskJson = "{}",
+                            classifierScore = rej.confidence.toDouble(),
+                            cosine = rej.cosine, decision = rej.decision, outcome = "verifier_rejected"
+                        )
+                    }
+                }
+
+                // Near-misses → telemetry upload only. Captures utterances that scored in the
+                // near-miss band but never fired — the miss audio that previously left no trace.
+                launch {
+                    engine?.nearMisses?.collect { score ->
+                        Log.d(TAG, "Near-miss: score=$score — uploading telemetry")
+                        captureDetectionAudio(
+                            "hey_whiz", score.toDouble(), accepted = false, rawVoskJson = "{}",
+                            classifierScore = score.toDouble(), outcome = "near_miss"
+                        )
                     }
                 }
 
@@ -428,32 +422,61 @@ class WakeWordService : Service() {
                         lastExternalRecheckTime = nowRecheck
                     }
 
-                    val shouldPause = speechRecognitionService.isListening.value || isExternalRecorderActive
-                    if (shouldPause) {
+                    // CASE B (checked FIRST): the app's OWN recognizer is mid-conversation.
+                    // Keeping our VOICE_RECOGNITION capture open CONCURRENTLY with the
+                    // recognizer's VOICE_COMMUNICATION pipe degraded our mic on-device (input
+                    // dropped to near-silence and didn't recover). So instead of coexisting we
+                    // STOP our capture — freeing the mic for the recognizer — but keep the
+                    // AudioRecord object. Restarting it (below) is far cheaper than
+                    // release+recreate and needs no debounce, so the screen-off handoff has
+                    // only a tiny gap. (The recognizer's pipe shows up under a different
+                    // session id, so isExternalRecorderActive may also be true here — the
+                    // isListening check takes precedence so we don't treat our own
+                    // recognition as a third-party app.)
+                    if (speechRecognitionService.isListening.value) {
                         audioRecord?.let { rec ->
-                            val reason = when {
-                                speechRecognitionService.isListening.value -> "main speech recognizer active"
-                                isExternalRecorderActive -> "external recorder active"
-                                else -> "unknown"
+                            if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                                try {
+                                    rec.stop()
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Error stopping AudioRecord for recognizer", e)
+                                }
+                                frameFill = 0
+                                Log.d(TAG, "Capture paused (stopped, not released): main speech recognizer active")
                             }
-                            try {
-                                if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Error stopping AudioRecord on pause", e)
-                            }
-                            rec.release()
-                            audioRecord = null
-                            // Audio gap will desync the engine ring buffer; reset on resume.
-                            frameFill = 0
-                            Log.d(TAG, "Paused (released): $reason")
                         }
                         delay(200)
                         continue
                     }
 
+                    // CASE A: a genuine third-party app holds the mic (our recognizer is NOT
+                    // listening) — fully yield: release + recreate.
+                    if (isExternalRecorderActive) {
+                        audioRecord?.let { rec ->
+                            try {
+                                if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Error stopping AudioRecord on external yield", e)
+                            }
+                            rec.release()
+                            audioRecord = null
+                            // Audio gap will desync the engine ring buffer; reset frame on resume.
+                            frameFill = 0
+                            Log.d(TAG, "Yielded (released): external recorder active")
+                        }
+                        delay(200)
+                        continue
+                    }
+
+                    // Resume — two paths:
+                    //  - audioRecord == null      -> recreate after a Case A external release
+                    //                                (debounce guards against pause/resume flap).
+                    //  - audioRecord stopped      -> fast restart after a recognizer session
+                    //                                (no realloc, no debounce). This is the
+                    //                                screen-off handoff — only a tiny gap.
                     if (audioRecord == null) {
                         delay(RESUME_DEBOUNCE_MS)
-                        if (speechRecognitionService.isListening.value || isExternalRecorderActive) continue
+                        if (isExternalRecorderActive || speechRecognitionService.isListening.value) continue
                         val fresh = createAudioRecord(bufferSize)
                         if (fresh == null) {
                             delay(500)
@@ -461,8 +484,14 @@ class WakeWordService : Service() {
                         }
                         audioRecord = fresh
                         fresh.startRecording()
-                        engine?.reset()  // hard reset: buffer was discontinuous across pause
-                        Log.d(TAG, "Resumed: created fresh AudioRecord")
+                        engine?.softReset()
+                        Log.d(TAG, "Resumed: created fresh AudioRecord after external yield")
+                    } else if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord?.startRecording()
+                        // Warm reset: discard the brief stopped-window discontinuity but keep
+                        // the engine warm so inference resumes on the next ~320 ms tick.
+                        engine?.softReset()
+                        Log.d(TAG, "Capture resumed (restart, no realloc): recognizer cleared")
                     }
 
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
@@ -511,6 +540,7 @@ class WakeWordService : Service() {
                             "Heartbeat: processed $frameCount audio chunks, recording=${audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING}, " +
                                 "rms min=$minStr max=${"%.4f".format(rmsMax)} mean=${"%.4f".format(rmsMean)}"
                         )
+                        writeFunnelFile()
                         lastHeartbeatTime = now
                         frameCount = 0
                         rmsSum = 0.0
@@ -738,18 +768,11 @@ class WakeWordService : Service() {
             Log.w(TAG, "Error closing WakeWordEngine", e)
         }
         try {
-            sileroScorer?.close()
-            sileroScorer = null
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing Silero scorer", e)
-        }
-        try {
             camPlusEmbedder?.close()
             camPlusEmbedder = null
         } catch (e: Exception) {
             Log.w(TAG, "Error closing CAM++ embedder", e)
         }
-        selfEchoGate = null
         try {
             wakeLock?.let {
                 if (it.isHeld) {
@@ -819,7 +842,10 @@ class WakeWordService : Service() {
         confidence: Double,
         accepted: Boolean,
         rawVoskJson: String,
-        classifierScore: Double = -1.0
+        classifierScore: Double = -1.0,
+        cosine: Float? = null,
+        decision: String? = null,
+        outcome: String = "fired"
     ) {
         // Trim to last 3 seconds for wake word clips
         val pcmSnapshot = audioRingBuffer?.snapshot(WAKE_WORD_CLIP_SIZE)
@@ -832,11 +858,32 @@ class WakeWordService : Service() {
             audioDir.mkdirs()
             val wavFile = File(audioDir, "detection_${timestamp}_${confStr}.wav")
             saveWavFile(pcmSnapshot, wavFile)
-            Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM)")
-            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson, classifierScore)
+            Log.d(TAG, "Saved detection audio: ${wavFile.name} (${pcmSnapshot.size} bytes PCM, outcome=$outcome)")
+            uploadWakeWordAudio(wavFile, phrase, confidence, accepted, rawVoskJson, classifierScore, cosine, decision, outcome)
             enforceAudioStorageCap(audioDir)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save detection audio", e)
+        }
+    }
+
+    /**
+     * Dump the per-gate detection funnel to a pullable file:
+     *   adb shell cat /sdcard/Android/data/<pkg>/files/wake_word_funnel.txt
+     * Counts are cumulative since the engine (service) started.
+     */
+    private fun writeFunnelFile() {
+        try {
+            val eng = engine ?: return
+            val dir = getExternalFilesDir(null) ?: return
+            val label = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+            // Funnel + inference latency (latency must stay < interval, else cadence can't keep up).
+            val lat = eng.snapshot()
+            val latLine = "inference latency ms: p50=${lat["latency_ms_p50"]} " +
+                "p95=${lat["latency_ms_p95"]} p99=${lat["latency_ms_p99"]} " +
+                "(interval ~${eng.inferenceIntervalFrames * 80} ms)"
+            File(dir, "wake_word_funnel.txt").writeText(eng.gateFunnel.format(label) + "\n" + latLine + "\n")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write funnel file", e)
         }
     }
 
@@ -852,7 +899,10 @@ class WakeWordService : Service() {
         confidence: Double,
         accepted: Boolean,
         rawVoskJson: String,
-        classifierScore: Double = -1.0
+        classifierScore: Double = -1.0,
+        cosine: Float? = null,
+        decision: String? = null,
+        outcome: String = "fired"
     ) {
         serviceScope.launch {
             try {
@@ -865,6 +915,7 @@ class WakeWordService : Service() {
 
                 // raw_vosk_json: legacy field name (Vosk pipeline removed). Server contract
                 // unchanged; sending "{}" until the endpoint can drop or rename the field.
+                // verifier_* / outcome: empty string means "not applicable" (server maps "" → NULL).
                 apiService.uploadWakeWordAudio(
                     file = filePart,
                     phrase = phrase.toRequestBody(textType),
@@ -872,7 +923,10 @@ class WakeWordService : Service() {
                     accepted = accepted.toString().toRequestBody(textType),
                     timestamp = System.currentTimeMillis().toString().toRequestBody(textType),
                     rawVoskJson = rawVoskJson.toRequestBody(textType),
-                    classifierScore = classifierScore.toString().toRequestBody(textType)
+                    classifierScore = classifierScore.toString().toRequestBody(textType),
+                    verifierCosine = (cosine?.toString() ?: "").toRequestBody(textType),
+                    verifierDecision = (decision ?: "").toRequestBody(textType),
+                    outcome = outcome.toRequestBody(textType)
                 )
                 wavFile.delete()
                 Log.d(TAG, "Uploaded and deleted wake word audio: ${wavFile.name}")

@@ -73,13 +73,6 @@ class WakeWordPreferences @Inject constructor(
         prefs.edit().putInt(KEY_VERIFIER_THRESHOLD_BITS, threshold.toBits()).apply()
     }
 
-    /** Silero VAD gate toggle. Defaults ON (battery savings). */
-    fun isVadEnabledOnce(): Boolean = prefs.getBoolean(KEY_VAD_ENABLED, true)
-
-    fun setVadEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_VAD_ENABLED, enabled).apply()
-    }
-
     // --- Wake word detection metrics (Welford's online algorithm) ---
 
     private fun metricsKey(phrase: String, field: String): String =
@@ -289,16 +282,56 @@ class WakeWordPreferences @Inject constructor(
         editor.apply()
     }
 
+    /**
+     * One-time reset of the detection-metrics aggregates. The running count/accepted/mean/m2
+     * Welford aggregates were polluted by the Vosk→ONNX migration: Vosk-era confidence ran on a
+     * 0–300+ scale while the ONNX classifier outputs 0–1, so the blended mean/stdDev are
+     * meaningless (e.g. hey_whiz mean ≈ 154 on a 0–1 scale) and ~916 stale non-accepted entries
+     * inflate the count. Clears the aggregates once — guarded by a version flag so we never wipe
+     * again — plus the stale human-readable mirrors (stats.txt / detections.jsonl), which
+     * regenerate cleanly on the next detection. Bump [CURRENT_METRICS_RESET_VERSION] to force
+     * another reset after a future scoring change.
+     */
+    fun resetStaleMetricsOnce() {
+        if (prefs.getInt(KEY_METRICS_RESET_VERSION, 0) >= CURRENT_METRICS_RESET_VERSION) return
+        clearMetrics()
+        prefs.edit().putInt(KEY_METRICS_RESET_VERSION, CURRENT_METRICS_RESET_VERSION).apply()
+        try {
+            context.getExternalFilesDir(null)?.let { dir ->
+                File(dir, "wake_word_stats.txt").delete()
+                File(dir, "wake_word_detections.jsonl").delete()
+                File(dir, "wake_word_funnel.txt").delete()
+            }
+        } catch (e: Exception) {
+            Log.w("WakeWordPreferences", "Failed to delete stale stats mirrors", e)
+        }
+        Log.d("WakeWordPreferences", "Reset stale pre-ONNX detection metrics (migration v$CURRENT_METRICS_RESET_VERSION)")
+    }
+
     companion object {
         private const val KEY_ENABLED = "wake_word_enabled"
         private const val KEY_VOICE_MATCH_ENABLED = "voice_match_enabled"
         private const val KEY_VOICE_MATCH_BROKEN = "voice_match_broken"
         private const val KEY_VERIFIER_THRESHOLD_BITS = "verifier_threshold_bits"
-        private const val KEY_VAD_ENABLED = "vad_enabled"
-        // Lowered from 0.45 → 0.35 to accommodate screen-off cosine scores running
-        // ~0.06–0.10 lower than screen-on (different HAL processing path even with the
-        // same VOICE_RECOGNITION source). 0.35 covers the observed screen-off floor
-        // (~0.38) with a small margin.
-        const val DEFAULT_VERIFIER_THRESHOLD = 0.35f
+        // One-time metrics-reset guard. Bump to force another reset after a scoring change.
+        private const val KEY_METRICS_RESET_VERSION = "metrics_reset_version"
+        // v2 (2026-06-08): wipe the pre-funnel detection stats so the new per-gate funnel
+        // and the detection aggregates start from one clean, same-window baseline.
+        private const val CURRENT_METRICS_RESET_VERSION = 2
+        // Lowered 0.45 → 0.35 over time to accommodate genuine-voice CAM++ cosine scores
+        // running below the original floor (screen-off HAL path + natural pitch variation).
+        // On-device measurements 2026-06-04 (Pixel 8, prod): wake-word classifier scored
+        // 0.97–0.99 (detection perfect) every time, but verifier cosine for the same genuine
+        // voice scattered ~0.17–0.45 (observed 0.166 / 0.31 / 0.31 / 0.32 / 0.449 / 0.449) on
+        // essentially identical utterances seconds apart. We briefly dropped this to 0.10 while
+        // voice match was the suspect, but the dominant reliability issue turned out to be the
+        // screen-off buffer-refill dead zone (fixed separately via softReset on resume), NOT the
+        // verifier. Reverted to 0.20: keeps reasonable impostor protection, while accepting that
+        // a rare very-low genuine fire (~0.166) may still be rejected.
+        // If genuine fires still get rejected after the dead-zone fix, the honest next step is
+        // disabling voice match (isVoiceMatchEnabled=false), not lowering this further. There is
+        // no runtime/UI setter for this value (setVerifierThreshold is never called), so this
+        // constant is the only lever; changing it requires a rebuild + reinstall.
+        const val DEFAULT_VERIFIER_THRESHOLD = 0.20f
     }
 }

@@ -14,6 +14,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Tasks
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -94,7 +95,10 @@ open class AuthRepository @Inject constructor(
         try {
             Log.d(TAG, "Creating GoogleSignInClient with client ID: ${AuthConfig.GOOGLE_CLIENT_ID}")
             
-            // Build Google Sign-In options
+            // Build Google Sign-In options. We intentionally do NOT request the
+            // Google Contacts scopes here — those are requested on demand (see
+            // createContactsConsentIntent) only when a contact lookup actually needs
+            // them, so normal login stays clean.
             val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                 .requestEmail()
                 .requestProfile()
@@ -150,6 +154,26 @@ open class AuthRepository @Inject constructor(
     // Get Google Sign-In Client for sign-in intent
     fun createSignInIntent(): Intent {
         return googleSignInClient.signInIntent
+    }
+
+    /**
+     * Build an intent that requests read-only access to the user's Google Contacts
+     * (saved + Gmail auto-saved) on demand. Because the user is already signed in
+     * with email/profile, Google shows an incremental consent for just these scopes.
+     * requestServerAuthCode(forceCodeForRefreshToken=true) yields a one-time code the
+     * server exchanges for an offline-access refresh token. Launched by MainActivity
+     * when a contact lookup needs Google Contacts.
+     */
+    fun createContactsConsentIntent(): Intent {
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestServerAuthCode(AuthConfig.WEB_CLIENT_ID, true)
+            .requestScopes(
+                Scope("https://www.googleapis.com/auth/contacts.readonly"),
+                Scope("https://www.googleapis.com/auth/contacts.other.readonly")
+            )
+            .build()
+        return GoogleSignIn.getClient(context, gso).signInIntent
     }
     
     // Process sign-in result and save user data

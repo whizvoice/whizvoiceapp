@@ -364,6 +364,9 @@ class ToolExecutor @Inject constructor(
                         }
                         executeDeviceControlTool(toolName, requestId, params) { deviceControlTools.lookupPhoneContacts(it) }
                     }
+                    "agent_request_google_contacts_consent" -> {
+                        executeGoogleContactsConsent(toolName, requestId)
+                    }
                     "agent_log_health_data" -> {
                         executeLogHealthData(requestId, params)
                     }
@@ -635,8 +638,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                // Add reminder for the LLM to wait for user confirmation
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_whatsapp_send_message; tell the user the draft could not be displayed."
+                })
             }
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -752,8 +760,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                // Add reminder for the LLM to wait for user confirmation
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_sms_send_message; tell the user the draft could not be displayed."
+                })
             }
 
             Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -828,7 +841,13 @@ class ToolExecutor @Inject constructor(
                 result.message?.let { put("message", it) }
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
-                put("important_note", "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review.")
+                result.displayedText?.let { put("displayed_text", it) }
+                // Only claim the draft is displayed when it's actually visible.
+                put("important_note", if (result.overlayShown) {
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                } else {
+                    "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_send_message; tell the user the draft could not be displayed."
+                })
             }
 
             Log.i(TAG, "[TOOL_RESULT] Generic draft message result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -1088,6 +1107,9 @@ class ToolExecutor @Inject constructor(
 
             // Kill the process to close everything
             Log.i(TAG, "Killing process to close app")
+            // Flag this as an intentional self-exit so next launch's ApplicationExitInfo pass
+            // doesn't misreport the resulting SIGNALED exit as a crash (process_death).
+            com.example.whiz.WhizApplication.flagIntentionalExit(context)
             android.os.Process.killProcess(android.os.Process.myPid())
 
         } catch (e: Exception) {
@@ -1213,6 +1235,10 @@ class ToolExecutor @Inject constructor(
                 put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
                 result.error?.let { put("error", it) }
+                // Surface what ACTUALLY played so the assistant can confirm truthfully and
+                // flag a mismatch with the request, instead of free-forming from the query.
+                result.nowPlaying?.let { put("played_title", it) }
+                result.nowPlayingArtist?.let { put("played_artist", it) }
             }
 
             Log.i(TAG, "[TOOL_RESULT] Music play result for requestId=$requestId: ${resultJson.toString(2)}")
@@ -2082,6 +2108,79 @@ class ToolExecutor @Inject constructor(
         }
     }
 
+    /**
+     * On-demand Google Contacts consent. Mirrors the contacts-permission pattern:
+     * emit a waiting status (so the server extends the tool deadline), launch the
+     * Google consent UI via MainActivity, and return the one-time server auth code.
+     * Returns {server_auth_code} on grant, {declined:true} on cancel, {timed_out:true}
+     * if no response — the server stores/clears the refresh token accordingly.
+     */
+    private suspend fun executeGoogleContactsConsent(toolName: String, requestId: String) {
+        val callback = MainActivity.requestGoogleContactsConsentCallback
+        if (callback == null) {
+            Log.w(TAG, "No Google Contacts consent callback registered (no foreground Activity)")
+            _toolResults.emit(ToolExecutionResult.Success(
+                toolName = toolName,
+                requestId = requestId,
+                result = JSONObject().put("declined", true).put("reason", "No UI available for consent")
+            ))
+            return
+        }
+
+        Log.i(TAG, "🔗 Requesting Google Contacts consent")
+        _toolResults.emit(ToolExecutionResult.Status(
+            toolName = toolName,
+            requestId = requestId,
+            status = "waiting_for_google_contacts_consent",
+            message = "Google Contacts access required. Waiting for user to grant."
+        ))
+
+        // OAuth consent can take longer than the server's 60s abandoned-execution reaper
+        // window, so heartbeat the waiting status every 30s. Each one refreshes the
+        // server-side deadline + execution timestamp so the pending tool isn't reaped.
+        val heartbeat = scope.launch {
+            while (true) {
+                delay(30_000L)
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_google_contacts_consent",
+                    message = "Still waiting for Google Contacts access..."
+                ))
+            }
+        }
+
+        // Empty string = user cancelled; non-empty = auth code; null (timeout) handled below.
+        val outcome = try {
+            withTimeoutOrNull(90_000L) {
+                suspendCancellableCoroutine<String> { cont ->
+                    callback { authCode ->
+                        if (cont.isActive) cont.resume(authCode ?: "")
+                    }
+                }
+            }
+        } finally {
+            heartbeat.cancel()
+        }
+
+        val result = JSONObject()
+        when {
+            outcome == null -> {
+                Log.i(TAG, "🔗 Google Contacts consent timed out")
+                result.put("timed_out", true)
+            }
+            outcome.isEmpty() -> {
+                Log.i(TAG, "🔗 User declined Google Contacts consent")
+                result.put("declined", true)
+            }
+            else -> {
+                Log.i(TAG, "🔗 Google Contacts consent granted (auth code captured)")
+                result.put("server_auth_code", outcome)
+            }
+        }
+        _toolResults.emit(ToolExecutionResult.Success(toolName = toolName, requestId = requestId, result = result))
+    }
+
     // Method to list available tools (useful for discovery)
     fun getAvailableTools(): List<String> {
         return listOf("agent_launch_app", "agent_whatsapp_select_chat", "agent_whatsapp_draft_message", "agent_whatsapp_send_message", "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message", "agent_dismiss_draft", "agent_disable_continuous_listening", "agent_set_tts_enabled", "agent_play_youtube_music", "agent_queue_youtube_music", "agent_search_google_maps_location", "agent_search_google_maps_phrase", "agent_get_google_maps_directions", "agent_recenter_google_maps", "agent_fullscreen_google_maps", "agent_select_location_from_list", "agent_set_alarm", "agent_set_timer", "agent_dismiss_alarm", "agent_dismiss_timer", "agent_stop_ringing", "agent_get_next_alarm", "agent_delete_alarm", "agent_dismiss_amdroid_alarm", "agent_toggle_flashlight", "agent_draft_calendar_event", "agent_save_calendar_event", "agent_dial_phone_number", "agent_set_volume", "agent_lookup_phone_contacts")
@@ -2481,12 +2580,14 @@ class ToolExecutor @Inject constructor(
             } else {
                 null
             }
-            Log.i(TAG, "agent_insert_text invoked, element_id=$elementId, textLen=${text.length}")
-            val result = screenAgentTools.insertText(text, elementId)
+            val submit = params.optBoolean("submit", false)
+            Log.i(TAG, "agent_insert_text invoked, element_id=$elementId, textLen=${text.length}, submit=$submit")
+            val result = screenAgentTools.insertText(text, elementId, submit)
             val resultJson = JSONObject().apply {
                 put("success", result.success)
                 result.elementId?.let { put("element_id", it) }
                 result.textSet?.let { put("text_set", it) }
+                result.submitted?.let { put("submitted", it) }
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_insert_text result for requestId=$requestId: ${resultJson.toString(2)}")

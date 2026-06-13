@@ -108,7 +108,10 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val message: String? = null,
         val error: String? = null,
-        val overlayShown: Boolean = false
+        val overlayShown: Boolean = false,
+        // Text actually rendered in the overlay (read back from the view), or null
+        // if the overlay never became visible.
+        val displayedText: String? = null
     )
 
     data class SendResult(
@@ -150,7 +153,8 @@ class ScreenAgentTools @Inject constructor(
         val action: String,
         val query: String? = null,
         val error: String? = null,
-        val nowPlaying: String? = null
+        val nowPlaying: String? = null,
+        val nowPlayingArtist: String? = null
     )
 
     data class MapsActionResult(
@@ -210,6 +214,7 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val elementId: Int? = null,
         val textSet: String? = null,
+        val submitted: Boolean? = null,
         val error: String? = null
     )
 
@@ -1451,8 +1456,8 @@ class ScreenAgentTools @Inject constructor(
      * last getUi snapshot. Otherwise target the input-focused editable, falling
      * back to the sole editable on screen.
      */
-    suspend fun insertText(text: String, elementId: Int? = null): InsertTextResult {
-        Log.i(TAG, "insertText called, elementId=$elementId, textLength=${text.length}")
+    suspend fun insertText(text: String, elementId: Int? = null, submit: Boolean = false): InsertTextResult {
+        Log.i(TAG, "insertText called, elementId=$elementId, textLength=${text.length}, submit=$submit")
         trackAction("insertText: id=$elementId")
         val accessibilityService = WhizAccessibilityService.getInstance()
             ?: return InsertTextResult(
@@ -1514,11 +1519,18 @@ class ScreenAgentTools @Inject constructor(
                 text
             )
             val ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, bundle)
-            if (ok) InsertTextResult(
-                success = true,
-                elementId = elementId,
-                textSet = text
-            ) else InsertTextResult(
+            if (ok) {
+                val submitted = if (submit) {
+                    delay(300) // Brief delay for text to settle before pressing Enter
+                    performImeEnter(target)
+                } else null
+                InsertTextResult(
+                    success = true,
+                    elementId = elementId,
+                    textSet = text,
+                    submitted = submitted
+                )
+            } else InsertTextResult(
                 success = false,
                 elementId = elementId,
                 error = "ACTION_SET_TEXT returned false"
@@ -1530,6 +1542,23 @@ class ScreenAgentTools @Inject constructor(
                 elementId = elementId,
                 error = "Exception: ${e.message}"
             )
+        }
+    }
+
+    /**
+     * Press Enter / trigger the keyboard's IME action (Search, Go, Done, etc.) on the given node.
+     * Uses ACTION_IME_ENTER on Android 11+ (API 30), falling back to KEYCODE_ENTER on older versions.
+     */
+    private fun performImeEnter(node: AccessibilityNodeInfo): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+        } else {
+            try {
+                Runtime.getRuntime().exec("input keyevent 66").waitFor() == 0
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
+                false
+            }
         }
     }
 
@@ -3051,9 +3080,32 @@ class ScreenAgentTools @Inject constructor(
         val clickables = mutableListOf<AccessibilityNodeInfo>()
         findClickableChildren(root, clickables)
 
+        // High-confidence send-button phrases, tried before the loose "send"
+        // match. Phrase matching (e.g. "send message") cleanly excludes voice
+        // buttons like "Record and send audio attachment", which merely contain
+        // the word "send" and otherwise win the loose match (see bug 1333).
+        // Mirrors the description set smsFindSendButton already trusts.
+        val exactSendPhrases = listOf("send message", "send sms", "send mms", "send encrypted message")
+
+        fun describesExact(node: AccessibilityNodeInfo): Boolean {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: return false
+            return exactSendPhrases.any { desc.contains(it) }
+        }
+
+        // Voice/record buttons (e.g. Signal's "Record and send audio attachment")
+        // contain "send" but are never the target of a text send. Excluding them
+        // is always safe here — this flow only ever taps a text-send button — and
+        // it lets the send-button poll keep waiting for the real send arrow to
+        // render instead of settling for the voice button in the brief window
+        // before Signal re-renders the input row (bug 1333 timing race).
+        fun isVoiceOrRecord(node: AccessibilityNodeInfo): Boolean {
+            val desc = node.contentDescription?.toString()?.lowercase() ?: return false
+            return desc.contains("record") || desc.contains("audio") || desc.contains("voice")
+        }
+
         fun describes(node: AccessibilityNodeInfo): Boolean {
             val desc = node.contentDescription?.toString()?.lowercase() ?: return false
-            return desc.contains("send") || desc.contains("submit")
+            return (desc.contains("send") || desc.contains("submit")) && !isVoiceOrRecord(node)
         }
 
         fun verticallyInRow(node: AccessibilityNodeInfo): Boolean {
@@ -3061,26 +3113,27 @@ class ScreenAgentTools @Inject constructor(
             return r.centerY() in (inputRect.top - 20)..(inputRect.bottom + 20)
         }
 
+        // Priority 0: exact send-button phrase, same row first, then anywhere.
+        var best = clickables.firstOrNull { describesExact(it) && verticallyInRow(it) }
+            ?: clickables.firstOrNull { describesExact(it) }
+
         // Priority 1: described send button in the same row as the input.
-        var best = clickables.firstOrNull { describes(it) && verticallyInRow(it) }
+        if (best == null) {
+            best = clickables.firstOrNull { describes(it) && verticallyInRow(it) }
+        }
 
         // Priority 2: any described send button anywhere.
         if (best == null) {
             best = clickables.firstOrNull { describes(it) }
         }
 
-        // Priority 3: rightmost clickable in the input row (icon-only buttons).
-        if (best == null) {
-            best = clickables
-                .filter { node ->
-                    val r = Rect().also { node.getBoundsInScreen(it) }
-                    verticallyInRow(node) && r.left >= inputRect.right - 20
-                }
-                .maxByOrNull { node ->
-                    val r = Rect().also { node.getBoundsInScreen(it) }
-                    r.left
-                }
-        }
+        // NOTE: deliberately no "rightmost clickable in the row" icon fallback.
+        // Position can't distinguish the send arrow from the camera/attachment
+        // icons that occupy the same far-right slot when the field is empty, and
+        // such a fallback always returns *something*, short-circuiting the
+        // send-button poll before the real send arrow renders (bug 1333). We only
+        // click a node that *describes itself* as send/submit; if none appears,
+        // the caller leaves the draft in the input for manual/agent send.
 
         clickables.filter { it !== best }.forEach { it.recycle() }
         if (best != null) {
@@ -3219,6 +3272,9 @@ class ScreenAgentTools @Inject constructor(
                 },
                 onSendButtonNotFound = { root ->
                     Log.w(TAG, "sendGenericMessage: peek heuristic found no send button in $targetPackage; text drafted in input")
+                    // Capture Whiz's view at poll-timeout so we can see whether the
+                    // real send arrow ever rendered during the wait (bug 1333).
+                    dumpUIHierarchy(root, "send_button_not_found", "Poll timed out without finding a non-voice send button; text left in input")
                 },
             ))
         } catch (e: Exception) {
@@ -3474,20 +3530,7 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Triggering IME action...")
                     delay(300) // Brief delay for text to be set
 
-                    val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                        Log.d(TAG, "Using ACTION_IME_ENTER (Android 11+)")
-                        searchField.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                    } else {
-                        // Fallback for older Android versions: use KEYCODE_ENTER
-                        Log.d(TAG, "Android < 11, using KEYCODE_ENTER fallback")
-                        try {
-                            val process = Runtime.getRuntime().exec("input keyevent 66")
-                            process.waitFor() == 0
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                            false
-                        }
-                    }
+                    val imeActionPerformed = performImeEnter(searchField)
                     if (imeActionPerformed) {
                         Log.i(TAG, "✅ Successfully triggered IME action")
                     } else {
@@ -3745,17 +3788,21 @@ class ScreenAgentTools @Inject constructor(
                 // For songs/videos, wait for mini player to show the playing title
                 delay(2000)
                 val verifyRoot = accessibilityService.getCurrentRootNode()
-                val nowPlaying = if (verifyRoot != null) {
-                    val title = getMiniPlayerTitle(verifyRoot)
+                var nowPlaying: String? = null
+                var nowPlayingArtist: String? = null
+                if (verifyRoot != null) {
+                    nowPlaying = getMiniPlayerTitle(verifyRoot)
+                    nowPlayingArtist = getMiniPlayerArtist(verifyRoot)
                     verifyRoot.recycle()
-                    title
-                } else null
+                }
 
                 return MusicActionResult(
                     success = true,
                     action = "play_song",
                     query = query,
-                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query
+                    nowPlaying = nowPlaying ?: clickResult.clickedTitle ?: query,
+                    // Prefer the artist actually showing in the player; fall back to the clicked row's byline.
+                    nowPlayingArtist = nowPlayingArtist ?: clickResult.clickedArtist
                 )
             } else {
                 // For albums/playlists/artists, clicking opens the page — playback may not start immediately
@@ -3763,7 +3810,8 @@ class ScreenAgentTools @Inject constructor(
                     success = true,
                     action = "play_song",
                     query = query,
-                    nowPlaying = clickResult.clickedTitle ?: query
+                    nowPlaying = clickResult.clickedTitle ?: query,
+                    nowPlayingArtist = clickResult.clickedArtist
                 )
             }
         } catch (e: Exception) {
@@ -3816,11 +3864,16 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for YouTube Music to be ready (max 3 seconds)
+            // Wait for YouTube Music to be ready. Ceiling 8s (was 3s): this is an entry
+            // point that cold-launches YT Music (above), so slow cold-start / network-handoff
+            // foregrounding can blow past 3s and report a false "did not become ready" — the
+            // same failure mode fixed for Maps directions. Intelligent wait: returns the instant
+            // YT Music foregrounds, so the higher ceiling costs nothing on the common path and
+            // only the genuine never-ready case waits longer.
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.youtube.music",
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
             if (!appReady) {
@@ -4359,11 +4412,18 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for Google Maps to be ready (max 3 seconds)
+            // Wait for Google Maps to be ready. Ceiling 8s (was 3s) to tolerate slow
+            // cold-start / network-handoff foregrounding (Wi-Fi→cellular), which blew past
+            // the old 3s window and reported a false "did not become ready" failure while
+            // Maps was still coming to the foreground (dump 1349). This is an intelligent
+            // wait — it returns the instant Maps foregrounds, so the higher ceiling costs
+            // nothing on the common path; only the genuine never-ready case waits longer.
+            // 8s + the 10s directions wait (below) = 18s, safely under the 25s server timeout
+            // (whizvoice/maps_tools.py:563).
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = 8000
             )
 
             if (!appReady) {
@@ -5497,21 +5557,10 @@ class ScreenAgentTools @Inject constructor(
      */
     private fun pressEnterToSubmitSearch(rootNode: AccessibilityNodeInfo): Boolean {
         Log.d(TAG, "Pressing Enter to submit Google Maps search")
-        val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
-                ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
-            val result = searchFields?.firstOrNull()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false
-            searchFields?.forEach { it.recycle() }
-            result
-        } else {
-            try {
-                val process = Runtime.getRuntime().exec("input keyevent 66")
-                process.waitFor() == 0
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                false
-            }
-        }
+        val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
+            ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+        val imeActionPerformed = searchFields?.firstOrNull()?.let { performImeEnter(it) } ?: false
+        searchFields?.forEach { it.recycle() }
 
         if (imeActionPerformed) {
             Log.d(TAG, "Successfully submitted search via Enter key")
@@ -5559,22 +5608,11 @@ class ScreenAgentTools @Inject constructor(
 
         // No exact match found - press Enter to submit the search exactly as typed
         Log.d(TAG, "No clickable suggestions found, trying to press Enter to submit search")
-        val imeActionPerformed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            // Find the search field and perform IME action
-            val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
-                ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
-            val result = searchFields?.firstOrNull()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id) ?: false
-            searchFields?.forEach { it.recycle() }
-            result
-        } else {
-            try {
-                val process = Runtime.getRuntime().exec("input keyevent 66")
-                process.waitFor() == 0
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                false
-            }
-        }
+        // Find the search field and perform IME action
+        val searchFields = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_edit_text")
+            ?: rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/search_omnibox_text_box")
+        val imeActionPerformed = searchFields?.firstOrNull()?.let { performImeEnter(it) } ?: false
+        searchFields?.forEach { it.recycle() }
 
         if (imeActionPerformed) {
             Log.d(TAG, "Successfully submitted search via Enter key")
@@ -7157,18 +7195,7 @@ class ScreenAgentTools @Inject constructor(
                 val searchField = searchFields[0]
 
                 // Try to perform IME action (Enter)
-                val result = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    searchField.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
-                } else {
-                    // Fall back to keyevent
-                    try {
-                        val process = Runtime.getRuntime().exec("input keyevent 66")
-                        process.waitFor() == 0
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
-                        false
-                    }
-                }
+                val result = performImeEnter(searchField)
 
                 searchFields.forEach { it.recycle() }
                 Log.d(TAG, "Submitted YouTube Music search via Enter key: $result")
@@ -7410,8 +7437,40 @@ class ScreenAgentTools @Inject constructor(
      */
     private data class ClickResultInfo(
         val clicked: Boolean,
-        val clickedTitle: String? = null
+        val clickedTitle: String? = null,
+        val clickedArtist: String? = null
     )
+
+    /**
+     * Extract the artist/byline from a search result row node.
+     * YT Music result rows carry a "•"-delimited byline (e.g. "Song • Judy Garland • Album • 3:45")
+     * in a child's text or contentDescription. The first segment is the type indicator
+     * ("Song"/"Video"/...) and the second is the artist. Returns null if no byline is found.
+     * Used so we can report the artist of the row we actually clicked (truthful playback).
+     */
+    private fun extractArtistFromResultRow(rowNode: AccessibilityNodeInfo): String? {
+        val allChildren = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rowNode, allChildren)
+        try {
+            for (child in allChildren) {
+                val byline = (child.text?.toString() ?: child.contentDescription?.toString()) ?: continue
+                if (!byline.contains("•")) continue
+                val segments = byline.split("•").map { it.trim() }.filter { it.isNotEmpty() }
+                // Expect [type, artist, ...]; the artist is the segment after the type indicator.
+                if (segments.size >= 2) {
+                    val artist = segments[1]
+                    // Guard against the artist slot actually being metadata (duration/view count).
+                    if (!artist.matches(Regex("\\d+:\\d+")) &&
+                        !artist.matches(Regex("\\d+(\\.\\d+)?[KMB]?\\s*(plays|views)?", RegexOption.IGNORE_CASE))) {
+                        return artist
+                    }
+                }
+            }
+            return null
+        } finally {
+            allChildren.forEach { it.recycle() }
+        }
+    }
 
     /**
      * Extract the song title from a search result row node.
@@ -7497,6 +7556,7 @@ class ScreenAgentTools @Inject constructor(
             // Find clickable result rows (Button class, long-clickable)
             var matchingRow: AccessibilityNodeInfo? = null
             var matchingTitle: String? = null
+            var matchingArtist: String? = null
 
             for (node in allNodes) {
                 val className = node.className?.toString() ?: ""
@@ -7506,11 +7566,13 @@ class ScreenAgentTools @Inject constructor(
 
                     // Check if this row contains a matching type indicator in its children
                     if (rowContainsTypeIndicator(node, acceptableTypes)) {
-                        // Extract the title from this row
+                        // Extract the title and artist from this row
                         val title = extractTitleFromResultRow(node)
-                        Log.d(TAG, "Found matching result row with title: '$title'")
+                        val artist = extractArtistFromResultRow(node)
+                        Log.d(TAG, "Found matching result row with title: '$title', artist: '$artist'")
                         matchingRow = node
                         matchingTitle = title
+                        matchingArtist = artist
                         break
                     }
                 }
@@ -7519,7 +7581,7 @@ class ScreenAgentTools @Inject constructor(
             if (matchingRow != null) {
                 // Click the matching result row
                 val clicked = accessibilityService.clickNode(matchingRow)
-                Log.d(TAG, "Clicked matching result row: $clicked, title: '$matchingTitle'")
+                Log.d(TAG, "Clicked matching result row: $clicked, title: '$matchingTitle', artist: '$matchingArtist'")
                 allNodes.forEach { it.recycle() }
 
                 // For List-type and Podcast-type content, clicking the row opens the detail page
@@ -7531,14 +7593,14 @@ class ScreenAgentTools @Inject constructor(
                     val playClicked = clickPlayButtonOnDetailPage(accessibilityService, contentType)
                     if (playClicked) {
                         Log.d(TAG, "Successfully clicked Play button on detail page")
-                        return ClickResultInfo(true, matchingTitle)
+                        return ClickResultInfo(true, matchingTitle, matchingArtist)
                     } else {
                         Log.w(TAG, "Could not find Play button on detail page")
-                        return ClickResultInfo(false, matchingTitle)
+                        return ClickResultInfo(false, matchingTitle, matchingArtist)
                     }
                 }
 
-                return ClickResultInfo(clicked, matchingTitle)
+                return ClickResultInfo(clicked, matchingTitle, matchingArtist)
             }
 
             allNodes.forEach { it.recycle() }
@@ -7711,6 +7773,37 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
+        return null
+    }
+
+    /**
+     * Get the artist/byline of the currently playing song, paralleling getMiniPlayerTitle.
+     * The subtitle view-id is not guaranteed stable across YT Music versions, so we try a few
+     * known/likely candidates and degrade gracefully to null. Callers fall back to the clicked
+     * row's byline artist when this returns null. Reports the artist that is ACTUALLY playing so
+     * the assistant can confirm truthfully (and flag a mismatch with what was requested).
+     */
+    private fun getMiniPlayerArtist(rootNode: AccessibilityNodeInfo): String? {
+        val candidateIds = listOf(
+            "com.google.android.apps.youtube.music:id/mini_player_subtitle",
+            "com.google.android.apps.youtube.music:id/subtitle",
+            "com.google.android.apps.youtube.music:id/watch_header_subtitle"
+        )
+        for (id in candidateIds) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            if (nodes != null && nodes.isNotEmpty()) {
+                val raw = nodes[0].text?.toString()
+                nodes.forEach { it.recycle() }
+                if (!raw.isNullOrBlank()) {
+                    // Some subtitle nodes are "Artist • Album • Year"; keep just the artist segment.
+                    val artist = if (raw.contains("•")) {
+                        raw.split("•").map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: raw
+                    } else raw
+                    Log.d(TAG, "Found now-playing artist in player ($id): $artist")
+                    return artist
+                }
+            }
+        }
         return null
     }
 
@@ -8401,11 +8494,24 @@ class ScreenAgentTools @Inject constructor(
         rootNode.recycle()
         updatedRoot.recycle()
 
+        // startService is async, so `overlayStarted` only means the intent was sent.
+        // Wait for the service to confirm the overlay view is actually attached and
+        // visible (set in a post{} after addView), then report the real outcome and
+        // the text that's actually on screen.
+        val overlayVisible = overlayStarted && waitForCondition(maxWaitMs = 1500) {
+            MessageDraftOverlayService.overlayVisible
+        }
+
         return DraftResult(
-            success = overlayStarted,
+            success = overlayVisible,
             message = args.message,
-            overlayShown = overlayStarted,
-            error = if (!overlayStarted) "Failed to show draft overlay" else null,
+            overlayShown = overlayVisible,
+            displayedText = if (overlayVisible) MessageDraftOverlayService.displayedDraftText else null,
+            error = when {
+                !overlayStarted -> "Failed to show draft overlay"
+                !overlayVisible -> "Overlay created but not visible on screen"
+                else -> null
+            },
         )
     }
 
@@ -8468,24 +8574,27 @@ class ScreenAgentTools @Inject constructor(
         var freshRoot: AccessibilityNodeInfo = rootNode
         var freshInput: AccessibilityNodeInfo = inputNode
         var sendButton: AccessibilityNodeInfo? = null
-        val sendDeadline = System.currentTimeMillis() + 1500
-        while (System.currentTimeMillis() < sendDeadline) {
+        // 2500ms upper bound: Signal's Compose input can take ~1.6s after SET_TEXT
+        // to swap the voice button for the real send arrow, so the wait must
+        // outlast that render (bug 1333) now that we no longer settle for the
+        // voice button. waitForCondition exits the instant a send button appears.
+        waitForCondition(maxWaitMs = 2500, maxIntervalMs = 200) {
             val polledRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
-            if (polledRoot != null) {
-                val polledInput = args.findInput(polledRoot) ?: inputNode
-                val polledButton = args.findSendButton(polledRoot, polledInput)
-                if (polledButton != null) {
-                    if (freshRoot !== rootNode) freshRoot.recycle()
-                    if (freshInput !== inputNode) freshInput.recycle()
-                    freshRoot = polledRoot
-                    freshInput = polledInput
-                    sendButton = polledButton
-                    break
-                }
+                ?: return@waitForCondition false
+            val polledInput = args.findInput(polledRoot) ?: inputNode
+            val polledButton = args.findSendButton(polledRoot, polledInput)
+            if (polledButton != null) {
+                if (freshRoot !== rootNode) freshRoot.recycle()
+                if (freshInput !== inputNode) freshInput.recycle()
+                freshRoot = polledRoot
+                freshInput = polledInput
+                sendButton = polledButton
+                true
+            } else {
                 if (polledInput !== inputNode) polledInput.recycle()
                 polledRoot.recycle()
+                false
             }
-            delay(100)
         }
 
         if (sendButton == null) {
@@ -8505,10 +8614,44 @@ class ScreenAgentTools @Inject constructor(
         inputNode.recycle()
         rootNode.recycle()
 
-        return if (clicked) {
+        if (!clicked) {
+            return SendResult(success = false, error = "Could not click send button")
+        }
+
+        // Verify the message actually sent. performAction(ACTION_CLICK) returning
+        // true only means the action was dispatched, not that the message left —
+        // clicking the wrong control (e.g. a voice/record button) also returns
+        // true (see bug 1333). A real send clears the compose field, so poll the
+        // input: if the draft is gone the send happened; if it's still there we
+        // hit the wrong button. Assumes the app clears its input on send (true
+        // for Signal/WhatsApp/SMS/Messenger/Telegram).
+        val sentConfirmed = waitForCondition(maxWaitMs = 1200, maxIntervalMs = 200) {
+            val checkRoot = accessibilityService.getRootNodeForPackage(args.targetPackage)
+                ?: return@waitForCondition false
+            val checkInput = args.findInput(checkRoot)
+            val currentText = checkInput?.text?.toString() ?: ""
+            checkInput?.recycle()
+            checkRoot.recycle()
+            // Sent once the field clears (or no longer holds the draft).
+            currentText.isBlank() || !currentText.contains(args.message.trim())
+        }
+
+        return if (sentConfirmed) {
             SendResult(success = true, sent = true)
         } else {
-            SendResult(success = false, error = "Could not click send button")
+            Log.w(TAG, "sendDraftedMessageCore: clicked send but input still holds the draft; reporting not sent")
+            // Auto-capture Whiz's own view of the screen to Supabase so we can
+            // see which send-button nodes were actually available at send time
+            // (bug 1333 diagnostics) — no bug button / logcat timing needed.
+            accessibilityService.getRootNodeForPackage(args.targetPackage)?.let { failRoot ->
+                dumpUIHierarchy(failRoot, "send_verification_failed", "Send click did not clear the input; wrong button likely tapped")
+                failRoot.recycle()
+            }
+            SendResult(
+                success = true,
+                sent = false,
+                error = "Send button click did not send the message; text left in input"
+            )
         }
     }
 

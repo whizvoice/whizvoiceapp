@@ -33,10 +33,11 @@ import kotlinx.coroutines.CancellationException
 
 sealed class WebSocketEvent {
     data class Message(
-        val text: String, 
-        val requestId: String? = null, 
+        val text: String,
+        val requestId: String? = null,
         val conversationId: Long? = null,
-        val clientConversationId: Long? = null
+        val clientConversationId: Long? = null,
+        val serverTimestamp: String? = null  // Authoritative timestamp from server; client adopts it instead of recomputing +1ms
     ) : WebSocketEvent()
     data class ToolExecution(
         val toolRequest: org.json.JSONObject,
@@ -774,7 +775,10 @@ class WhizServerRepository @Inject constructor(
                                 val clientConversationId = if (jsonObject.has("client_conversation_id") && !jsonObject.isNull("client_conversation_id")) {
                                     jsonObject.getLong("client_conversation_id")
                                 } else null
-                                
+                                val serverTimestamp = if (jsonObject.has("timestamp") && !jsonObject.isNull("timestamp")) {
+                                    jsonObject.getString("timestamp")
+                                } else null
+
                                 // Update ConnectionStateManager if this is a migration from optimistic to real ID
                                 if (conversationId != null && conversationId > 0 && clientConversationId != null && clientConversationId < 0) {
                                     val lastActiveId = connectionStateManager.getLastActiveConversationId()
@@ -793,8 +797,8 @@ class WhizServerRepository @Inject constructor(
                                 Log.d(TAG, "Handling message type: $messageType with response field")
                                 
                                 val emitStartTime = System.currentTimeMillis()
-                                scope.launch { 
-                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId))
+                                scope.launch {
+                                    emitEvent(WebSocketEvent.Message(responseText, requestId, conversationId, clientConversationId, serverTimestamp))
                                     val emitEndTime = System.currentTimeMillis()
                                     val emitDuration = emitEndTime - emitStartTime
                                     if (emitDuration > 50) {
