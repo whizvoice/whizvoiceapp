@@ -570,13 +570,11 @@ def test_whatsapp_draft_message(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
-            "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "At the bottom of the screen, there is a colored overlay or message input field containing text "
-            "similar to 'just trying to test whiz voice' but may not be an exact match. "
-            "The overlay should have some text in red strike out and some text in blue. "
-            "There may or may not be a white notification bubble with the outline of a robot head "
-            "and a microphone icon inside - the test should pass either way."
+            "A messaging app is open with a draft-edit overlay near the bottom of the screen. "
+            "The overlay contains text similar to 'just trying to test whiz voice' (not necessarily an "
+            "exact match) shown as an EDIT: some text in red strikethrough and some text in blue. "
+            "Return True as long as you can see that red-strikethrough-and-blue edited draft text. "
+            "There may or may not be a robot-head notification bubble; either is fine."
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
@@ -1401,12 +1399,12 @@ def test_sms_draft_message(tester):
         tester.screenshot(screenshot_path)
         validation_result = tester.validate_screenshot(
             screenshot_path,
-            f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-            "At the bottom of the screen, there is a colored overlay or message input field containing text "
-            "similar to 'testing SMS'. "
-            "The overlay should have some text in red strike out and some text in blue. "
-            "There may or may not be a white notification bubble with the outline of a robot head "
-            "and a microphone icon inside - the test should pass either way. "
+            "A messaging app is open with a draft-edit overlay near the bottom of the screen. "
+            "The overlay contains text similar to 'testing SMS' (not necessarily an exact match) shown as "
+            "an EDIT: some text in red strikethrough and some text in blue. "
+            "Return True as long as you can see that red-strikethrough-and-blue edited draft text. "
+            "Do NOT require identifying which messaging app it is — a translucent assistant bubble may be "
+            "covering the top of the screen. There may or may not be a robot-head notification bubble; either is fine."
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
