@@ -8,43 +8,53 @@ from helpers import (
 )
 
 
-def test_autofix_ytmusic_app_not_ready(tester):
-    """Verify fix for ytmusic_app_not_ready.
+def test_autofix_app_not_found(tester):
+    """Verify fix for app_not_found.
 
-    Tests that the screen agent can detect YouTube Music as ready even when
-    the Whiz bubble overlay or another window has the active-window slot.
-    The fix adds a windows-list fallback to waitForAppReady so the target
-    app is detected as soon as its window appears anywhere in the window list.
+    The screen agent's launchApp() failed to resolve the spoken name
+    "Google Maps" because the Google Maps app's display label is just
+    "Maps": the fuzzy matcher only checked whether the app label contains
+    the (longer) search term, and the common-mappings table only had the
+    key "maps", not "google maps". Both returned no match -> app_not_found.
+
+    The fix adds "google maps" -> com.google.android.apps.maps to both
+    mapping tables and teaches calculateMatchScore to also match when the
+    spoken name contains the app's label as a whole word. This test sends
+    the exact voice command that triggered the failure ("open Google Maps")
+    and verifies Google Maps actually launches.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
+    success, error = navigate_to_my_chats(tester, "autofix_app_not_found")
     assert success, f"Could not reach My Chats: {error}"
 
+    # Open a new chat and let the UI settle before issuing the voice command.
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("play Clean Bandit on YouTube Music")
-    time.sleep(40)
+    # Same user action that caused the original failure.
+    send_voice_command("open Google Maps")
+    time.sleep(25)  # wait for the screen agent to resolve and launch the app
 
-    tester.screenshot("/tmp/whiz_ytmusic_play.png")
+    tester.screenshot("/tmp/whiz_maps_launch.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_play.png",
-        "YouTube Music is open and showing search results, an artist/song page, "
-        "a now-playing screen with playback controls, or a sign-in / onboarding "
-        "screen with options to sign in or browse device files"
+        "/tmp/whiz_maps_launch.png",
+        "The Google Maps app is open, showing a map, a search bar, location "
+        "permission/onboarding prompt, or a 'You' / explore screen"
     )
     if not result:
+        # Fall back to checking the Whiz chat for a non-error response so we can
+        # distinguish 'Maps opened but vision missed it' from a real failure.
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
+        tester.screenshot("/tmp/whiz_maps_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_ytmusic_chat_result.png",
-            "The Whiz chat shows an assistant message about playing music or about "
-            "YouTube Music. It should NOT show an error about YouTube Music not "
-            "becoming ready in time."
+            "/tmp/whiz_maps_chat_result.png",
+            "The Whiz chat shows an assistant message about opening Google Maps "
+            "or Maps. It should NOT show an error like 'Could not find an app "
+            "matching Google Maps' or that the app could not be found."
         )
         if not result:
-            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
+            save_failed_screenshot(tester, "autofix_app_not_found", "validation_failed")
     assert result, (
-        "YouTube Music did not reach a ready state after deep link launch — "
-        "ytmusic_app_not_ready may still be triggering"
+        "Google Maps did not launch from the spoken name 'Google Maps' — "
+        "app_not_found may still be triggering"
     )

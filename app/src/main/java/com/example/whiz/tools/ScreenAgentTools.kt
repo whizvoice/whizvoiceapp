@@ -494,6 +494,7 @@ class ScreenAgentTools @Inject constructor(
                 "youtube" to "com.google.android.youtube",
                 "youtube music" to "com.google.android.apps.youtube.music",
                 "maps" to "com.google.android.apps.maps",
+                "google maps" to "com.google.android.apps.maps",
                 "play store" to "com.android.vending",
                 "camera" to "com.android.camera2",
                 "photos" to "com.google.android.apps.photos",
@@ -734,6 +735,7 @@ class ScreenAgentTools @Inject constructor(
         "youtube" to "com.google.android.youtube",
         "youtube music" to "com.google.android.apps.youtube.music",
         "maps" to "com.google.android.apps.maps",
+        "google maps" to "com.google.android.apps.maps",
         "play store" to "com.android.vending",
         "camera" to "com.android.camera2",
         "photos" to "com.google.android.apps.photos",
@@ -1193,7 +1195,14 @@ class ScreenAgentTools @Inject constructor(
                 if (word.startsWith(searchTerm)) return 0.6f
             }
         }
-        
+
+        // Search term contains the app's label as a whole word (e.g. "google maps"
+        // when the app's display label is just "Maps", or "google photos" -> "Photos").
+        // Handles spoken names that are longer/more qualified than the actual label.
+        if (normalizedLabel.length >= 3 && searchTerm.split(" ").contains(normalizedLabel)) {
+            return 0.6f
+        }
+
         return 0.0f
     }
     
