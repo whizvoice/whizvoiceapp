@@ -248,8 +248,21 @@ class BubbleOverlayService : Service() {
             scope = serviceScope,
             durationMs = INACTIVITY_TIMEOUT_MS,
             onTimeout = {
-                Log.d(TAG, "Inactivity timeout fired - stopping bubble overlay")
+                Log.d(TAG, "Inactivity timeout fired - stopping bubble overlay and closing app")
+                // In bubble mode this timer is the sole idle owner, so it must close EVERYTHING:
+                // stop() removes the bubble and stops the mic (onDestroy), and the callback finishes
+                // MainActivity if it's still alive in the background. Null-safe if it's already gone.
                 BubbleOverlayService.stop(this@BubbleOverlayService)
+                val finishCallback = MainActivity.finishAndRemoveTaskCallback
+                if (finishCallback != null) {
+                    // finishAndRemoveTask() must run on the main thread (mirror ToolExecutor).
+                    Handler(Looper.getMainLooper()).post {
+                        Log.d(TAG, "Inactivity timeout - invoking finishAndRemoveTaskCallback")
+                        finishCallback()
+                    }
+                } else {
+                    Log.d(TAG, "Inactivity timeout - finishAndRemoveTaskCallback null (MainActivity already gone)")
+                }
             }
         )
         inactivityTimer.reset()
@@ -328,6 +341,11 @@ class BubbleOverlayService : Service() {
             voiceManager.transcriptionState.collect { partialText ->
                 if (isActive && voiceManager.isListening.value && partialText.isNotBlank()) {
                     showPartialMessage(partialText)
+                    // Talking to the bubble counts as activity: refresh the countdown on every
+                    // partial so a long utterance never times out mid-speech (finals reset above).
+                    if (::inactivityTimer.isInitialized) {
+                        inactivityTimer.noteActivity()
+                    }
                 }
             }
         }

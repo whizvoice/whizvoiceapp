@@ -40,6 +40,32 @@ class InactivityTimer(
         }
     }
 
+    /**
+     * Registers user activity: refreshes the countdown to the full duration WITHOUT
+     * touching pause sources (unlike reset(), which clears them). Use this for activity
+     * signals that may arrive while the timer is legitimately paused (e.g. a voice partial
+     * during a running "tool" or while another surface owns idle) so they don't wrongly
+     * un-pause it. If currently paused, just refills the remaining budget so a later resume()
+     * starts a fresh full countdown.
+     */
+    @Synchronized
+    fun noteActivity() {
+        if (cancelled || fired) return
+        if (pauseSources.isNotEmpty()) {
+            // Paused: don't start ticking; just refill so resume() gets the full duration.
+            remainingMs = durationMs
+            return
+        }
+        job?.cancel()
+        remainingMs = durationMs
+        startTimeMs = SystemClock.elapsedRealtime()
+        deadlineMs = startTimeMs + durationMs
+        job = scope.launch {
+            delay(durationMs)
+            fire()
+        }
+    }
+
     @Synchronized
     fun pause(source: String) {
         if (cancelled) return

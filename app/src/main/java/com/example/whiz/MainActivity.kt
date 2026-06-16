@@ -315,6 +315,12 @@ class MainActivity : ComponentActivity() {
             durationMs = INACTIVITY_TIMEOUT_MS,
             onTimeout = {
                 Log.d(TAG, "Inactivity timeout fired - calling finishAndRemoveTask()")
+                // Defensive: under the single-owner handoff our timer is paused whenever a
+                // bubble is active, so this rarely runs with a bubble up. Stop it anyway so we
+                // never leave a zombie "listening" bubble behind. stop() is idempotent.
+                if (BubbleOverlayService.isActive) {
+                    BubbleOverlayService.stop(this@MainActivity)
+                }
                 finishAndRemoveTask()
             }
         )
@@ -329,6 +335,32 @@ class MainActivity : ComponentActivity() {
                     inactivityTimer.pause("tool")
                 } else {
                     inactivityTimer.resume("tool")
+                }
+            }
+        }
+
+        // Hand idle ownership to the bubble: while we're backgrounded AND a bubble owns the
+        // session, pause our timer so the bubble's timer is the sole authority (it has the
+        // proper voice/tool/mic guards). Always resume while foreground (never both-paused).
+        // With no bubble, we keep ticking while backgrounded so pure idle still closes (#1347).
+        lifecycleScope.launch {
+            appLifecycleService.isInForegroundFlow.collect { inForeground ->
+                val bubbleOwns = BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart
+                if (!inForeground && bubbleOwns) {
+                    inactivityTimer.pause("bubble")
+                } else {
+                    inactivityTimer.resume("bubble")
+                }
+            }
+        }
+
+        // Voice activity counts as activity: talking to the app (even with no screen touches)
+        // refreshes the countdown so it never fires mid-conversation. noteActivity() preserves
+        // pause sources, so a partial during a tool won't wrongly un-pause the timer.
+        lifecycleScope.launch {
+            voiceManager.transcriptionState.collect { partialText ->
+                if (partialText.isNotBlank()) {
+                    inactivityTimer.noteActivity()
                 }
             }
         }
