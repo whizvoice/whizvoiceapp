@@ -96,6 +96,36 @@ Key files:
 
 Please refer to whizvoiceapp/.supabaseinfo for info about what's in the database and what functions are in the database.
 
+## Health Connect Integration (calorie / weight logging)
+
+Whiz logs calories and weight via the `agent_log_health_data` tool, which writes a `NutritionRecord` / `WeightRecord` into **Health Connect** (`HealthConnectManager.kt`). Whiz only ever *writes* to Health Connect — it is up to a separate consuming app (Google Health, Samsung Health, etc.) to *read* that data out and display it. This split is the source of a confusing class of "Wizvoice says it logged but I don't see it" reports.
+
+### Why "logged successfully" can still show nothing in the user's health app
+
+- A successful Health Connect write (`source: "health_connect"`, "Wrote N kcal to Health Connect" in logcat) only means the data is in the Health Connect hub. It does **not** mean any app will display it.
+- **Whiz cannot detect whether another app is connected.** The Health Connect SDK only exposes the *calling app's own* grants (`permissionController.getGrantedPermissions()`); there is no API (and no permission you can request) to query another app's connection or read permissions. This is a platform privacy wall, not a Whiz misconfiguration.
+- Because of that wall, `HealthConnectManager.unconnectedHealthApps()` uses a **proxy heuristic**: it scans Health Connect records from the last 180 days and treats an app as "connected" if its package appears as a record's `dataOrigin`. This is unreliable in two ways:
+  1. *Writing ≠ reading.* An app that writes weight (e.g. Google Health historically did) is counted "connected" even though it does not read nutrition.
+  2. *Stale data.* Records written before the app was disconnected still carry its `dataOrigin`, so a 180-day-old write makes a now-disconnected app look connected.
+- When the proxy false-positives, the `requires_connection` warning in `ToolExecutor.kt` is **suppressed** (logcat: `Skipping unconnected-apps prompt — non-Whiz HC writers present: [...]`) and the user gets a clean "Logged ✅" for data that is invisible in their app.
+- **App updates silently revoke Health Connect grants.** The Fitbit → "Google Health" in-place rebrand (`com.fitbit.FitbitMobile`) reset its Health Connect permissions on update; the user had connected it before, but the grant was wiped. Re-granting is manual (below).
+- Even when connected, Google Health's "Calories intake" may be its own food-log silo that does not ingest Health Connect nutrition. Re-granting Nutrition read is the right first step, but may still not surface Whiz-logged calories — that would be a Google Health limitation, not a Whiz bug.
+
+### Connecting a health app: `agent_open_health_app_settings`
+
+Use this tool to help the user connect a consuming app to Health Connect. Two scenarios: (1) follow-up when `agent_log_health_data` returns `reason: "requires_connection"` + an `unconnected_health_apps` array; (2) the user directly asks to connect a health app (e.g. "connect Google Health"). Do **not** use `agent_launch_app` for this — this tool's dialog flow is the correct path.
+
+What it does: shows an in-app confirmation dialog, then on confirm fires the `android.health.connect.action.HEALTH_HOME_SETTINGS` intent (`MainActivity.kt`), landing on Health Connect's **"Your health apps"** list. It opens Health Connect itself, **not** the third-party app — the user picks which app to connect from there.
+
+### The manual grant flow the user must complete (and the gotcha)
+
+After the tool opens Health Connect, the user has to drill in — and it is **not obvious from the screens that permissions are off by default**:
+
+1. **"Your health apps"** list — the consuming app (e.g. "Health" = Google Health, `com.fitbit.FitbitMobile`) may show **"Not connected"** even if it previously had access (e.g. reset by an app update). This list label is the authoritative connection status.
+2. Tap the app → **"App access"** screen. This shows permission **categories**, not individual data types: "Fitness and wellness" (exercise, sleep, **nutrition**, …), "Medical records", "Additional access" (past data, background data).
+3. **GOTCHA — you must tap INTO each category and explicitly allow the data types.** From the "App access" screen it is *not* clear that the categories are currently denied. Merely viewing it grants nothing. The user must open **each** category ("Fitness and wellness", "Medical records", "Additional access") and turn on the relevant toggles (for calories: **Nutrition** read). When guiding a user, tell them explicitly to click into each category and allow — don't let them assume the first screen connected it.
+4. **"Remove access for this app"** appears on the "App access" screen even when nothing meaningful is granted, so its presence does **not** mean the app is connected. Trust the "Not connected" label on the list, not this button.
+
 ## Message Ordering and Timestamp Constraints
 
 To ensure proper conversation history when messages are saved to the database and loaded back, the following constraints MUST be maintained:
