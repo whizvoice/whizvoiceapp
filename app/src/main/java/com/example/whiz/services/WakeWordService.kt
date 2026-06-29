@@ -581,16 +581,38 @@ class WakeWordService : Service() {
                 dim = CamPlusOrtEmbedder.EMBEDDING_DIM,
                 cap = 50,
                 protectedCap = 5,
+                // Mirror enrollment to the external files dir so it's adb-pullable on
+                // any build (no run-as / debuggable) for offline voice-match verification.
+                mirrorDir = File(getExternalFilesDir(null), "wake_word"),
             )
+            val verifierThreshold = wakeWordPreferences.verifierThresholdOnce()
+            writeVerifierDebugMeta(verifierThreshold, store.count())
             SpeakerVerifier(
                 embedder = embedder,
                 store = store,
-                threshold = wakeWordPreferences.verifierThresholdOnce(),
+                threshold = verifierThreshold,
                 enforceGate = true,
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to build SpeakerVerifier — falling back to stage-1 only", e)
             null
+        }
+    }
+
+    /**
+     * Mirror the verifier config next to the mirrored embeddings.bin in the external
+     * files dir, so an offline gate-5 replay is fully self-contained from a plain
+     * `adb pull /sdcard/Android/data/<pkg>/files/wake_word/`. Best-effort.
+     */
+    private fun writeVerifierDebugMeta(threshold: Float, enrolledCount: Int) {
+        try {
+            val dir = File(getExternalFilesDir(null), "wake_word").apply { mkdirs() }
+            val enabled = wakeWordPreferences.isVoiceMatchEnabledOnce()
+            val json = "{\"verifier_threshold\":$threshold,\"enforce_gate\":true," +
+                "\"enrolled_count\":$enrolledCount,\"voice_match_enabled\":$enabled}"
+            File(dir, "verifier_meta.json").writeText(json)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write verifier debug meta", e)
         }
     }
 

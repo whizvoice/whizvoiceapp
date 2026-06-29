@@ -16,12 +16,18 @@ import java.io.File
  *
  * The first protected_count vectors are the initial enrollment (never evicted).
  * Subsequent vectors are FIFO-evicted past cap.
+ *
+ * If [mirrorDir] is non-null, every load/save also copies embeddings.bin there.
+ * Point it at the app's external files dir so the enrollment is pullable with a
+ * plain `adb pull` on any build (no run-as / debuggable) for offline voice-match
+ * (gate-5) verification.
  */
 class EnrolledEmbeddingStore(
     private val dir: File,
     private val dim: Int,
     private val cap: Int,
     private val protectedCap: Int,
+    private val mirrorDir: File? = null,
 ) : SpeakerVerifier.EmbeddingStore {
 
     init {
@@ -33,7 +39,7 @@ class EnrolledEmbeddingStore(
     private var entries: MutableList<FloatArray> = mutableListOf()
     private var protectedCount: Int = 0
 
-    init { load() }
+    init { load(); mirror() }
 
     override fun all(): List<FloatArray> = entries.map { it.copyOf() }
 
@@ -70,6 +76,23 @@ class EnrolledEmbeddingStore(
             out.writeInt(protectedCount)
             out.writeInt(entries.size)
             for (v in entries) for (x in v) out.writeFloat(x)
+        }
+        mirror()
+    }
+
+    /**
+     * Best-effort copy of embeddings.bin into [mirrorDir] so it can be pulled with a
+     * plain `adb pull` for offline voice-match verification. Never throws — a mirror
+     * failure must not break enrollment.
+     */
+    private fun mirror() {
+        val md = mirrorDir ?: return
+        try {
+            if (!file.exists()) return
+            md.mkdirs()
+            file.copyTo(File(md, "embeddings.bin"), overwrite = true)
+        } catch (_: Exception) {
+            // mirror is a debug convenience; ignore failures
         }
     }
 
