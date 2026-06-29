@@ -381,6 +381,13 @@ class MessageDraftOverlayService : Service() {
         // Build the spannable string from the diffs
         for (diff in diffs) {
             Log.d(TAG, "Diff part: operation=${diff.operation}, text='${diff.text}'")
+            // Whitespace-only deletions (e.g. removed newlines) would still render their line
+            // breaks even when struck through, visually splitting an otherwise single-line draft
+            // across multiple lines (bug #1404). Drop them entirely — don't append, don't style.
+            if (diff.operation == DiffMatchPatch.Operation.DELETE && diff.text.isBlank()) {
+                Log.d(TAG, "Skipping whitespace-only deletion: '${diff.text}'")
+                continue
+            }
             val start = result.length
             result.append(diff.text)
             val end = result.length
