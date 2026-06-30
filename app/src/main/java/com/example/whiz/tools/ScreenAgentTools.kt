@@ -245,7 +245,10 @@ class ScreenAgentTools @Inject constructor(
         val action: String,
         val location: String? = null,
         val mode: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // True/false only for the directions flow, where we verify turn-by-turn navigation actually
+        // started after tapping Start (bug 1410). Null for all other actions that don't apply.
+        val navStarted: Boolean? = null
     )
 
     data class CallButtonResult(
@@ -4994,10 +4997,10 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Select transportation mode if needed and click Start
-            val success = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
+            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
             modeRootNode.recycle()
 
-            if (!success) {
+            if (!started) {
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",
@@ -5006,10 +5009,35 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Verify navigation ACTUALLY started. performAction(ACTION_CLICK) returning true only means
+            // the tap was dispatched to the Start node — not that Maps acted on it. If Start is tapped
+            // before the directions screen is fully interactive (route still calculating / sheet still
+            // animating), the tap no-ops yet we'd report success (bug 1410: "route didn't start the
+            // first time"). Confirm we reached ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL
+            // (transit), re-tapping Start once if not.
+            val navStarted = verifyNavigationStarted(accessibilityService, mode)
+            if (!navStarted) {
+                Log.w(TAG, "Start was tapped but navigation did not begin")
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_navigation_not_started", "Start was tapped but navigation did not begin (likely tapped before the route was ready)")
+                    dumpRoot.recycle()
+                }
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    navStarted = false,
+                    error = "Tapped Start but navigation did not start"
+                )
+            }
+
+            Log.d(TAG, "Navigation confirmed started for directions (mode=${mode ?: "default"})")
             return MapsActionResult(
                 success = true,
                 action = "get_directions",
-                mode = mode
+                mode = mode,
+                navStarted = true
             )
 
         } catch (e: Exception) {
@@ -5026,6 +5054,49 @@ class ScreenAgentTools @Inject constructor(
                 error = "Error getting directions: ${e.message}"
             )
         }
+    }
+
+    /**
+     * Verify that navigation actually started after Start was tapped, re-tapping once if needed.
+     *
+     * selectTransportModeAndStart returns true as soon as ACTION_CLICK on Start is dispatched, but a
+     * dispatched click is not necessarily an effective one — if Maps' directions screen isn't fully
+     * interactive yet, the tap no-ops and navigation never begins (bug 1410). We confirm by polling
+     * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
+     *
+     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 8s appReady + 10s
+     * directions waits above (both ceilings rarely hit together), worst case stays under the 25s
+     * server timeout (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
+     */
+    private suspend fun verifyNavigationStarted(
+        accessibilityService: WhizAccessibilityService,
+        mode: String?
+    ): Boolean {
+        val maxTaps = 2  // the original Start tap already happened; allow one re-tap
+        for (tap in 1..maxTaps) {
+            val confirmed = waitForCondition(maxWaitMs = 2500, maxIntervalMs = 300) {
+                val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
+                    ?: return@waitForCondition false
+                val state = detectGoogleMapsScreenState(node)
+                node.recycle()
+                state == GoogleMapsScreenState.ACTIVE_NAVIGATION ||
+                    state == GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
+            }
+            if (confirmed) {
+                Log.d(TAG, "Navigation start confirmed after $tap Start tap(s)")
+                return true
+            }
+            if (tap < maxTaps) {
+                Log.w(TAG, "Navigation not started after tap $tap; re-tapping Start")
+                val retryRoot = accessibilityService.getCurrentRootNode()
+                if (retryRoot != null) {
+                    selectTransportModeAndStart(retryRoot, mode, accessibilityService)
+                    retryRoot.recycle()
+                }
+            }
+        }
+        Log.w(TAG, "Navigation did not start after $maxTaps Start tap(s)")
+        return false
     }
 
     suspend fun recenterGoogleMaps(): MapsActionResult {

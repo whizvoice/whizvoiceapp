@@ -1536,6 +1536,7 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.mode?.let { put("mode", it) }
+                result.navStarted?.let { put("nav_started", it) }
                 result.error?.let { put("error", it) }
             }
 
