@@ -325,7 +325,6 @@ class WakeWordService : Service() {
                         smoother = smoother,
                         verifier = verifier,
                         baseStage1Threshold = SMOOTHER_ENTER_THRESHOLD,
-                        adaptiveThreshold = null,  // Phase C, out of scope
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "WakeWordEngine init failed — stopping detection", e)
