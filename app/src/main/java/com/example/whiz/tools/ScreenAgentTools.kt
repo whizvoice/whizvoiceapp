@@ -49,6 +49,89 @@ class ScreenAgentTools @Inject constructor(
     private val recentActions = mutableListOf<String>()
     private val maxRecentActions = 5
 
+    companion object {
+        /**
+         * Single source of truth mapping a normalized (lowercased, trimmed) app name to a
+         * package name. Shared by launchApp, resolvePackageName and closeOtherApp so the
+         * mappings can't drift apart.
+         *
+         * Includes natural-language "google X" aliases the model is trained to emit
+         * (e.g. "google maps") even though the device launcher label is just "Maps".
+         * calculateMatchScore is the generic fallback; these are the deterministic backstop.
+         */
+        internal val APP_NAME_TO_PACKAGE: Map<String, String> = mapOf(
+            "chrome" to "com.android.chrome",
+            "google chrome" to "com.android.chrome",
+            "gmail" to "com.google.android.gm",
+            "youtube" to "com.google.android.youtube",
+            "youtube music" to "com.google.android.apps.youtube.music",
+            "maps" to "com.google.android.apps.maps",
+            "google maps" to "com.google.android.apps.maps",
+            "play store" to "com.android.vending",
+            "google play store" to "com.android.vending",
+            "camera" to "com.android.camera2",
+            "photos" to "com.google.android.apps.photos",
+            "google photos" to "com.google.android.apps.photos",
+            "calendar" to "com.google.android.calendar",
+            "google calendar" to "com.google.android.calendar",
+            "calculator" to "com.google.android.calculator2",
+            "clock" to "com.google.android.deskclock",
+            "messages" to "com.google.android.apps.messaging",
+            "google messages" to "com.google.android.apps.messaging",
+            "whatsapp" to "com.whatsapp",
+            "instagram" to "com.instagram.android",
+            "facebook" to "com.facebook.katana",
+            "twitter" to "com.twitter.android",
+            "x" to "com.twitter.android",
+            "spotify" to "com.spotify.music",
+            "netflix" to "com.netflix.mediaclient",
+            "settings" to "com.android.settings",
+            "asana" to "com.asana.app",
+            "a sauna" to "com.asana.app"
+        )
+
+        /**
+         * Score how well a user-provided [searchTerm] (already normalized) matches an
+         * installed app's [appLabel] / [packageName]. Pure function: 0.0 = no match,
+         * 1.0 = exact. Callers treat >= 0.5 as a usable match.
+         */
+        internal fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
+            val normalizedLabel = appLabel.lowercase()
+            val normalizedPackage = packageName.lowercase()
+
+            // Exact match
+            if (normalizedLabel == searchTerm) return 1.0f
+
+            // Label starts with search term
+            if (normalizedLabel.startsWith(searchTerm)) return 0.9f
+
+            // Label contains search term as a word
+            if (normalizedLabel.split(" ").contains(searchTerm)) return 0.8f
+
+            // Label contains search term
+            if (normalizedLabel.contains(searchTerm)) return 0.7f
+
+            // Search term is more specific than the label (e.g. "google maps" -> label
+            // "Maps"): match when the label equals the last (head) word of the search
+            // term. Restricted to the head word so a leading qualifier like "google" in
+            // "google maps" can't match a separate app whose label is just "Google".
+            val searchWords = searchTerm.split(" ")
+            if (searchWords.size > 1 && normalizedLabel == searchWords.last()) return 0.8f
+
+            // Package name contains search term (less priority)
+            if (normalizedPackage.contains(searchTerm)) return 0.5f
+
+            // Check for partial word matches (e.g., "cal" for "calculator")
+            if (searchTerm.length >= 3) {
+                for (word in normalizedLabel.split(" ")) {
+                    if (word.startsWith(searchTerm)) return 0.6f
+                }
+            }
+
+            return 0.0f
+        }
+    }
+
     /**
      * Track an action for UI dump context.
      * Call this when performing significant screen agent actions.
@@ -487,35 +570,9 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
             
-            // Common app name mappings
-            val commonMappings = mapOf(
-                "chrome" to "com.android.chrome",
-                "gmail" to "com.google.android.gm",
-                "youtube" to "com.google.android.youtube",
-                "youtube music" to "com.google.android.apps.youtube.music",
-                "maps" to "com.google.android.apps.maps",
-                "play store" to "com.android.vending",
-                "camera" to "com.android.camera2",
-                "photos" to "com.google.android.apps.photos",
-                "calendar" to "com.google.android.calendar",
-                "calculator" to "com.google.android.calculator2",
-                "clock" to "com.google.android.deskclock",
-                "messages" to "com.google.android.apps.messaging",
-                "whatsapp" to "com.whatsapp",
-                "instagram" to "com.instagram.android",
-                "facebook" to "com.facebook.katana",
-                "twitter" to "com.twitter.android",
-                "x" to "com.twitter.android",
-                "spotify" to "com.spotify.music",
-                "netflix" to "com.netflix.mediaclient",
-                "settings" to "com.android.settings",
-                "asana" to "com.asana.app",
-                "a sauna" to "com.asana.app"
-            )
-            
-            // Try common mappings
+            // Try common mappings (shared source of truth: APP_NAME_TO_PACKAGE)
             Log.d(TAG, "Checking common mappings for: $normalizedAppName")
-            val mappedPackage = commonMappings[normalizedAppName]
+            val mappedPackage = APP_NAME_TO_PACKAGE[normalizedAppName]
             Log.d(TAG, "Mapped package for '$normalizedAppName': $mappedPackage")
             if (mappedPackage != null) {
                 var launchIntent = packageManager.getLaunchIntentForPackage(mappedPackage)
@@ -725,33 +782,6 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== Close Other App Functions ==========
 
-    /**
-     * Common app name mappings shared between launchApp and closeOtherApp.
-     */
-    private val commonAppMappings = mapOf(
-        "chrome" to "com.android.chrome",
-        "gmail" to "com.google.android.gm",
-        "youtube" to "com.google.android.youtube",
-        "youtube music" to "com.google.android.apps.youtube.music",
-        "maps" to "com.google.android.apps.maps",
-        "play store" to "com.android.vending",
-        "camera" to "com.android.camera2",
-        "photos" to "com.google.android.apps.photos",
-        "calendar" to "com.google.android.calendar",
-        "calculator" to "com.google.android.calculator2",
-        "clock" to "com.google.android.deskclock",
-        "messages" to "com.google.android.apps.messaging",
-        "whatsapp" to "com.whatsapp",
-        "instagram" to "com.instagram.android",
-        "facebook" to "com.facebook.katana",
-        "twitter" to "com.twitter.android",
-        "x" to "com.twitter.android",
-        "spotify" to "com.spotify.music",
-        "netflix" to "com.netflix.mediaclient",
-        "settings" to "com.android.settings",
-        "asana" to "com.asana.app",
-        "a sauna" to "com.asana.app"
-    )
 
     /**
      * Resolve a user-provided app name to a (packageName, appLabel) pair.
@@ -779,8 +809,8 @@ class ScreenAgentTools @Inject constructor(
             return Pair(bestMatch.first, bestMatch.second)
         }
 
-        // Fall back to common mappings
-        val mappedPackage = commonAppMappings[normalizedAppName]
+        // Fall back to common mappings (shared source of truth: APP_NAME_TO_PACKAGE)
+        val mappedPackage = APP_NAME_TO_PACKAGE[normalizedAppName]
         if (mappedPackage != null) {
             val appLabel = try {
                 packageManager.getApplicationLabel(
@@ -1168,35 +1198,6 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
 
-    private fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
-        val normalizedLabel = appLabel.lowercase()
-        val normalizedPackage = packageName.lowercase()
-        
-        // Exact match
-        if (normalizedLabel == searchTerm) return 1.0f
-        
-        // Label starts with search term
-        if (normalizedLabel.startsWith(searchTerm)) return 0.9f
-        
-        // Label contains search term as a word
-        if (normalizedLabel.split(" ").contains(searchTerm)) return 0.8f
-        
-        // Label contains search term
-        if (normalizedLabel.contains(searchTerm)) return 0.7f
-        
-        // Package name contains search term (less priority)
-        if (normalizedPackage.contains(searchTerm)) return 0.5f
-        
-        // Check for partial word matches (e.g., "cal" for "calculator")
-        if (searchTerm.length >= 3) {
-            for (word in normalizedLabel.split(" ")) {
-                if (word.startsWith(searchTerm)) return 0.6f
-            }
-        }
-        
-        return 0.0f
-    }
-    
     // ========== Generic Screen Navigation Functions ==========
 
     /**
