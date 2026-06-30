@@ -846,6 +846,29 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    /**
+     * Promote an arbitrary string into the real final-transcription pipeline, exactly as if the
+     * speech recognizer had returned it via onResults: emits on [transcriptionFlow] (which
+     * ChatViewModel collects to actually SEND) with a fresh seq, and invokes the legacy callback.
+     *
+     * Used by BubbleOverlayService's stuck-partial watchdog. When a partial is displayed but the
+     * recognizer never produces a final (common for short confirmations like "yes"/"no"), the
+     * watchdog needs that text to be SENT, not just shown. Routing it here makes it indistinguishable
+     * from a normal final, so the SpeechRecognitionService dedup (BubbleOverlayService.lastAutoSentText)
+     * correctly suppresses any late real final instead of double-sending.
+     */
+    fun emitFinalTranscription(text: String) {
+        if (text.isBlank()) return
+        val emission = TranscriptionEmission(
+            text = text,
+            seq = transcriptionSeqCounter.incrementAndGet()
+        )
+        coroutineScope.launch {
+            _transcriptionFlow.emit(emission)
+        }
+        transcriptionCallback?.invoke(text)
+    }
+
     fun toggleContinuousListening() {
         val newState = !continuousListeningEnabled
         Log.d(TAG, "Continuous listening toggled to: $newState")

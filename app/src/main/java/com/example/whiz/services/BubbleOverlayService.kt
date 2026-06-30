@@ -1054,7 +1054,11 @@ class BubbleOverlayService : Service() {
                     isShowingPartial = false
                     lastAutoSentText = textToSend
                     lastAutoSentTimestamp = System.currentTimeMillis()
-                    _userTranscriptionFlow.emit(textToSend)
+                    // Route through the real final pipeline so this actually gets SENT, not just
+                    // displayed. _userTranscriptionFlow is display-only (its sole collector paints the
+                    // bubble); the send path moved to voiceManager.transcriptionFlow, which ChatViewModel
+                    // collects. The bubble's own transcriptionFlow collector still echoes this for display.
+                    voiceManager.emitFinalTranscription(textToSend)
                 }
             }
             // No auto-hide scheduled — stays visible as long as partials keep arriving
