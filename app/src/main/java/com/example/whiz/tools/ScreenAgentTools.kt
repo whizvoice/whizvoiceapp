@@ -263,6 +263,7 @@ class ScreenAgentTools @Inject constructor(
         val action: String? = null,
         val dataType: String? = null,
         val value: Double? = null,
+        val date: String? = null,
         val source: String? = null,
         val error: String? = null,
     )

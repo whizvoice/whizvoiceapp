@@ -2294,11 +2294,24 @@ class ToolExecutor @Inject constructor(
         try {
             val dataType = params.getString("data_type")
             val value = params.getDouble("value")
-            Log.i(TAG, "Logging health data: type=$dataType value=$value")
+            // Optional backdating: an ISO date (YYYY-MM-DD). Absent → log to now (default).
+            val dateStr = if (params.has("date") && !params.isNull("date")) params.optString("date", null) else null
+            val logDate: java.time.LocalDate? = dateStr?.let {
+                try {
+                    java.time.LocalDate.parse(it)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Invalid date '$it' for agent_log_health_data; ignoring")
+                    null
+                }
+            }
+            // Backdating is only honored by Health Connect; the Fitbit UI fallback can't
+            // target a past day, so we must not silently log a backdated entry to today.
+            val isBackdated = logDate != null && logDate.isBefore(java.time.LocalDate.now(java.time.ZoneId.systemDefault()))
+            Log.i(TAG, "Logging health data: type=$dataType value=$value date=${logDate ?: "today"}")
 
             suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
-                "calories" -> healthConnectManager.logCalories(value.toInt())
-                "weight" -> healthConnectManager.logWeight(value)
+                "calories" -> healthConnectManager.logCalories(value.toInt(), logDate)
+                "weight" -> healthConnectManager.logWeight(value, logDate)
                 else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
             }
 
@@ -2383,12 +2396,25 @@ class ToolExecutor @Inject constructor(
                     action = "logged_via_health_connect",
                     dataType = dataType,
                     value = value,
+                    date = dateStr,
                     source = "health_connect",
                 )
 
                 is com.example.whiz.health.HealthConnectManager.Result.Unavailable,
                 is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> {
-                    if (dataType == "calories") {
+                    if (dataType == "calories" && isBackdated) {
+                        // The Fitbit UI fallback can only log to today, so it would silently
+                        // put a backdated entry on the wrong day. Fail clearly instead.
+                        Log.i(TAG, "Health Connect not usable and date is backdated ($logDate); refusing Fitbit UI fallback")
+                        ScreenAgentTools.HealthDataResult(
+                            success = false,
+                            dataType = dataType,
+                            value = value,
+                            date = dateStr,
+                            source = "health_connect",
+                            error = "Backdating calories to $logDate requires Health Connect, which is unavailable or lacks write permission. Only today's calories can be logged via the Fitbit fallback.",
+                        )
+                    } else if (dataType == "calories") {
                         Log.i(TAG, "Health Connect not usable (${hcResult.javaClass.simpleName}); falling back to Fitbit UI for calories")
                         screenAgentTools.addFitbitQuickCalories(value.toInt())
                     } else {
@@ -2419,6 +2445,7 @@ class ToolExecutor @Inject constructor(
                 result.action?.let { put("action", it) }
                 result.dataType?.let { put("data_type", it) }
                 result.value?.let { put("value", it) }
+                result.date?.let { put("date", it) }
                 result.source?.let { put("source", it) }
                 result.error?.let { put("error", it) }
             }
