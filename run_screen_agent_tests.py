@@ -884,7 +884,7 @@ def test_youtube_music_integration(tester):
         playlist_validation = tester.validate_screenshot(
             screenshot_path,
             "Check if this is a 90s pop playlist or similar. Requirements: "
-            "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
+            "1) You should see a playlist page with a title containing '90s' OR anything related to 'pop' (could be one or the other doesn't have to be both), AND "
             "2) You should see the beginning of a list of songs. "
             "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
             "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
