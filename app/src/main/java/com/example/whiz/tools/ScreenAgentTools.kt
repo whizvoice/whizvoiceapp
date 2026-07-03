@@ -5002,6 +5002,14 @@ class ScreenAgentTools @Inject constructor(
             modeRootNode.recycle()
 
             if (!started) {
+                // Capture a UI dump for this failure too. Unlike the "directions screen didn't load"
+                // branch above, this path — screen loaded and the mode was selected, but the Start
+                // button couldn't be found/clicked — previously returned with no dump, leaving the
+                // (flaky) Start-button failure invisible in screen_agent_ui_dumps.
+                accessibilityService.getCurrentRootNode()?.let { dumpRoot ->
+                    dumpUIHierarchy(dumpRoot, "gmaps_start_button_not_found", "Selected $mode mode but Start button not found/clickable")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",

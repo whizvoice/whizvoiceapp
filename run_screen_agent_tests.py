@@ -883,10 +883,10 @@ def test_youtube_music_integration(tester):
         tester.screenshot(screenshot_path)
         playlist_validation = tester.validate_screenshot(
             screenshot_path,
-            "Check if this is a 90s pop playlist or similar. Requirements: "
+            "Check if this is a playlist related to 90s or pop. Requirements: "
             "1) You should see a playlist page with a title containing '90s' OR anything related to 'pop' (could be one or the other doesn't have to be both), AND "
             "2) You should see the beginning of a list of songs. "
-            "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
+            "Return True if the requirements are met. Return False if it's a different playlist, a search results page, or not a playlist at all. "
             "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
         )
         if not playlist_validation:
@@ -1465,9 +1465,12 @@ def test_sms_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
-        # Click "Delete" in the long-press context menu (Google Messages, confirmed coords)
-        print("🗑️  Tapping delete button at (695, 1937)...")
-        tester.tap(695, 1937)
+        # Click the trash/delete icon in the top selection action bar. Long-pressing a message in
+        # current Google Messages enters multi-select mode with a top app bar (✎ ⧉ 🗑 ★ ⋮) — there is
+        # no bottom floating "Delete" menu. The old (695, 1937) tapped empty conversation space, so
+        # nothing was deleted. Trash-icon position verified on-device (Pixel 8) 2026-07.
+        print("🗑️  Tapping delete (top trash icon) at (752, 217)...")
+        tester.tap(752, 217)
         time.sleep(2)
 
         # Confirm in the "Delete for everyone" dialog (the Delete button, bottom-right)
