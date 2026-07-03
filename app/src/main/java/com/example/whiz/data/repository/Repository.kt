@@ -2,6 +2,7 @@ package com.example.whiz.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.example.whiz.BuildConfig
 import com.example.whiz.data.ConnectionStateManager
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.local.MessageEntity
@@ -1909,8 +1910,13 @@ class WhizRepository @Inject constructor(
                 // Get chats from server
                 val serverChats = getAllChats(forceFullSync)
                 Log.d(TAG, "🔍 getAllChatsFlow: Got ${serverChats.size} chats from server")
-                serverChats.forEach { chat ->
-                    Log.d(TAG, "  - Server chat: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                // Per-chat enumeration is gated behind debug builds — for heavy users (1000+ chats)
+                // this dumps hundreds of lines on every sync and dominates the bug-report logcat.
+                // The count above is the summary; drop into a debug build for the full listing.
+                if (BuildConfig.DEBUG) {
+                    serverChats.forEach { chat ->
+                        Log.d(TAG, "  - Server chat: id=${chat.id}, title='${chat.title}', optimisticChatId=${chat.optimisticChatId}")
+                    }
                 }
                 
                 // Get optimistic chats from local database (IDs < -1)
@@ -1926,7 +1932,6 @@ class WhizRepository @Inject constructor(
                 // Check all server chats for any that reference our optimistic chats
                 // Build a set of local optimistic chat IDs for fast lookup
                 val localOptimisticIds = optimisticChats.map { it.id }.toSet()
-                var mappingsRegistered = 0
                 var migrationsTriggered = 0
 
                 serverChats.forEach { serverChat ->
@@ -1954,18 +1959,20 @@ class WhizRepository @Inject constructor(
                                     Log.e(TAG, "getAllChatsFlow: Failed to migrate chat $optimisticId to ${serverChat.id}", e)
                                 }
                             }
-                        } else {
-                            // Optimistic chat doesn't exist locally - just register the mapping silently
-                            // This handles chats from previous app sessions where migration already completed
-                            registerChatMigration(optimisticId, serverChat.id)
-                            mappingsRegistered++
                         }
+                        // No else: if the optimistic chat isn't in the local DB, it already migrated
+                        // in a prior session. We intentionally do NOT register a mapping — nothing
+                        // resolves an old optimistic id anymore (the app uses the real id everywhere,
+                        // and ChatViewModel now persists the real id into savedStateHandle across
+                        // process death). Re-registering the whole history on every cold start was pure
+                        // churn (hundreds of entries) and defeated the 1-hour cleanup by refreshing
+                        // timestamps. Genuine in-flight migrations still register via migrateChatMessages.
                     }
                 }
 
                 // Log summary instead of per-chat spam
-                if (mappingsRegistered > 0 || migrationsTriggered > 0) {
-                    Log.d(TAG, "getAllChatsFlow: Registered $mappingsRegistered existing mappings, triggered $migrationsTriggered new migrations")
+                if (migrationsTriggered > 0) {
+                    Log.d(TAG, "getAllChatsFlow: triggered $migrationsTriggered new migrations")
                 }
                 
                 // Check which optimistic chats haven't been migrated yet

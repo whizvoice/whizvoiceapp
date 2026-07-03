@@ -16,7 +16,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -99,6 +101,24 @@ class ToolExecutor @Inject constructor(
     private val _activeToolCount = MutableStateFlow(0)
     val activeToolCount: StateFlow<Int> = _activeToolCount.asStateFlow()
 
+    // ===== Lock-screen "waiting for unlock" state =====
+    // When a keyguard-gated tool is dispatched while the phone is locked, we park its coroutine
+    // (instead of failing at 60s) until the user unlocks. While parked, isAwaitingUnlock is true so
+    // MainActivity (a) lets the inactivity timer run as the deadline and (b) re-shows the keyguard
+    // prompt on screen-on. Single-slot: only one parked unlock-wait is tracked at a time.
+    @Volatile private var pendingUnlockCont: CancellableContinuation<Boolean>? = null
+    @Volatile private var awaitingToolName: String? = null
+    private val _isAwaitingUnlock = MutableStateFlow(false)
+    val isAwaitingUnlock: StateFlow<Boolean> = _isAwaitingUnlock.asStateFlow()
+
+    // Re-send waiting_for_unlock at this interval so the server keeps extending its deadline
+    // (server extends by 65s per status — see app.py; stay comfortably under that).
+    private val UNLOCK_KEEPALIVE_INTERVAL_MS = 50_000L
+    // Backstop ceiling on the parked wait, for the case where the inactivity timer is paused
+    // (e.g. a bubble owns idle). Comfortably longer than the 3-min idle window so the idle timer
+    // is normally what ends the wait; this only fires if it can't.
+    private val UNLOCK_WAIT_CEILING_MS = 210_000L
+
     /**
      * Cancel all in-flight tool executions. Called when user dismisses the bubble.
      * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
@@ -106,10 +126,113 @@ class ToolExecutor @Inject constructor(
     fun cancelAllInFlight() {
         val count = inFlightRequestIds.size
         Log.d(TAG, "Cancelling all in-flight tool executions (count: $count)")
+        // Clear any parked unlock-wait first so screen-on/retry no-op and the flag resets
+        // deterministically. The cancelled coroutine's invokeOnCancellation also restores the
+        // keyguard/wake-lock state; the server's deadline backstops the tool_result here.
+        pendingUnlockCont = null
+        awaitingToolName = null
+        _isAwaitingUnlock.value = false
         supervisorJob.cancelChildren()
         inFlightRequestIds.clear()
         _activeToolCount.value = 0
         Log.d(TAG, "Cancelled $count in-flight tool execution(s)")
+    }
+
+    /**
+     * Re-show the keyguard dismiss prompt for a parked tool. Called by MainActivity on
+     * ACTION_SCREEN_ON while the device is still locked. No-op unless a tool is parked.
+     * Must be called from a context where the activity is visible (MainActivity) so
+     * requestDismissKeyguard can actually show.
+     */
+    fun retryUnlockPrompt() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        val unlockCallback = MainActivity.requestUnlockCallback ?: return
+        Log.i(TAG, "🔒 Re-prompting unlock for parked tool $awaitingToolName")
+        unlockCallback(
+            { if (cont.isActive) cont.resume(true) },
+            { Log.i(TAG, "🔒 Re-prompt cancelled — staying parked for next wake") }
+        )
+    }
+
+    /**
+     * The user unlocked the device by their own route (ACTION_USER_PRESENT) without going through
+     * our prompt. Resume the parked tool so the original action completes. After USER_PRESENT the
+     * keyguard is gone, so the screen-on-while-locked re-prompt won't fire — this is required to
+     * complete the task on a self-unlock.
+     */
+    fun onExternalUnlock() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "🔓 External unlock detected — resuming parked tool $awaitingToolName")
+        cont.resume(true)
+    }
+
+    /**
+     * Give up the current unlock wait (idle-timer teardown or the hard ceiling). The parked tool
+     * coroutine resumes with `false` and emits a timeout result for the ORIGINAL request_id, so the
+     * server's pending tool_result is completed cleanly (the server's deadline is the backstop).
+     */
+    fun abandonUnlockWait() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "🔒 Abandoning unlock wait for $awaitingToolName")
+        cont.resume(false)
+    }
+
+    /**
+     * Park the current tool coroutine until the user unlocks (returns true → run the tool) or the
+     * wait is abandoned (returns false → caller emits a timeout result). While parked, re-emits
+     * waiting_for_unlock every ~50s and exposes isAwaitingUnlock for MainActivity.
+     */
+    private suspend fun awaitUnlock(
+        toolName: String,
+        requestId: String,
+        unlockCallback: (onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit
+    ): Boolean = coroutineScope {
+        val keepAlive = launch {
+            var elapsed = 0L
+            while (isActive) {
+                delay(UNLOCK_KEEPALIVE_INTERVAL_MS)
+                elapsed += UNLOCK_KEEPALIVE_INTERVAL_MS
+                if (elapsed >= UNLOCK_WAIT_CEILING_MS) {
+                    Log.w(TAG, "🔒 Unlock wait hit hard ceiling for $toolName — abandoning")
+                    abandonUnlockWait()
+                    break
+                }
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_unlock",
+                    message = "Phone is locked. Waiting for user to unlock."
+                ))
+            }
+        }
+        try {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                pendingUnlockCont = cont
+                awaitingToolName = toolName
+                _isAwaitingUnlock.value = true
+                cont.invokeOnCancellation {
+                    pendingUnlockCont = null
+                    awaitingToolName = null
+                    _isAwaitingUnlock.value = false
+                    // Release any held unlock wake lock and restore showWhenLocked on teardown.
+                    MainActivity.cancelUnlockPromptCallback?.invoke()
+                }
+                // First prompt. A single cancelled prompt does NOT resume — we stay parked and
+                // re-prompt on the next screen-on (see retryUnlockPrompt).
+                unlockCallback(
+                    { if (cont.isActive) cont.resume(true) },
+                    { Log.i(TAG, "🔒 Unlock prompt cancelled — staying parked for $toolName") }
+                )
+            }
+        } finally {
+            keepAlive.cancel()
+            pendingUnlockCont = null
+            awaitingToolName = null
+            _isAwaitingUnlock.value = false
+        }
     }
 
     fun executeToolFromJson(
@@ -145,7 +268,7 @@ class ToolExecutor @Inject constructor(
                 // Check if device is locked and tool requires unlock
                 val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
                 if (km.isKeyguardLocked && toolName in toolsRequiringUnlock) {
-                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and waiting")
+                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and parking until unlock")
                     val unlockCallback = MainActivity.requestUnlockCallback
                     if (unlockCallback == null) {
                         Log.e(TAG, "🔒 No unlock callback available - MainActivity may not be active")
@@ -157,7 +280,8 @@ class ToolExecutor @Inject constructor(
                         return@launch
                     }
 
-                    // Notify server that we're waiting for unlock so it can extend its timeout
+                    // Notify the server immediately so it extends its (short) tool deadline before
+                    // it lapses. awaitUnlock re-sends this every ~50s while parked.
                     _toolResults.emit(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
@@ -165,37 +289,16 @@ class ToolExecutor @Inject constructor(
                         message = "Phone is locked. Waiting for user to unlock."
                     ))
 
-                    // Suspend and wait for user to unlock (or cancel), with 60s timeout.
-                    // If the user unlocks AFTER the timeout, the dismiss callback still fires;
-                    // in that case, send a hidden user message so the server can decide whether
-                    // to retry. (No effect on the visible chat — see ChatViewModel.sendHiddenSystemMessage.)
-                    val unlocked = withTimeoutOrNull(60_000L) {
-                        suspendCancellableCoroutine<Boolean> { cont ->
-                            unlockCallback(
-                                { // onSuccess
-                                    Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
-                                    if (cont.isActive) {
-                                        cont.resume(true)
-                                    } else {
-                                        Log.i(TAG, "🔓 Late unlock for $toolName (after 60s timeout) — sending hidden screen-unlocked notification to server")
-                                        chatViewModel?.sendHiddenSystemMessage("The user just unlocked their phone screen.")
-                                    }
-                                },
-                                { // onCancelled
-                                    Log.i(TAG, "🔒 User cancelled unlock - aborting tool $toolName")
-                                    if (cont.isActive) cont.resume(false)
-                                }
-                            )
-                        }
-                    }
-
-                    if (unlocked != true) {
-                        val reason = if (unlocked == null) "Unlock timed out" else "User cancelled unlock"
-                        Log.i(TAG, "🔒 $reason for tool $toolName")
+                    // Park this coroutine until the user unlocks (re-prompted on each screen-on)
+                    // or the wait is abandoned (idle-timer teardown / hard ceiling). On abandon we
+                    // emit a timeout result for the ORIGINAL request_id so history stays valid.
+                    val unlocked = awaitUnlock(toolName, requestId, unlockCallback)
+                    if (!unlocked) {
+                        Log.i(TAG, "🔒 Unlock wait abandoned for tool $toolName — emitting timeout result")
                         _toolResults.emit(ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
-                            error = "Phone is locked. Please unlock your phone to use this feature."
+                            error = "Phone stayed locked — timed out. Please unlock your phone and try again."
                         ))
                         return@launch
                     }
@@ -1433,6 +1536,7 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.mode?.let { put("mode", it) }
+                result.navStarted?.let { put("nav_started", it) }
                 result.error?.let { put("error", it) }
             }
 
@@ -2190,11 +2294,24 @@ class ToolExecutor @Inject constructor(
         try {
             val dataType = params.getString("data_type")
             val value = params.getDouble("value")
-            Log.i(TAG, "Logging health data: type=$dataType value=$value")
+            // Optional backdating: an ISO date (YYYY-MM-DD). Absent → log to now (default).
+            val dateStr = if (params.has("date") && !params.isNull("date")) params.optString("date", null) else null
+            val logDate: java.time.LocalDate? = dateStr?.let {
+                try {
+                    java.time.LocalDate.parse(it)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Invalid date '$it' for agent_log_health_data; ignoring")
+                    null
+                }
+            }
+            // Backdating is only honored by Health Connect; the Fitbit UI fallback can't
+            // target a past day, so we must not silently log a backdated entry to today.
+            val isBackdated = logDate != null && logDate.isBefore(java.time.LocalDate.now(java.time.ZoneId.systemDefault()))
+            Log.i(TAG, "Logging health data: type=$dataType value=$value date=${logDate ?: "today"}")
 
             suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
-                "calories" -> healthConnectManager.logCalories(value.toInt())
-                "weight" -> healthConnectManager.logWeight(value)
+                "calories" -> healthConnectManager.logCalories(value.toInt(), logDate)
+                "weight" -> healthConnectManager.logWeight(value, logDate)
                 else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
             }
 
@@ -2279,12 +2396,25 @@ class ToolExecutor @Inject constructor(
                     action = "logged_via_health_connect",
                     dataType = dataType,
                     value = value,
+                    date = dateStr,
                     source = "health_connect",
                 )
 
                 is com.example.whiz.health.HealthConnectManager.Result.Unavailable,
                 is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> {
-                    if (dataType == "calories") {
+                    if (dataType == "calories" && isBackdated) {
+                        // The Fitbit UI fallback can only log to today, so it would silently
+                        // put a backdated entry on the wrong day. Fail clearly instead.
+                        Log.i(TAG, "Health Connect not usable and date is backdated ($logDate); refusing Fitbit UI fallback")
+                        ScreenAgentTools.HealthDataResult(
+                            success = false,
+                            dataType = dataType,
+                            value = value,
+                            date = dateStr,
+                            source = "health_connect",
+                            error = "Backdating calories to $logDate requires Health Connect, which is unavailable or lacks write permission. Only today's calories can be logged via the Fitbit fallback.",
+                        )
+                    } else if (dataType == "calories") {
                         Log.i(TAG, "Health Connect not usable (${hcResult.javaClass.simpleName}); falling back to Fitbit UI for calories")
                         screenAgentTools.addFitbitQuickCalories(value.toInt())
                     } else {
@@ -2315,6 +2445,7 @@ class ToolExecutor @Inject constructor(
                 result.action?.let { put("action", it) }
                 result.dataType?.let { put("data_type", it) }
                 result.value?.let { put("value", it) }
+                result.date?.let { put("date", it) }
                 result.source?.let { put("source", it) }
                 result.error?.let { put("error", it) }
             }

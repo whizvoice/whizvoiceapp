@@ -61,6 +61,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
 import java.lang.reflect.Field
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStarted
@@ -87,6 +88,11 @@ class MainActivity : ComponentActivity() {
         // Callback for on-demand unlock when screen agent tools need the device unlocked
         @Volatile
         var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
+
+        // Callback to tear down an in-progress unlock prompt (release the unlock wake lock and
+        // restore showWhenLocked) when a parked unlock-wait is cancelled by idle-timer teardown.
+        @Volatile
+        var cancelUnlockPromptCallback: (() -> Unit)? = null
 
         // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
         @Volatile
@@ -165,12 +171,36 @@ class MainActivity : ComponentActivity() {
     private var testTranscriptionReceiver: BroadcastReceiver? = null
     private var closeAppReceiver: BroadcastReceiver? = null
 
-    // Clears showWhenLocked after user unlocks so the app doesn't persist over subsequent lock screens
+    // Held while a keyguard dismiss prompt is up (SCREEN_BRIGHT). Promoted to a field so a parked
+    // unlock-wait teardown can release it, and so a re-prompt releases any prior lock before acquiring.
+    @Volatile
+    private var unlockWakeLock: PowerManager.WakeLock? = null
+
+    // Clears showWhenLocked after user unlocks so the app doesn't persist over subsequent lock screens.
+    // Also resumes a parked unlock-wait when the user unlocks by their own route (no Whiz prompt) —
+    // after USER_PRESENT the keyguard is gone so the screen-on re-prompt won't fire.
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_USER_PRESENT) {
                 setShowWhenLocked(false)
                 Log.d(TAG, "User unlocked - cleared showWhenLocked")
+                if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
+                    Log.d(TAG, "User unlocked externally while a tool was parked - resuming it")
+                    toolExecutor.onExternalUnlock()
+                }
+            }
+        }
+    }
+
+    // Re-shows the keyguard dismiss prompt when the user wakes the phone while a tool is parked
+    // waiting for unlock. Fires while still locked (ACTION_SCREEN_ON precedes USER_PRESENT).
+    private val screenOnReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_ON) return
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            if (km.isKeyguardLocked && ::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
+                Log.d(TAG, "Screen on while locked with a parked unlock-wait - re-prompting unlock")
+                toolExecutor.retryUnlockPrompt()
             }
         }
     }
@@ -315,6 +345,19 @@ class MainActivity : ComponentActivity() {
             durationMs = INACTIVITY_TIMEOUT_MS,
             onTimeout = {
                 Log.d(TAG, "Inactivity timeout fired - calling finishAndRemoveTask()")
+                // If a tool is parked waiting for unlock, abandon it first so it emits a timeout
+                // result for the original request_id (while the socket is still up) instead of
+                // dying silently. This is the deadline for the unlock-wait — bug fix for "stuck
+                // behind the lock screen".
+                if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
+                    toolExecutor.abandonUnlockWait()
+                }
+                // Defensive: under the single-owner handoff our timer is paused whenever a
+                // bubble is active, so this rarely runs with a bubble up. Stop it anyway so we
+                // never leave a zombie "listening" bubble behind. stop() is idempotent.
+                if (BubbleOverlayService.isActive) {
+                    BubbleOverlayService.stop(this@MainActivity)
+                }
                 finishAndRemoveTask()
             }
         )
@@ -323,12 +366,51 @@ class MainActivity : ComponentActivity() {
         // 3-min idle window so the app auto-closes even when the phone is off (bug #1347).
         // onResume calls checkExpired() to close immediately if the deadline already passed.
 
+        // Pause idle only while a tool is actively doing work. A tool merely PARKED waiting for
+        // unlock (isAwaitingUnlock) must NOT pause idle, so the 3-min timer can run and act as the
+        // deadline for the unlock-wait. On the rising edge of awaiting-unlock, refresh the window
+        // (full 3 min from when the prompt appears) and ensure the activity can occlude the keyguard
+        // so the screen-on re-prompt works.
         lifecycleScope.launch {
-            toolExecutor.activeToolCount.collect { count ->
-                if (count > 0) {
+            var wasAwaiting = false
+            combine(toolExecutor.activeToolCount, toolExecutor.isAwaitingUnlock) { count, awaiting ->
+                count to awaiting
+            }.collect { (count, awaiting) ->
+                if (count > 0 && !awaiting) {
                     inactivityTimer.pause("tool")
                 } else {
                     inactivityTimer.resume("tool")
+                }
+                if (awaiting && !wasAwaiting) {
+                    inactivityTimer.noteActivity()
+                    setShowWhenLocked(true)
+                }
+                wasAwaiting = awaiting
+            }
+        }
+
+        // Hand idle ownership to the bubble: while we're backgrounded AND a bubble owns the
+        // session, pause our timer so the bubble's timer is the sole authority (it has the
+        // proper voice/tool/mic guards). Always resume while foreground (never both-paused).
+        // With no bubble, we keep ticking while backgrounded so pure idle still closes (#1347).
+        lifecycleScope.launch {
+            appLifecycleService.isInForegroundFlow.collect { inForeground ->
+                val bubbleOwns = BubbleOverlayService.isActive || BubbleOverlayService.isPendingStart
+                if (!inForeground && bubbleOwns) {
+                    inactivityTimer.pause("bubble")
+                } else {
+                    inactivityTimer.resume("bubble")
+                }
+            }
+        }
+
+        // Voice activity counts as activity: talking to the app (even with no screen touches)
+        // refreshes the countdown so it never fires mid-conversation. noteActivity() preserves
+        // pause sources, so a partial during a tool won't wrongly un-pause the timer.
+        lifecycleScope.launch {
+            voiceManager.transcriptionState.collect { partialText ->
+                if (partialText.isNotBlank()) {
+                    inactivityTimer.noteActivity()
                 }
             }
         }
@@ -390,6 +472,10 @@ class MainActivity : ComponentActivity() {
         // Register receiver to clear showWhenLocked when user unlocks the device
         registerReceiver(userPresentReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
 
+        // Register receiver to re-show the unlock prompt when the user wakes the phone while a
+        // screen-agent tool is parked waiting for unlock (fires while still locked).
+        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+
         // Set up static callback for self-close tool (more reliable than broadcast)
         finishAndRemoveTaskCallback = {
             Log.d(TAG, "finishAndRemoveTaskCallback invoked - calling finishAndRemoveTask()")
@@ -407,25 +493,19 @@ class MainActivity : ComponentActivity() {
                 // 10s) takes effect and the screen turns off before the user can reach the
                 // fingerprint sensor / PIN entry.
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                // Release any prior unlock wake lock first — a re-prompt (screen-on while a tool is
+                // parked) can call this again before the previous prompt's dismiss callback fired.
+                releaseUnlockWakeLock()
                 @Suppress("DEPRECATION")
-                val unlockWakeLock = pm.newWakeLock(
+                val wakeLock = pm.newWakeLock(
                     PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ON_AFTER_RELEASE,
                     "whiz:unlock_prompt"
                 )
-                // Built-in 65s timeout (slightly longer than ToolExecutor's 60s) so the
-                // wake lock auto-releases even if neither dismiss callback is invoked.
-                unlockWakeLock.acquire(65_000L)
+                // Built-in 65s timeout so the wake lock auto-releases even if neither dismiss
+                // callback is invoked (e.g. the screen times out while parked waiting for unlock).
+                wakeLock.acquire(65_000L)
+                unlockWakeLock = wakeLock
                 Log.d(TAG, "Unlock wake lock acquired (SCREEN_BRIGHT, 65s timeout)")
-                val releaseUnlockWakeLock = {
-                    if (unlockWakeLock.isHeld) {
-                        try {
-                            unlockWakeLock.release()
-                            Log.d(TAG, "Unlock wake lock released")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Unlock wake lock release failed", e)
-                        }
-                    }
-                }
 
                 // Must clear showWhenLocked so the keyguard PIN entry can appear
                 // (otherwise our activity occludes the keyguard, causing a deadlock)
@@ -437,7 +517,8 @@ class MainActivity : ComponentActivity() {
                     }
                     override fun onDismissCancelled() {
                         releaseUnlockWakeLock()
-                        // User cancelled — restore showWhenLocked so the activity stays visible
+                        // Single prompt cancelled — restore showWhenLocked so the activity stays
+                        // visible over the keyguard and the next screen-on can re-prompt.
                         setShowWhenLocked(true)
                         onCancelled()
                     }
@@ -445,6 +526,14 @@ class MainActivity : ComponentActivity() {
             } else {
                 onSuccess() // Already unlocked
             }
+        }
+
+        // Tear down an in-progress unlock prompt when a parked unlock-wait is cancelled by
+        // idle-timer teardown: release the wake lock and restore showWhenLocked.
+        cancelUnlockPromptCallback = {
+            releaseUnlockWakeLock()
+            setShowWhenLocked(true)
+            Log.d(TAG, "Unlock prompt torn down (parked wait cancelled)")
         }
 
         // Set up static callback for on-demand contacts permission (used by lookup tool)
@@ -1159,6 +1248,20 @@ class MainActivity : ComponentActivity() {
         requestPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
+    /** Release the unlock-prompt wake lock if held. Safe to call repeatedly. */
+    private fun releaseUnlockWakeLock() {
+        val wl = unlockWakeLock ?: return
+        if (wl.isHeld) {
+            try {
+                wl.release()
+                Log.d(TAG, "Unlock wake lock released")
+            } catch (e: Exception) {
+                Log.w(TAG, "Unlock wake lock release failed", e)
+            }
+        }
+        unlockWakeLock = null
+    }
+
     /**
      * Wraps an action with a keyguard dismiss check. If the device is locked,
      * prompts the user to unlock first, then executes the action.
@@ -1291,12 +1394,21 @@ class MainActivity : ComponentActivity() {
             inactivityTimer.cancel()
         }
 
+        // Don't leave a parked unlock-wait (and its server keep-alive) pointing at a dead
+        // activity that can no longer show the keyguard prompt. The ToolExecutor scope is a
+        // singleton that outlives this activity.
+        if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
+            toolExecutor.cancelAllInFlight()
+        }
+        releaseUnlockWakeLock()
+
         // Release any held audio focus as a safety net
         audioFocusManager.abandonDuckingFocus()
 
         // Clear the static callbacks
         finishAndRemoveTaskCallback = null
         requestUnlockCallback = null
+        cancelUnlockPromptCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
         requestGoogleContactsConsentCallback = null
@@ -1328,6 +1440,13 @@ class MainActivity : ComponentActivity() {
             unregisterReceiver(userPresentReceiver)
         } catch (e: Exception) {
             Log.w(TAG, "Error unregistering user present receiver", e)
+        }
+
+        // Unregister screen-on receiver
+        try {
+            unregisterReceiver(screenOnReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering screen on receiver", e)
         }
     }
 

@@ -49,6 +49,89 @@ class ScreenAgentTools @Inject constructor(
     private val recentActions = mutableListOf<String>()
     private val maxRecentActions = 5
 
+    companion object {
+        /**
+         * Single source of truth mapping a normalized (lowercased, trimmed) app name to a
+         * package name. Shared by launchApp, resolvePackageName and closeOtherApp so the
+         * mappings can't drift apart.
+         *
+         * Includes natural-language "google X" aliases the model is trained to emit
+         * (e.g. "google maps") even though the device launcher label is just "Maps".
+         * calculateMatchScore is the generic fallback; these are the deterministic backstop.
+         */
+        internal val APP_NAME_TO_PACKAGE: Map<String, String> = mapOf(
+            "chrome" to "com.android.chrome",
+            "google chrome" to "com.android.chrome",
+            "gmail" to "com.google.android.gm",
+            "youtube" to "com.google.android.youtube",
+            "youtube music" to "com.google.android.apps.youtube.music",
+            "maps" to "com.google.android.apps.maps",
+            "google maps" to "com.google.android.apps.maps",
+            "play store" to "com.android.vending",
+            "google play store" to "com.android.vending",
+            "camera" to "com.android.camera2",
+            "photos" to "com.google.android.apps.photos",
+            "google photos" to "com.google.android.apps.photos",
+            "calendar" to "com.google.android.calendar",
+            "google calendar" to "com.google.android.calendar",
+            "calculator" to "com.google.android.calculator2",
+            "clock" to "com.google.android.deskclock",
+            "messages" to "com.google.android.apps.messaging",
+            "google messages" to "com.google.android.apps.messaging",
+            "whatsapp" to "com.whatsapp",
+            "instagram" to "com.instagram.android",
+            "facebook" to "com.facebook.katana",
+            "twitter" to "com.twitter.android",
+            "x" to "com.twitter.android",
+            "spotify" to "com.spotify.music",
+            "netflix" to "com.netflix.mediaclient",
+            "settings" to "com.android.settings",
+            "asana" to "com.asana.app",
+            "a sauna" to "com.asana.app"
+        )
+
+        /**
+         * Score how well a user-provided [searchTerm] (already normalized) matches an
+         * installed app's [appLabel] / [packageName]. Pure function: 0.0 = no match,
+         * 1.0 = exact. Callers treat >= 0.5 as a usable match.
+         */
+        internal fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
+            val normalizedLabel = appLabel.lowercase()
+            val normalizedPackage = packageName.lowercase()
+
+            // Exact match
+            if (normalizedLabel == searchTerm) return 1.0f
+
+            // Label starts with search term
+            if (normalizedLabel.startsWith(searchTerm)) return 0.9f
+
+            // Label contains search term as a word
+            if (normalizedLabel.split(" ").contains(searchTerm)) return 0.8f
+
+            // Label contains search term
+            if (normalizedLabel.contains(searchTerm)) return 0.7f
+
+            // Search term is more specific than the label (e.g. "google maps" -> label
+            // "Maps"): match when the label equals the last (head) word of the search
+            // term. Restricted to the head word so a leading qualifier like "google" in
+            // "google maps" can't match a separate app whose label is just "Google".
+            val searchWords = searchTerm.split(" ")
+            if (searchWords.size > 1 && normalizedLabel == searchWords.last()) return 0.8f
+
+            // Package name contains search term (less priority)
+            if (normalizedPackage.contains(searchTerm)) return 0.5f
+
+            // Check for partial word matches (e.g., "cal" for "calculator")
+            if (searchTerm.length >= 3) {
+                for (word in normalizedLabel.split(" ")) {
+                    if (word.startsWith(searchTerm)) return 0.6f
+                }
+            }
+
+            return 0.0f
+        }
+    }
+
     /**
      * Track an action for UI dump context.
      * Call this when performing significant screen agent actions.
@@ -162,7 +245,10 @@ class ScreenAgentTools @Inject constructor(
         val action: String,
         val location: String? = null,
         val mode: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // True/false only for the directions flow, where we verify turn-by-turn navigation actually
+        // started after tapping Start (bug 1410). Null for all other actions that don't apply.
+        val navStarted: Boolean? = null
     )
 
     data class CallButtonResult(
@@ -177,6 +263,7 @@ class ScreenAgentTools @Inject constructor(
         val action: String? = null,
         val dataType: String? = null,
         val value: Double? = null,
+        val date: String? = null,
         val source: String? = null,
         val error: String? = null,
     )
@@ -487,35 +574,9 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
             
-            // Common app name mappings
-            val commonMappings = mapOf(
-                "chrome" to "com.android.chrome",
-                "gmail" to "com.google.android.gm",
-                "youtube" to "com.google.android.youtube",
-                "youtube music" to "com.google.android.apps.youtube.music",
-                "maps" to "com.google.android.apps.maps",
-                "play store" to "com.android.vending",
-                "camera" to "com.android.camera2",
-                "photos" to "com.google.android.apps.photos",
-                "calendar" to "com.google.android.calendar",
-                "calculator" to "com.google.android.calculator2",
-                "clock" to "com.google.android.deskclock",
-                "messages" to "com.google.android.apps.messaging",
-                "whatsapp" to "com.whatsapp",
-                "instagram" to "com.instagram.android",
-                "facebook" to "com.facebook.katana",
-                "twitter" to "com.twitter.android",
-                "x" to "com.twitter.android",
-                "spotify" to "com.spotify.music",
-                "netflix" to "com.netflix.mediaclient",
-                "settings" to "com.android.settings",
-                "asana" to "com.asana.app",
-                "a sauna" to "com.asana.app"
-            )
-            
-            // Try common mappings
+            // Try common mappings (shared source of truth: APP_NAME_TO_PACKAGE)
             Log.d(TAG, "Checking common mappings for: $normalizedAppName")
-            val mappedPackage = commonMappings[normalizedAppName]
+            val mappedPackage = APP_NAME_TO_PACKAGE[normalizedAppName]
             Log.d(TAG, "Mapped package for '$normalizedAppName': $mappedPackage")
             if (mappedPackage != null) {
                 var launchIntent = packageManager.getLaunchIntentForPackage(mappedPackage)
@@ -725,33 +786,6 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== Close Other App Functions ==========
 
-    /**
-     * Common app name mappings shared between launchApp and closeOtherApp.
-     */
-    private val commonAppMappings = mapOf(
-        "chrome" to "com.android.chrome",
-        "gmail" to "com.google.android.gm",
-        "youtube" to "com.google.android.youtube",
-        "youtube music" to "com.google.android.apps.youtube.music",
-        "maps" to "com.google.android.apps.maps",
-        "play store" to "com.android.vending",
-        "camera" to "com.android.camera2",
-        "photos" to "com.google.android.apps.photos",
-        "calendar" to "com.google.android.calendar",
-        "calculator" to "com.google.android.calculator2",
-        "clock" to "com.google.android.deskclock",
-        "messages" to "com.google.android.apps.messaging",
-        "whatsapp" to "com.whatsapp",
-        "instagram" to "com.instagram.android",
-        "facebook" to "com.facebook.katana",
-        "twitter" to "com.twitter.android",
-        "x" to "com.twitter.android",
-        "spotify" to "com.spotify.music",
-        "netflix" to "com.netflix.mediaclient",
-        "settings" to "com.android.settings",
-        "asana" to "com.asana.app",
-        "a sauna" to "com.asana.app"
-    )
 
     /**
      * Resolve a user-provided app name to a (packageName, appLabel) pair.
@@ -779,8 +813,8 @@ class ScreenAgentTools @Inject constructor(
             return Pair(bestMatch.first, bestMatch.second)
         }
 
-        // Fall back to common mappings
-        val mappedPackage = commonAppMappings[normalizedAppName]
+        // Fall back to common mappings (shared source of truth: APP_NAME_TO_PACKAGE)
+        val mappedPackage = APP_NAME_TO_PACKAGE[normalizedAppName]
         if (mappedPackage != null) {
             val appLabel = try {
                 packageManager.getApplicationLabel(
@@ -1168,35 +1202,6 @@ class ScreenAgentTools @Inject constructor(
         return null
     }
 
-    private fun calculateMatchScore(searchTerm: String, appLabel: String, packageName: String): Float {
-        val normalizedLabel = appLabel.lowercase()
-        val normalizedPackage = packageName.lowercase()
-        
-        // Exact match
-        if (normalizedLabel == searchTerm) return 1.0f
-        
-        // Label starts with search term
-        if (normalizedLabel.startsWith(searchTerm)) return 0.9f
-        
-        // Label contains search term as a word
-        if (normalizedLabel.split(" ").contains(searchTerm)) return 0.8f
-        
-        // Label contains search term
-        if (normalizedLabel.contains(searchTerm)) return 0.7f
-        
-        // Package name contains search term (less priority)
-        if (normalizedPackage.contains(searchTerm)) return 0.5f
-        
-        // Check for partial word matches (e.g., "cal" for "calculator")
-        if (searchTerm.length >= 3) {
-            for (word in normalizedLabel.split(" ")) {
-                if (word.startsWith(searchTerm)) return 0.6f
-            }
-        }
-        
-        return 0.0f
-    }
-    
     // ========== Generic Screen Navigation Functions ==========
 
     /**
@@ -4993,10 +4998,18 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Select transportation mode if needed and click Start
-            val success = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
+            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
             modeRootNode.recycle()
 
-            if (!success) {
+            if (!started) {
+                // Capture a UI dump for this failure too. Unlike the "directions screen didn't load"
+                // branch above, this path — screen loaded and the mode was selected, but the Start
+                // button couldn't be found/clicked — previously returned with no dump, leaving the
+                // (flaky) Start-button failure invisible in screen_agent_ui_dumps.
+                accessibilityService.getCurrentRootNode()?.let { dumpRoot ->
+                    dumpUIHierarchy(dumpRoot, "gmaps_start_button_not_found", "Selected $mode mode but Start button not found/clickable")
+                    dumpRoot.recycle()
+                }
                 return MapsActionResult(
                     success = false,
                     action = "get_directions",
@@ -5005,10 +5018,35 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
+            // Verify navigation ACTUALLY started. performAction(ACTION_CLICK) returning true only means
+            // the tap was dispatched to the Start node — not that Maps acted on it. If Start is tapped
+            // before the directions screen is fully interactive (route still calculating / sheet still
+            // animating), the tap no-ops yet we'd report success (bug 1410: "route didn't start the
+            // first time"). Confirm we reached ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL
+            // (transit), re-tapping Start once if not.
+            val navStarted = verifyNavigationStarted(accessibilityService, mode)
+            if (!navStarted) {
+                Log.w(TAG, "Start was tapped but navigation did not begin")
+                val dumpRoot = accessibilityService.getCurrentRootNode()
+                if (dumpRoot != null) {
+                    dumpUIHierarchy(dumpRoot, "gmaps_navigation_not_started", "Start was tapped but navigation did not begin (likely tapped before the route was ready)")
+                    dumpRoot.recycle()
+                }
+                return MapsActionResult(
+                    success = false,
+                    action = "get_directions",
+                    mode = mode,
+                    navStarted = false,
+                    error = "Tapped Start but navigation did not start"
+                )
+            }
+
+            Log.d(TAG, "Navigation confirmed started for directions (mode=${mode ?: "default"})")
             return MapsActionResult(
                 success = true,
                 action = "get_directions",
-                mode = mode
+                mode = mode,
+                navStarted = true
             )
 
         } catch (e: Exception) {
@@ -5025,6 +5063,49 @@ class ScreenAgentTools @Inject constructor(
                 error = "Error getting directions: ${e.message}"
             )
         }
+    }
+
+    /**
+     * Verify that navigation actually started after Start was tapped, re-tapping once if needed.
+     *
+     * selectTransportModeAndStart returns true as soon as ACTION_CLICK on Start is dispatched, but a
+     * dispatched click is not necessarily an effective one — if Maps' directions screen isn't fully
+     * interactive yet, the tap no-ops and navigation never begins (bug 1410). We confirm by polling
+     * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
+     *
+     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 8s appReady + 10s
+     * directions waits above (both ceilings rarely hit together), worst case stays under the 25s
+     * server timeout (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
+     */
+    private suspend fun verifyNavigationStarted(
+        accessibilityService: WhizAccessibilityService,
+        mode: String?
+    ): Boolean {
+        val maxTaps = 2  // the original Start tap already happened; allow one re-tap
+        for (tap in 1..maxTaps) {
+            val confirmed = waitForCondition(maxWaitMs = 2500, maxIntervalMs = 300) {
+                val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
+                    ?: return@waitForCondition false
+                val state = detectGoogleMapsScreenState(node)
+                node.recycle()
+                state == GoogleMapsScreenState.ACTIVE_NAVIGATION ||
+                    state == GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
+            }
+            if (confirmed) {
+                Log.d(TAG, "Navigation start confirmed after $tap Start tap(s)")
+                return true
+            }
+            if (tap < maxTaps) {
+                Log.w(TAG, "Navigation not started after tap $tap; re-tapping Start")
+                val retryRoot = accessibilityService.getCurrentRootNode()
+                if (retryRoot != null) {
+                    selectTransportModeAndStart(retryRoot, mode, accessibilityService)
+                    retryRoot.recycle()
+                }
+            }
+        }
+        Log.w(TAG, "Navigation did not start after $maxTaps Start tap(s)")
+        return false
     }
 
     suspend fun recenterGoogleMaps(): MapsActionResult {
