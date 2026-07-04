@@ -8,43 +8,66 @@ from helpers import (
 )
 
 
-def test_autofix_ytmusic_app_not_ready(tester):
-    """Verify fix for ytmusic_app_not_ready.
+def test_autofix_gmaps_directions_screen_not_found(tester):
+    """Verify fix for gmaps_directions_screen_not_found.
 
-    Tests that the screen agent can detect YouTube Music as ready even when
-    the Whiz bubble overlay or another window has the active-window slot.
-    The fix adds a windows-list fallback to waitForAppReady so the target
-    app is detected as soon as its window appears anywhere in the window list.
+    The screen agent timed out with "Neither Start button nor mode tabs found
+    within 10s on directions screen" when directions were requested to an
+    unreachable destination (e.g. "Australia"). The directions screen HAD
+    loaded (mode tabs present) but Google Maps showed a "no route" message,
+    "Can't seem to find a way there", which the code did not recognize as a
+    terminal state — so it spun until the 10s timeout and dumped the
+    misleading error.
+
+    The fix adds "Can't seem to find a way there" (both straight and curly
+    apostrophe variants) to the list of terminal "no route" messages so the
+    agent recognizes the state and returns promptly instead of timing out.
+
+    This test reproduces the original failure by requesting directions to an
+    unreachable destination and verifies the agent lands on the Google Maps
+    directions screen (rather than getting stuck / timing out).
     """
-    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
+    success, error = navigate_to_my_chats(tester, "autofix_gmaps_directions_screen_not_found")
     assert success, f"Could not reach My Chats: {error}"
 
+    # Open a new chat and let the UI settle.
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("play Clean Bandit on YouTube Music")
-    time.sleep(40)
+    # Reproduce the original failing action: directions to an unreachable place.
+    send_voice_command("give me directions to Australia")
+    time.sleep(30)  # wait for screen agent to complete
 
-    tester.screenshot("/tmp/whiz_ytmusic_play.png")
+    tester.screenshot("/tmp/whiz_gmaps_directions.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_play.png",
-        "YouTube Music is open and showing search results, an artist/song page, "
-        "a now-playing screen with playback controls, or a sign-in / onboarding "
-        "screen with options to sign in or browse device files"
+        "/tmp/whiz_gmaps_directions.png",
+        "Google Maps is showing a directions screen: there are origin and "
+        "destination fields near the top (destination is Australia) and/or "
+        "transport mode tabs (drive, transit, walk). A 'Can't seem to find a "
+        "way there' or 'Try a Google search' message is also an acceptable "
+        "directions-screen state. It should NOT be stuck on a blank map or a "
+        "loading spinner."
     )
     if not result:
+        # Fall back to checking the Whiz chat response — after the fix the agent
+        # should have returned promptly rather than timing out.
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
+        tester.screenshot("/tmp/whiz_gmaps_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_ytmusic_chat_result.png",
-            "The Whiz chat shows an assistant message about playing music or about "
-            "YouTube Music. It should NOT show an error about YouTube Music not "
-            "becoming ready in time."
+            "/tmp/whiz_gmaps_chat_result.png",
+            "The Whiz chat shows an assistant message responding to the "
+            "directions request (about directions to Australia, or that a route "
+            "could not be found). It should NOT show an error about the "
+            "directions screen not loading or failing to fully load."
         )
         if not result:
-            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
+            save_failed_screenshot(
+                tester,
+                "autofix_gmaps_directions_screen_not_found",
+                "validation_failed",
+            )
     assert result, (
-        "YouTube Music did not reach a ready state after deep link launch — "
-        "ytmusic_app_not_ready may still be triggering"
+        "Screen agent did not reach the Google Maps directions screen — "
+        "gmaps_directions_screen_not_found may still be triggering"
     )

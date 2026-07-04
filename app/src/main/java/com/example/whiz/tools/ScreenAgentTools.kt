@@ -4943,7 +4943,7 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
 
-                for (errText in listOf("Can't find route", "Directions are not available", "No route found")) {
+                for (errText in listOf("Can't find route", "Directions are not available", "No route found", "Can't seem to find a way there", "Can’t seem to find a way there")) {
                     val errNodes = root.findAccessibilityNodeInfosByText(errText)
                     if (errNodes != null && errNodes.isNotEmpty()) {
                         errNodes.forEach { it.recycle() }
