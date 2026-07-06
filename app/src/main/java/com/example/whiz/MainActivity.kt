@@ -1361,15 +1361,24 @@ class MainActivity : ComponentActivity() {
         val bubblePending = BubbleOverlayService.isPendingStart
         val shouldKeepTTS = (bubbleActive || bubblePending) && bubbleMode == ListeningMode.TTS_WITH_LISTENING
 
+        // If a screen-agent tool is parked waiting for the user to unlock, Whiz itself surfaced the
+        // keyguard (which pauses us). Keep the mic running so the user can keep talking through the
+        // prompt. This mirrors the onAppBackgrounded guard, but onPause fires FIRST so it must be
+        // guarded here too — otherwise the mic dies here and only the desync healer restarts it
+        // ~2s later, dropping anything said in between.
+        val awaitingUnlock = voiceManager.isAwaitingUnlockForTool
+
         // Stop microphone immediately if bubble isn't active
         // This prevents the mic from continuing to listen while the app is backgrounding
-        if (!bubbleActive && !bubblePending && voiceManager.isListening.value) {
+        if (!bubbleActive && !bubblePending && !awaitingUnlock && voiceManager.isListening.value) {
             Log.d("MainActivity", "Stopping microphone immediately - app pausing without bubble")
             voiceManager.stopListening()
+        } else if (awaitingUnlock) {
+            Log.i("MainActivity", "App pausing but awaiting unlock for parked tool - keeping mic running")
         }
 
         // Abandon ducking focus so other apps resume normal volume
-        if (!bubbleActive && !bubblePending) {
+        if (!bubbleActive && !bubblePending && !awaitingUnlock) {
             audioFocusManager.abandonDuckingFocus()
         }
 

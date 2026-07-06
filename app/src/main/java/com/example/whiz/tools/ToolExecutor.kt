@@ -132,6 +132,7 @@ class ToolExecutor @Inject constructor(
         pendingUnlockCont = null
         awaitingToolName = null
         _isAwaitingUnlock.value = false
+        com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
         supervisorJob.cancelChildren()
         inFlightRequestIds.clear()
         _activeToolCount.value = 0
@@ -213,10 +214,14 @@ class ToolExecutor @Inject constructor(
                 pendingUnlockCont = cont
                 awaitingToolName = toolName
                 _isAwaitingUnlock.value = true
+                // Tell VoiceManager we're parked so it keeps the mic running through the
+                // setShowWhenLocked(false) background transition (user can keep talking while unlocking).
+                com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = true
                 cont.invokeOnCancellation {
                     pendingUnlockCont = null
                     awaitingToolName = null
                     _isAwaitingUnlock.value = false
+                    com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
                     // Release any held unlock wake lock and restore showWhenLocked on teardown.
                     MainActivity.cancelUnlockPromptCallback?.invoke()
                 }
@@ -232,6 +237,9 @@ class ToolExecutor @Inject constructor(
             pendingUnlockCont = null
             awaitingToolName = null
             _isAwaitingUnlock.value = false
+            // Clear the keepalive flag once the wait resolves (unlocked -> tool runs, or abandoned).
+            // After this, normal foreground/lock rules apply again.
+            com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
         }
     }
 
