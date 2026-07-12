@@ -5875,6 +5875,39 @@ class ScreenAgentTools @Inject constructor(
 
         Log.w(TAG, "Could not find or click Start button")
 
+        // When no specific mode was requested (mode is null, the string "null", or an
+        // unrecognized value), Google Maps opens directions in its last-used mode. If that
+        // mode is Transit, there is legitimately no single "Start" button — Maps shows a
+        // transit route list instead, which is already the result the user asked for. This
+        // matches getGoogleMapsDirections' own transit success detection (which treats
+        // reaching the transit mode tabs as a loaded state). Treat the transit route list as
+        // success rather than failing for a "missing" Start button.
+        // (Only for the non-explicit-mode case; explicit "transit" still clicks a route below,
+        // and explicit drive/walk/bike still require their Start button.)
+        val modeLower = mode?.lowercase()
+        val explicitMode = modeLower == "drive" || modeLower == "walk" ||
+            modeLower == "bike" || modeLower == "transit"
+        if (!explicitMode) {
+            val checkRoot = accessibilityService.getCurrentRootNode()
+            if (checkRoot != null) {
+                var transitSelected = false
+                val modeCheckNodes = checkRoot.findAccessibilityNodeInfosByText("mode")
+                for (n in modeCheckNodes) {
+                    val d = n.contentDescription?.toString()
+                    if (n.isSelected && d != null && d.contains("Transit", ignoreCase = true)) {
+                        transitSelected = true
+                        break
+                    }
+                }
+                modeCheckNodes.forEach { it.recycle() }
+                checkRoot.recycle()
+                if (transitSelected) {
+                    Log.d(TAG, "No Start button, but in Transit mode with route list shown and no explicit mode requested — treating transit route list as success")
+                    return true
+                }
+            }
+        }
+
         // For transit mode, we need to click a route first, then find the Start button
         if (mode?.lowercase() == "transit") {
             Log.d(TAG, "Transit mode: looking for route options to click first")
