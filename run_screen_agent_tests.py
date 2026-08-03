@@ -229,8 +229,7 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     # Vision check approach - no uiautomator dump, so no accessibility service flicker
     max_attempts = 5
     for attempt in range(max_attempts):
-        # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
-        # (not just viewing a chat where "My Chats" might appear as a navigation element)
+        # Must be the list screen itself, not an individual chat whose back-nav label reads "My Chats"
         time.sleep(2.0)
         on_my_chats = tester.check(
             "the Whiz My Chats list screen is showing, with a 'My Chats' title and a "
@@ -368,6 +367,7 @@ def login_if_needed(tester):
             "the Whiz My Chats screen is showing"
         )
 
+        # No settle sleep needed - the check() above already spent a screenshot and a vision call
         on_accessibility_dialog = tester.check(
             "the Enable Accessibility Service dialog or prompt is showing"
         )
@@ -1063,7 +1063,6 @@ def test_google_maps_directions(tester):
         time.sleep(2)
 
         # Validate we are on the New Chat screen
-        tester.screenshot(screenshot_path)
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "new_chat_screen")
