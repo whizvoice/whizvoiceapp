@@ -204,12 +204,13 @@ def set_music_stream_volume(target, max_steps=40):
 
 
 def check_on_new_chat_screen(tester):
-    """Check if we're on the New Chat screen using UI hierarchy.
+    """Check if we're on the New Chat screen using a vision check.
 
     Returns:
-        bool: True if on New Chat screen, False otherwise
+        Check: truthy if on the New Chat screen; .error explains a mismatch
     """
-    return tester.check_element_exists(text="New Chat", wait_after_dump=2.0)
+    time.sleep(2.0)
+    return tester.check("the Whiz app is on the New Chat screen")
 
 
 def navigate_to_my_chats(tester, test_name="unknown"):
@@ -218,23 +219,25 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     Args:
         tester: The AndroidAccessibilityTester instance
         test_name: Name of the test calling this function, for screenshot naming
-        use_ui_check: If True, use UI dump to check (causes accessibility dialog flicker).
-                     If False, just press back a few times without validation (faster, no API cost)
 
     Returns:
         tuple: (success: bool, error_message: str)
     """
     import time
 
-    # UI check approach (causes accessibility dialog flicker)
+    # Vision check approach - no uiautomator dump, so no accessibility service flicker
     max_attempts = 5
     for attempt in range(max_attempts):
         # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
         # (not just viewing a chat where "My Chats" might appear as a navigation element)
-        has_my_chats_title = tester.check_element_exists(content_desc="My Chats Title", wait_after_dump=2.0)
-        has_new_chat_button = tester.check_element_exists(content_desc="New Chat", wait_after_dump=0.5)
+        time.sleep(2.0)
+        on_my_chats = tester.check(
+            "the Whiz My Chats list screen is showing, with a 'My Chats' title and a "
+            "'New Chat' button. This must be the chat list screen itself, not an "
+            "individual chat that merely shows 'My Chats' as a back-navigation label."
+        )
 
-        if has_my_chats_title and has_new_chat_button:
+        if on_my_chats:
             print(f"✅ Found My Chats screen on attempt {attempt + 1}")
             return (True, "")
 
@@ -268,8 +271,9 @@ def enable_accessibility_service_if_needed(tester):
     import time
 
     # Check if accessibility dialog is showing by looking for the title element
-    dialog_showing = tester.check_element_exists(
-        content_desc="Enable accessibility service title"
+    time.sleep(0.5)
+    dialog_showing = tester.check(
+        "the Enable Accessibility Service dialog is showing"
     )
 
     if dialog_showing:
@@ -338,9 +342,9 @@ def login_if_needed(tester):
     print("========================================")
 
     # Check if we're on the login screen by looking for "Sign in with Google" button
-    is_login_screen = tester.check_element_exists(
-        text="Sign in with Google",
-        wait_after_dump=2.0
+    time.sleep(2.0)
+    is_login_screen = tester.check(
+        "the login screen is showing with a 'Sign in with Google' button"
     )
 
     if is_login_screen:
@@ -358,14 +362,13 @@ def login_if_needed(tester):
         time.sleep(3)
 
         # Verify login succeeded by checking for either My Chats page or accessibility dialog
-        reached_my_chats = tester.check_element_exists(
-            text="My Chats",
-            wait_after_dump=2.0
+        time.sleep(2.0)
+        reached_my_chats = tester.check(
+            "the Whiz My Chats screen is showing"
         )
 
-        on_accessibility_dialog = tester.check_element_exists(
-            text="Enable Accessibility Service",
-            wait_after_dump=2.0
+        on_accessibility_dialog = tester.check(
+            "the Enable Accessibility Service dialog or prompt is showing"
         )
 
         if not reached_my_chats and not on_accessibility_dialog:
