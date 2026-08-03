@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, '/Users/ruthgracewong/android_accessibility_tester')
 
 import android_accessibility_tester
+from android_accessibility_tester import Logcat
 import subprocess
 import os
 import pytest
@@ -522,13 +523,20 @@ def test_whatsapp_draft_message(tester):
         print("========================================")
         # Wait for draft overlay to appear by monitoring logcat for the overlay service log
         print("👀 Waiting for draft overlay via logcat...")
-        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
-        if result['matched']:
+        result = tester.wait_for(
+            Logcat(
+                "MessageDraftOverlay",
+                "Draft overlay added successfully",
+                clear_first=False,
+            ),
+            timeout=30.0,
+        )
+        if result:
             print("✅ Draft overlay detected!")
         else:
             print("❌ Draft overlay not detected!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_overlay_not_detected")
-        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        assert result, f"Failed to detect draft overlay: {result.error}"
 
         print("\n========================================")
         print("STEP 7: Validating WhatsApp draft message")
@@ -1361,16 +1369,23 @@ def test_sms_draft_message(tester):
         print("========================================")
         # Wait for draft overlay to appear by monitoring logcat for the overlay service log
         print("👀 Waiting for draft overlay via logcat...")
-        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
+        result = tester.wait_for(
+            Logcat(
+                "MessageDraftOverlay",
+                "Draft overlay added successfully",
+                clear_first=False,
+            ),
+            timeout=30.0,
+        )
 
         # If overlay detection failed, capture diagnostics before asserting
-        if not result['matched']:
+        if not result:
             print("❌ Draft overlay not detected!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_overlay_not_detected")
         else:
             print("✅ Draft overlay detected!")
 
-        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        assert result, f"Failed to detect draft overlay: {result.error}"
 
         print("\n========================================")
         print("STEP 7: Validating SMS draft message")
