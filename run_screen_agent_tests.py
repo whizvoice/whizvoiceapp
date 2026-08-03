@@ -494,7 +494,9 @@ def test_whatsapp_draft_message(tester):
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 5: Sending WhatsApp draft request")
@@ -727,7 +729,9 @@ def test_youtube_music_integration(tester):
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 5: Requesting to play song on YouTube Music")
@@ -1055,7 +1059,9 @@ def test_google_maps_directions(tester):
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "new_chat_screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         # Send a voice transcription to ask for directions to Trader Joe's
         subprocess.run([
