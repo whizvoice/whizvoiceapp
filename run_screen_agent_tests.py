@@ -1593,14 +1593,17 @@ def test_sms_draft_message(tester):
         validation_result = tester.check(
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
             "Look at the MOST RECENT message in the conversation - the bottom-most message bubble. "
-            "Return True if that most recent message is NOT the test message, or if the conversation has no "
-            "messages at all. The test message is some version of 'hey testing SMS from whiz voice' - it may "
-            "have been reworded to be more polite, e.g. 'Hey! Just testing SMS from Whiz Voice. Hope this "
-            "message finds you well!'. "
-            "Return False if the most recent message is still that test message - that means the delete failed. "
-            "IMPORTANT: a successful delete leaves NO placeholder, tombstone, or 'deleted' marker behind - the "
-            "message simply disappears. Do not look for a deletion indicator; judge only by what the most "
-            "recent remaining message is.",
+            "The test message is some version of 'hey testing SMS from whiz voice' - it may have been reworded "
+            "to be more polite, e.g. 'Hey! Just testing SMS from Whiz Voice. Hope this message finds you well!'. "
+            "Return True if the most recent message is anything OTHER than that test message text. That "
+            "includes ALL of these, each of which means the delete succeeded: the conversation has no messages "
+            "at all; the most recent message is an unrelated or older message; or the most recent message is a "
+            "deletion placeholder such as 'Message deleted' or 'You deleted this message'. "
+            "Return False ONLY if the actual test message text is still visible as the most recent message - "
+            "that is the one case where the delete failed. "
+            "IMPORTANT: deleting may or may not leave a placeholder behind, and BOTH outcomes are successful "
+            "deletes. Do not require a placeholder to be present, and do not treat the presence of one as a "
+            "failure. Judge solely by whether the test message text itself is still there.",
             screenshot_path=screenshot_path,
         )
         if not validation_result:
