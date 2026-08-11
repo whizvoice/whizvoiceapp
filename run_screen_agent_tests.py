@@ -649,10 +649,41 @@ def test_whatsapp_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
+        # Verify the long press actually selected the message. Without this, a missed long press
+        # cascades silently: the delete tap lands on the chat and the confirm tap lands on nothing,
+        # and the only symptom is an undeleted message at the end.
+        selection_active = tester.check(
+            "WhatsApp is in message selection mode: a top action bar is showing with action icons such "
+            "as a trash/delete icon, and at least one message is selected or highlighted. "
+            "Return False if the normal chat view is showing with no selection action bar.",
+            screenshot_path=screenshot_path,
+        )
+        if not selection_active:
+            print("❌ Long press did not enter selection mode!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
+        assert selection_active, (
+            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
+        )
+
         # Click delete button
         print("🗑️  Tapping delete button at (800, 200)...")
         tester.tap(800, 200)
         time.sleep(2)
+
+        # Verify the delete tap opened the confirmation dialog, so a missed icon is reported here
+        # rather than surfacing as a mysteriously undeleted message two steps later.
+        confirm_showing = tester.check(
+            "A delete confirmation dialog is showing, with a button to confirm deletion (labelled "
+            "something like 'Delete', 'Delete for me', or 'Delete for everyone'). "
+            "Return False if no confirmation dialog is visible.",
+            screenshot_path=screenshot_path,
+        )
+        if not confirm_showing:
+            print("❌ Delete confirmation dialog did not appear!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "no_delete_confirm_dialog", existing_screenshot=screenshot_path)
+        assert confirm_showing, (
+            f"Tapping the delete button at (800, 200) did not open a confirmation dialog: {confirm_showing.error}"
+        )
 
         # Click confirm delete
         print("✔️  Confirming delete at (750, 1290)...")
@@ -666,7 +697,15 @@ def test_whatsapp_draft_message(tester):
         validation_result = tester.check(
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "The most recent message in the chat has been deleted.",
+            "Look at the MOST RECENT message in the chat - the bottom-most message bubble. "
+            "Return True if that most recent message is NOT the test message, or if the chat has no messages "
+            "at all, or if it shows a deleted placeholder such as 'You deleted this message' or 'This message "
+            "was deleted'. The test message is some version of 'hey whats up hows it going just tryna test "
+            "whiz voice' - it may have been reworded. "
+            "Return False if the most recent message is still that test message - that means the delete failed. "
+            "IMPORTANT: a delete may leave no placeholder at all and simply remove the bubble, so the absence "
+            "of any deletion marker is NOT a failure - judge only by whether the test message is still the "
+            "most recent message.",
             screenshot_path=screenshot_path,
         )
         if not validation_result:
@@ -1499,6 +1538,22 @@ def test_sms_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
+        # Verify the long press actually entered selection mode. Without this, a missed long press
+        # cascades silently: the trash tap lands on the conversation and the confirm tap lands on
+        # nothing, and the only symptom is an undeleted message at the end.
+        selection_active = tester.check(
+            "Google Messages is in message selection mode: a top action bar is showing with icons such "
+            "as a trash/delete icon, and at least one message is selected or highlighted. "
+            "Return False if the normal conversation view is showing with no selection action bar.",
+            screenshot_path=screenshot_path,
+        )
+        if not selection_active:
+            print("❌ Long press did not enter selection mode!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
+        assert selection_active, (
+            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
+        )
+
         # Click the trash/delete icon in the top selection action bar. Long-pressing a message in
         # current Google Messages enters multi-select mode with a top app bar (✎ ⧉ 🗑 ★ ⋮) — there is
         # no bottom floating "Delete" menu. The old (695, 1937) tapped empty conversation space, so
@@ -1507,9 +1562,28 @@ def test_sms_draft_message(tester):
         tester.tap(752, 217)
         time.sleep(2)
 
-        # Confirm in the "Delete for everyone" dialog (the Delete button, bottom-right)
-        print("✔️  Confirming delete at (809, 1539)...")
-        tester.tap(809, 1539)
+        # Verify the trash tap opened the confirmation dialog, so a missed icon is reported here
+        # rather than surfacing as a mysteriously undeleted message two steps later.
+        confirm_showing = tester.check(
+            "A delete confirmation dialog or prompt is showing, with a button to confirm deletion "
+            "(labelled something like 'Delete' or 'Delete for everyone'). "
+            "Return False if no confirmation dialog is visible.",
+            screenshot_path=screenshot_path,
+        )
+        if not confirm_showing:
+            print("❌ Delete confirmation dialog did not appear!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "no_delete_confirm_dialog", existing_screenshot=screenshot_path)
+        assert confirm_showing, (
+            f"Tapping the trash icon at (752, 217) did not open a delete confirmation dialog: {confirm_showing.error}"
+        )
+
+        # Confirm in the "Delete this message?" dialog (the Delete button, bottom-right of the card).
+        # The old (809, 1539) sat 157px BELOW the button's bottom edge (bounds [701,1329][812,1382])
+        # and outside the dialog card entirely, so it dismissed the dialog instead of confirming —
+        # which looks identical to a successful delete until you check the message list.
+        # Bounds re-read from a live uiautomator dump on-device (Pixel 8) 2026-08-10.
+        print("✔️  Confirming delete at (756, 1355)...")
+        tester.tap(756, 1355)
         time.sleep(2)
 
         print("\n========================================")
@@ -1518,7 +1592,15 @@ def test_sms_draft_message(tester):
         # Validate that the message was deleted
         validation_result = tester.check(
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-            "The most recent message in the chat has been deleted. Other messages may or may not be deleted.",
+            "Look at the MOST RECENT message in the conversation - the bottom-most message bubble. "
+            "Return True if that most recent message is NOT the test message, or if the conversation has no "
+            "messages at all. The test message is some version of 'hey testing SMS from whiz voice' - it may "
+            "have been reworded to be more polite, e.g. 'Hey! Just testing SMS from Whiz Voice. Hope this "
+            "message finds you well!'. "
+            "Return False if the most recent message is still that test message - that means the delete failed. "
+            "IMPORTANT: a successful delete leaves NO placeholder, tombstone, or 'deleted' marker behind - the "
+            "message simply disappears. Do not look for a deletion indicator; judge only by what the most "
+            "recent remaining message is.",
             screenshot_path=screenshot_path,
         )
         if not validation_result:
