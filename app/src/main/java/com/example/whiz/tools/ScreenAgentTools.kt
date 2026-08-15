@@ -7530,6 +7530,15 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Failed to click top result Play button, falling back to row click")
             }
 
+            // No Play button may mean the top result is already playing — YT Music renders
+            // "Pause <title>" on the card in that case. Nothing to click; the requested item
+            // is already the thing playing, so report success instead of pausing it.
+            val alreadyPlaying = findTopResultAlreadyPlayingTitle(rootNode, contentType)
+            if (alreadyPlaying != null) {
+                Log.d(TAG, "Top result '$alreadyPlaying' is already playing; treating as success")
+                return ClickResultInfo(true, alreadyPlaying)
+            }
+
             // If the top result is an artist card (Shuffle/Mix instead of "Play X"),
             // tap Shuffle play — that's the right action for an artist query.
             val artistShuffle = findArtistShufflePlayButton(rootNode)
@@ -8010,6 +8019,45 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
+     * Detect a top-result card whose action button reads "Pause <title>" instead of "Play <title>".
+     * YouTube Music swaps that button to Pause when the item in the card is already the thing
+     * playing (e.g. the user asked for the same song twice, or a previous request already started
+     * it). There is no Play button to click in that state, and clicking Pause would stop playback —
+     * so we report the title as already playing and let the caller treat it as success.
+     *
+     * Returns the title of the already-playing top result, or null if the card isn't in that state.
+     */
+    private fun findTopResultAlreadyPlayingTitle(rootNode: AccessibilityNodeInfo, contentType: String): String? {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        val acceptableTypes = getAcceptableTypeIndicators(contentType)
+
+        try {
+            for (node in allNodes) {
+                val contentDesc = node.contentDescription?.toString() ?: ""
+                if (node.isClickable && contentDesc.startsWith("Pause ") && contentDesc.length > 6) {
+                    // Only trust a Pause button that lives inside a result card of the right
+                    // category — the mini player also has a "Pause video" button.
+                    val parent = node.parent
+                    if (parent != null) {
+                        val matchesCategory = treeContainsTypeIndicator(parent, acceptableTypes)
+                        parent.recycle()
+                        if (matchesCategory) {
+                            val title = contentDesc.removePrefix("Pause ")
+                            Log.d(TAG, "Top result for '$contentType' is already playing: '$title'")
+                            return title
+                        }
+                        Log.d(TAG, "Found Pause button but wrong category (expected $acceptableTypes): $contentDesc")
+                    }
+                }
+            }
+            return null
+        } finally {
+            allNodes.forEach { it.recycle() }
+        }
+    }
+
+    /**
      * Find the "Shuffle play" button on an artist top-result card. For queries like
      * "play Clean Bandit" the user named an artist, not a song, so YT Music shows the
      * artist page with Shuffle/Mix instead of a "Play" button — and the regular row
@@ -8086,6 +8134,41 @@ class ScreenAgentTools @Inject constructor(
                 grandchild.recycle()
             }
             child.recycle()
+        }
+
+        // Newer YouTube Music builds nest the byline deeper inside the row
+        // (row Button -> ViewGroup -> ViewGroup -> "Song • Artist •  ..."), and deeper still
+        // in the top-result card. The child/grandchild scan above only reaches 2 levels, so
+        // fall back to a depth-bounded subtree scan for those layouts.
+        return subtreeHasTypeIndicator(node, acceptableTypes, depth = 0, maxDepth = 6)
+    }
+
+    /**
+     * Depth-bounded search for a type indicator ("Song •", "Video •", ...) anywhere under [node].
+     * Bounded so we still match the row we're standing on rather than an unrelated sibling
+     * section further down the results list.
+     */
+    private fun subtreeHasTypeIndicator(
+        node: AccessibilityNodeInfo,
+        acceptableTypes: List<String>,
+        depth: Int,
+        maxDepth: Int
+    ): Boolean {
+        if (depth > maxDepth) return false
+
+        val nodeText = node.text?.toString() ?: ""
+        val nodeContentDesc = node.contentDescription?.toString() ?: ""
+        for (type in acceptableTypes) {
+            if (nodeText.startsWith(type) || nodeContentDesc.startsWith(type)) {
+                return true
+            }
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = subtreeHasTypeIndicator(child, acceptableTypes, depth + 1, maxDepth)
+            child.recycle()
+            if (found) return true
         }
         return false
     }
