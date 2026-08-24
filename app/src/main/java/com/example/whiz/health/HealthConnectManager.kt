@@ -15,6 +15,7 @@ import androidx.health.connect.client.units.Energy
 import androidx.health.connect.client.units.Mass
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import javax.inject.Inject
@@ -186,12 +187,25 @@ class HealthConnectManager @Inject constructor(
         return if (anyReadSucceeded) origins else null
     }
 
-    suspend fun logCalories(kcal: Int): Result {
+    /**
+     * The instant to stamp a record with. `null`/today → [Instant.now] (unchanged behavior).
+     * A past date → noon local time on that day. Noon avoids the midnight edge where a
+     * timezone offset could roll the record into an adjacent calendar day. A future date is
+     * clamped to now defensively (the tool schema already tells Claude not to send one).
+     */
+    private fun recordInstant(date: LocalDate?): Instant {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        return if (date == null || !date.isBefore(today)) Instant.now()
+               else date.atTime(12, 0).atZone(zone).toInstant()
+    }
+
+    suspend fun logCalories(kcal: Int, date: LocalDate? = null): Result {
         val c = client() ?: return Result.Unavailable("Health Connect not installed or unavailable")
         if (!hasWritePermission(DataType.CALORIES)) {
             return Result.PermissionMissing(writePermissionFor(DataType.CALORIES))
         }
-        val end = Instant.now()
+        val end = recordInstant(date)
         val start = end.minusSeconds(1)
         val offset = ZoneId.systemDefault().rules.getOffset(end)
         // MEAL_TYPE_UNKNOWN maps to Google Health's "uncategorized" bucket, which is
@@ -209,7 +223,7 @@ class HealthConnectManager @Inject constructor(
         )
         return try {
             c.insertRecords(listOf(record))
-            Log.i(TAG, "Wrote $kcal kcal to Health Connect")
+            Log.i(TAG, "Wrote $kcal kcal to Health Connect (${date ?: "today"})")
             Result.Success
         } catch (e: Exception) {
             Log.e(TAG, "Failed to insert NutritionRecord", e)
@@ -217,22 +231,22 @@ class HealthConnectManager @Inject constructor(
         }
     }
 
-    suspend fun logWeight(kg: Double): Result {
+    suspend fun logWeight(kg: Double, date: LocalDate? = null): Result {
         val c = client() ?: return Result.Unavailable("Health Connect not installed or unavailable")
         if (!hasWritePermission(DataType.WEIGHT)) {
             return Result.PermissionMissing(writePermissionFor(DataType.WEIGHT))
         }
-        val now = Instant.now()
-        val offset = ZoneId.systemDefault().rules.getOffset(now)
+        val time = recordInstant(date)
+        val offset = ZoneId.systemDefault().rules.getOffset(time)
         val record = WeightRecord(
-            time = now,
+            time = time,
             zoneOffset = offset,
             metadata = Metadata.manualEntry(),
             weight = Mass.kilograms(kg),
         )
         return try {
             c.insertRecords(listOf(record))
-            Log.i(TAG, "Wrote $kg kg to Health Connect")
+            Log.i(TAG, "Wrote $kg kg to Health Connect (${date ?: "today"})")
             Result.Success
         } catch (e: Exception) {
             Log.e(TAG, "Failed to insert WeightRecord", e)

@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, '/Users/ruthgracewong/android_accessibility_tester')
 
 import android_accessibility_tester
+from android_accessibility_tester import Logcat
 import subprocess
 import os
 import pytest
@@ -204,12 +205,13 @@ def set_music_stream_volume(target, max_steps=40):
 
 
 def check_on_new_chat_screen(tester):
-    """Check if we're on the New Chat screen using UI hierarchy.
+    """Check if we're on the New Chat screen using a vision check.
 
     Returns:
-        bool: True if on New Chat screen, False otherwise
+        Check: truthy if on the New Chat screen; .error explains a mismatch
     """
-    return tester.check_element_exists(text="New Chat", wait_after_dump=2.0)
+    time.sleep(2.0)
+    return tester.check("the Whiz app is on the New Chat screen")
 
 
 def navigate_to_my_chats(tester, test_name="unknown"):
@@ -218,23 +220,24 @@ def navigate_to_my_chats(tester, test_name="unknown"):
     Args:
         tester: The AndroidAccessibilityTester instance
         test_name: Name of the test calling this function, for screenshot naming
-        use_ui_check: If True, use UI dump to check (causes accessibility dialog flicker).
-                     If False, just press back a few times without validation (faster, no API cost)
 
     Returns:
         tuple: (success: bool, error_message: str)
     """
     import time
 
-    # UI check approach (causes accessibility dialog flicker)
+    # Vision check approach - no uiautomator dump, so no accessibility service flicker
     max_attempts = 5
     for attempt in range(max_attempts):
-        # Check for both "My Chats Title" content-desc AND "New Chat" button to ensure we're on the actual list screen
-        # (not just viewing a chat where "My Chats" might appear as a navigation element)
-        has_my_chats_title = tester.check_element_exists(content_desc="My Chats Title", wait_after_dump=2.0)
-        has_new_chat_button = tester.check_element_exists(content_desc="New Chat", wait_after_dump=0.5)
+        # Must be the list screen itself, not an individual chat whose back-nav label reads "My Chats"
+        time.sleep(2.0)
+        on_my_chats = tester.check(
+            "the Whiz My Chats list screen is showing, with a 'My Chats' title and a "
+            "'New Chat' button. This must be the chat list screen itself, not an "
+            "individual chat that merely shows 'My Chats' as a back-navigation label."
+        )
 
-        if has_my_chats_title and has_new_chat_button:
+        if on_my_chats:
             print(f"✅ Found My Chats screen on attempt {attempt + 1}")
             return (True, "")
 
@@ -268,8 +271,9 @@ def enable_accessibility_service_if_needed(tester):
     import time
 
     # Check if accessibility dialog is showing by looking for the title element
-    dialog_showing = tester.check_element_exists(
-        content_desc="Enable accessibility service title"
+    time.sleep(0.5)
+    dialog_showing = tester.check(
+        "the Enable Accessibility Service dialog is showing"
     )
 
     if dialog_showing:
@@ -338,9 +342,9 @@ def login_if_needed(tester):
     print("========================================")
 
     # Check if we're on the login screen by looking for "Sign in with Google" button
-    is_login_screen = tester.check_element_exists(
-        text="Sign in with Google",
-        wait_after_dump=2.0
+    time.sleep(2.0)
+    is_login_screen = tester.check(
+        "the login screen is showing with a 'Sign in with Google' button"
     )
 
     if is_login_screen:
@@ -358,14 +362,14 @@ def login_if_needed(tester):
         time.sleep(3)
 
         # Verify login succeeded by checking for either My Chats page or accessibility dialog
-        reached_my_chats = tester.check_element_exists(
-            text="My Chats",
-            wait_after_dump=2.0
+        time.sleep(2.0)
+        reached_my_chats = tester.check(
+            "the Whiz My Chats screen is showing"
         )
 
-        on_accessibility_dialog = tester.check_element_exists(
-            text="Enable Accessibility Service",
-            wait_after_dump=2.0
+        # No settle sleep needed - the check() above already spent a screenshot and a vision call
+        on_accessibility_dialog = tester.check(
+            "the Enable Accessibility Service dialog or prompt is showing"
         )
 
         if not reached_my_chats and not on_accessibility_dialog:
@@ -491,7 +495,9 @@ def test_whatsapp_draft_message(tester):
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 5: Sending WhatsApp draft request")
@@ -517,34 +523,42 @@ def test_whatsapp_draft_message(tester):
         print("========================================")
         # Wait for draft overlay to appear by monitoring logcat for the overlay service log
         print("👀 Waiting for draft overlay via logcat...")
-        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
-        if result['matched']:
+        result = tester.wait_for(
+            Logcat(
+                "MessageDraftOverlay",
+                "Draft overlay added successfully",
+                clear_first=False,
+            ),
+            timeout=30.0,
+        )
+        if result:
             print("✅ Draft overlay detected!")
         else:
             print("❌ Draft overlay not detected!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_overlay_not_detected")
-        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        assert result, f"Failed to detect draft overlay: {result.error}"
 
         print("\n========================================")
         print("STEP 7: Validating WhatsApp draft message")
         print("========================================")
         # Validate WhatsApp is open with the draft message
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey whats up hows it going just tryna test whiz voice'. "
             "There may or may not be a white notification bubble with the outline of a robot head "
-            "and there may or may not be an icon inside the robot head outline - the test should pass either way. "
+            "and there may or may not be an icon inside the robot head outline - the test should pass either way. ",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ WhatsApp draft message validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_message_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp draft message validated successfully!")
-        assert validation_result, "Failed to draft WhatsApp message correctly"
+        assert validation_result, (
+            f"Failed to draft WhatsApp message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 8: Requesting to modify the message")
@@ -567,21 +581,22 @@ def test_whatsapp_draft_message(tester):
         print("STEP 9: Validating draft message was updated")
         print("========================================")
         # Validate that the draft was updated
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             "A messaging app is open with a draft-edit overlay near the bottom of the screen. "
             "The overlay contains text similar to 'just trying to test whiz voice' (not necessarily an "
             "exact match) shown as an EDIT: some text in red strikethrough and some text in blue. "
             "Return True as long as you can see that red-strikethrough-and-blue edited draft text. "
-            "There may or may not be a robot-head notification bubble; either is fine."
+            "There may or may not be a robot-head notification bubble; either is fine.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "draft_updated_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
-        assert validation_result, "Failed to draft WhatsApp message correctly"
+        assert validation_result, (
+            f"Failed to draft WhatsApp message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 10: Sending the WhatsApp message")
@@ -604,23 +619,24 @@ def test_whatsapp_draft_message(tester):
         print("STEP 11: Validating message was sent")
         print("========================================")
         # Validate that the message was sent
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
             "At the bottom of the screen, there is NO colored overlay. "
             "The most recent message is something with text similar to: "
             "just trying to test WhizVoice. The exact wording does not matter. "
             "There may or may not be a white notification bubble with the outline of a robot head "
-            "and a microphone icon inside - the test should pass either way."
+            "and a microphone icon inside - the test should pass either way.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_sent_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp message successfully sent!")
-        assert validation_result, "Failed to send WhatsApp message correctly"
+        assert validation_result, (
+            f"Failed to send WhatsApp message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 12: Cleaning up - Deleting sent message")
@@ -633,10 +649,41 @@ def test_whatsapp_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
+        # Verify the long press actually selected the message. Without this, a missed long press
+        # cascades silently: the delete tap lands on the chat and the confirm tap lands on nothing,
+        # and the only symptom is an undeleted message at the end.
+        selection_active = tester.check(
+            "WhatsApp is in message selection mode: a top action bar is showing with action icons such "
+            "as a trash/delete icon, and at least one message is selected or highlighted. "
+            "Return False if the normal chat view is showing with no selection action bar.",
+            screenshot_path=screenshot_path,
+        )
+        if not selection_active:
+            print("❌ Long press did not enter selection mode!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
+        assert selection_active, (
+            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
+        )
+
         # Click delete button
         print("🗑️  Tapping delete button at (800, 200)...")
         tester.tap(800, 200)
         time.sleep(2)
+
+        # Verify the delete tap opened the confirmation dialog, so a missed icon is reported here
+        # rather than surfacing as a mysteriously undeleted message two steps later.
+        confirm_showing = tester.check(
+            "A delete confirmation dialog is showing, with a button to confirm deletion (labelled "
+            "something like 'Delete', 'Delete for me', or 'Delete for everyone'). "
+            "Return False if no confirmation dialog is visible.",
+            screenshot_path=screenshot_path,
+        )
+        if not confirm_showing:
+            print("❌ Delete confirmation dialog did not appear!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "no_delete_confirm_dialog", existing_screenshot=screenshot_path)
+        assert confirm_showing, (
+            f"Tapping the delete button at (800, 200) did not open a confirmation dialog: {confirm_showing.error}"
+        )
 
         # Click confirm delete
         print("✔️  Confirming delete at (750, 1290)...")
@@ -647,19 +694,28 @@ def test_whatsapp_draft_message(tester):
         print("STEP 13: Validating message was deleted")
         print("========================================")
         # Validate that the message was deleted
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"WhatsApp is open showing a chat with the contact {whatsapp_full} or '{whatsapp_short}'. "
             "It's OK if the contact is a self-message with '(You)' at the end of the contact name. "
-            "The most recent message in the chat has been deleted."
+            "Look at the MOST RECENT message in the chat - the bottom-most message bubble. "
+            "Return True if that most recent message is NOT the test message, or if the chat has no messages "
+            "at all, or if it shows a deleted placeholder such as 'You deleted this message' or 'This message "
+            "was deleted'. The test message is some version of 'hey whats up hows it going just tryna test "
+            "whiz voice' - it may have been reworded. "
+            "Return False if the most recent message is still that test message - that means the delete failed. "
+            "IMPORTANT: a delete may leave no placeholder at all and simply remove the bubble, so the absence "
+            "of any deletion marker is NOT a failure - judge only by whether the test message is still the "
+            "most recent message.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "message_deleted_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ WhatsApp message successfully deleted!")
-        assert validation_result, "Failed to delete the sent message"
+        assert validation_result, (
+            f"Failed to delete the sent message: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("🎉 TEST COMPLETED SUCCESSFULLY!")
@@ -720,7 +776,9 @@ def test_youtube_music_integration(tester):
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "new_chat_screen")
         else:
             print("✅ Successfully validated New Chat screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 5: Requesting to play song on YouTube Music")
@@ -748,13 +806,12 @@ def test_youtube_music_integration(tester):
         play_succeeded = False
         for i in range(max_wait // poll_interval):
             time.sleep(poll_interval)
-            tester.screenshot(screenshot_path)
 
             # Check if YouTube Music is showing "Golden" as the current track in the now-playing view
             # The song can be playing or paused - we just need to verify it's loaded
-            validation_result = tester.validate_screenshot(
-                screenshot_path,
-                "Check if YouTube Music is showing 'Golden' as the current track in the now-playing view. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). The song can be either playing or paused - we just need to verify 'Golden' is loaded as the current track. Return False if: it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'."
+            validation_result = tester.check(
+                "Check if YouTube Music is showing 'Golden' as the current track in the now-playing view. Requirements: 1) You must see the song title 'Golden' displayed as the currently playing track, AND 2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). The song can be either playing or paused - we just need to verify 'Golden' is loaded as the current track. Return False if: it's a search results page, it's a context menu with options like 'Play next' or 'Add to queue', or the song title shown is not 'Golden'.",
+                screenshot_path=screenshot_path,
             )
             if validation_result:
                 print(f"✅ Song loaded after {(i+1)*poll_interval} seconds")
@@ -815,17 +872,18 @@ def test_youtube_music_integration(tester):
         print("STEP 10: Validating song queue")
         print("========================================")
         # Screenshot and validate that it shows the queue with Golden first and How It's Done second
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue."
+        validation_result = tester.check(
+            "The screen shows a song queue with 'Golden' as the first song and 'How It's Done' as the second song in the queue.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Queue validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "queue_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Queue validated successfully with 'Golden' first and 'How It's Done' second!")
-        assert validation_result, "Failed to validate queue with Golden first and How It's Done second"
+        assert validation_result, (
+            f"Failed to validate queue with Golden first and How It's Done second: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 11: Requesting to play 90s pop instead")
@@ -850,14 +908,13 @@ def test_youtube_music_integration(tester):
         music_changed = False
         for i in range(max_wait // poll_interval):
             time.sleep(poll_interval)
-            tester.screenshot(screenshot_path)
 
             # Check if the music changed from "Golden" - meaning a new song/playlist started
-            validation_result = tester.validate_screenshot(
-                screenshot_path,
+            validation_result = tester.check(
                 "Check if the currently playing song is NO LONGER 'Golden' by Kpop Demon Hunters. "
                 "Return True if you see a DIFFERENT song playing (like 'Baby One More Time', or any other song that is NOT 'Golden'). "
-                "Return False if 'Golden' is still showing as the currently playing track."
+                "Return False if 'Golden' is still showing as the currently playing track.",
+                screenshot_path=screenshot_path,
             )
             if validation_result:
                 print(f"✅ Music changed after {(i+1)*poll_interval} seconds")
@@ -880,21 +937,22 @@ def test_youtube_music_integration(tester):
         print("\n========================================")
         print("STEP 14: Validating 90s pop playlist is visible")
         print("========================================")
-        tester.screenshot(screenshot_path)
-        playlist_validation = tester.validate_screenshot(
-            screenshot_path,
-            "Check if this is a 90s pop playlist or similar. Requirements: "
-            "1) You should see a playlist page with a title containing '90s', 'nineties', '90's', or similar 90s-related text, AND "
+        playlist_validation = tester.check(
+            "Check if this is a playlist related to 90s or pop. Requirements: "
+            "1) You should see a playlist page with a title containing '90s' OR anything related to 'pop' (could be one or the other doesn't have to be both), AND "
             "2) You should see the beginning of a list of songs. "
-            "Return True if this appears to be a 90s pop playlist. Return False if it's a different playlist, a search results page, or not a playlist at all. "
-            "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something."
+            "Return True if the requirements are met. Return False if it's a different playlist, a search results page, or not a playlist at all. "
+            "There may or may not be a notification bubble with an icon inside floating on the screen - the test should pass even if the bubble is covering something.",
+            screenshot_path=screenshot_path,
         )
         if not playlist_validation:
             print("❌ 90s pop playlist validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "youtube_music", "nineties_playlist_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ 90s pop playlist validated successfully!")
-        assert playlist_validation, "Failed to validate 90s pop playlist"
+        assert playlist_validation, (
+            f"Failed to validate 90s pop playlist: {playlist_validation.error}"
+        )
 
         print("\n========================================")
         print("STEP 15: Requesting to play 99% Invisible podcast")
@@ -918,17 +976,16 @@ def test_youtube_music_integration(tester):
         podcast_succeeded = False
         for i in range(max_wait // poll_interval):
             time.sleep(poll_interval)
-            tester.screenshot(screenshot_path)
 
             # Check if 99% Invisible podcast is playing
-            validation_result = tester.validate_screenshot(
-                screenshot_path,
+            validation_result = tester.check(
                 "Check if the '99% Invisible' podcast is loaded in YouTube Music. Requirements: "
                 "1) You must see '99% Invisible' or '99 Percent Invisible' displayed as the currently playing content, AND "
                 "2) You must see the now-playing screen with album art and playback controls (play/pause button, progress bar, skip buttons). "
                 "The podcast can be either playing or paused - we just need to verify '99% Invisible' is loaded as the current track. "
                 "Return True if 99% Invisible podcast content is loaded. Return False if it's still showing 90s pop music, "
-                "a search results page, or anything other than the 99% Invisible podcast."
+                "a search results page, or anything other than the 99% Invisible podcast.",
+                screenshot_path=screenshot_path,
             )
             if validation_result:
                 print(f"✅ Podcast playing after {(i+1)*poll_interval} seconds")
@@ -964,16 +1021,15 @@ def test_youtube_music_integration(tester):
         pause_succeeded = False
         for i in range(max_wait // poll_interval):
             time.sleep(poll_interval)
-            tester.screenshot(screenshot_path)
 
             # Check if the music is paused (play button visible)
-            validation_result = tester.validate_screenshot(
-                screenshot_path,
+            validation_result = tester.check(
                 "Check if YouTube Music is showing PAUSED state. Requirements: "
                 "1) You must see a PLAY button (triangle pointing right) NOT a pause button (two vertical bars), AND "
                 "2) The 99% Invisible podcast content should still be visible as the current track. "
                 "Return True if the music is paused (play button visible). "
-                "Return False if the music is still playing (pause button visible)."
+                "Return False if the music is still playing (pause button visible).",
+                screenshot_path=screenshot_path,
             )
             if validation_result:
                 print(f"✅ Music paused after {(i+1)*poll_interval} seconds")
@@ -1046,11 +1102,12 @@ def test_google_maps_directions(tester):
         time.sleep(2)
 
         # Validate we are on the New Chat screen
-        tester.screenshot(screenshot_path)
         validation_result = check_on_new_chat_screen(tester)
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "new_chat_screen")
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
 
         # Send a voice transcription to ask for directions to Trader Joe's
         subprocess.run([
@@ -1068,16 +1125,17 @@ def test_google_maps_directions(tester):
         time.sleep(20)
 
         # Validate that Google Maps is showing the "See locations" list for Trader Joe's
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"Google Maps is open and showing more than one {store_name} locations. "
-            f"The screen should show more than one {store_name} results with addresses at least partially visible."
+            f"The screen should show more than one {store_name} results with addresses at least partially visible.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_see_locations", existing_screenshot=screenshot_path)
-        assert validation_result, f"Failed to show {store_name} location list"
+        assert validation_result, (
+            f"Failed to show {store_name} location list: {validation_result.error}"
+        )
 
         # Send a voice transcription to select the one on Laguna Street
         subprocess.run([
@@ -1094,18 +1152,19 @@ def test_google_maps_directions(tester):
         time.sleep(30)
 
         # Validate that Google Maps is showing directions or navigation screen
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"This is an Android device screenshot. Check if Google Maps is showing directions or navigation. "
             f"Return True if you see ANY of: route lines on a map, turn-by-turn directions, 'Start' navigation button, "
             f"estimated travel time, or directions to {store_name}. "
-            f"Return False only if Google Maps is not showing any navigation/directions content."
+            f"Return False only if Google Maps is not showing any navigation/directions content.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             store_name_slug = store_name.lower().replace(' ', '_').replace("'", '')
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", f"{store_name_slug}_directions", existing_screenshot=screenshot_path)
-        assert validation_result, f"Failed to show {store_name} directions"
+        assert validation_result, (
+            f"Failed to show {store_name} directions: {validation_result.error}"
+        )
 
         # Send a voice transcription to change destination to secondary address
         # Note: Using a destination that's far enough that navigation won't complete immediately
@@ -1124,14 +1183,15 @@ def test_google_maps_directions(tester):
         time.sleep(15)
 
         # Validate that Google Maps is showing the directions for 1680 Mission Street
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route)."
+        validation_result = tester.check(
+            "Google Maps is open and showing the navigation screen for a route (doesn't matter what route).",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_search", existing_screenshot=screenshot_path)
-        assert validation_result, f"Failed to show {secondary_address} search results"
+        assert validation_result, (
+            f"Failed to show {secondary_address} search results: {validation_result.error}"
+        )
 
         # Send a voice transcription to request driving directions specifically
         subprocess.run([
@@ -1149,14 +1209,15 @@ def test_google_maps_directions(tester):
         time.sleep(20)
 
         # Validate that Google Maps is showing driving directions to 1680 Mission Street
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR."
+        validation_result = tester.check(
+            "Google Maps is open and showing the navigation screen for a route with transportation mode DRIVING/CAR.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "secondary_address_driving_directions", existing_screenshot=screenshot_path)
-        assert validation_result, f"Failed to show driving directions to {secondary_address}"
+        assert validation_result, (
+            f"Failed to show driving directions to {secondary_address}: {validation_result.error}"
+        )
 
         # Bring WhizVoice Debug app to foreground by using monkey to resume the app
         # This brings the app to foreground without starting a new activity
@@ -1167,14 +1228,15 @@ def test_google_maps_directions(tester):
         time.sleep(2)  # Give time for app to come to foreground
 
         # Take screenshot of WhizVoice app showing chat
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}"
+        validation_result = tester.check(
+            f"The WhizVoice chat screen is showing, and the most recent assistant message mentions the address '{secondary_address}' or '{secondary_address_short}' in {city_name}",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "google_maps_directions", "whizvoice_address_confirmation", existing_screenshot=screenshot_path)
-        assert validation_result, f"Assistant did not mention the {secondary_address} address in the chat"
+        assert validation_result, (
+            f"Assistant did not mention the {secondary_address} address in the chat: {validation_result.error}"
+        )
 
     finally:
         # Always clean up Google Maps to prevent overlay from interfering with future tests
@@ -1310,14 +1372,15 @@ def test_sms_draft_message(tester):
         print("STEP 4: Validating New Chat screen")
         print("========================================")
         # Validate we are on the New Chat screen
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
-            "The screen shows a 'New Chat' page where users can start a new conversation"
+        validation_result = tester.check(
+            "The screen shows a 'New Chat' page where users can start a new conversation",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "new_chat_screen", existing_screenshot=screenshot_path)
-        assert validation_result, "Failed to reach New Chat screen"
+        assert validation_result, (
+            f"Failed to reach New Chat screen: {validation_result.error}"
+        )
         print("✅ Successfully validated New Chat screen")
 
         print("\n========================================")
@@ -1344,36 +1407,44 @@ def test_sms_draft_message(tester):
         print("========================================")
         # Wait for draft overlay to appear by monitoring logcat for the overlay service log
         print("👀 Waiting for draft overlay via logcat...")
-        result = tester.wait_for_logcat("MessageDraftOverlay", "Draft overlay added successfully", timeout=30.0, clear_first=False)
+        result = tester.wait_for(
+            Logcat(
+                "MessageDraftOverlay",
+                "Draft overlay added successfully",
+                clear_first=False,
+            ),
+            timeout=30.0,
+        )
 
         # If overlay detection failed, capture diagnostics before asserting
-        if not result['matched']:
+        if not result:
             print("❌ Draft overlay not detected!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_overlay_not_detected")
         else:
             print("✅ Draft overlay detected!")
 
-        assert result['matched'], f"Failed to detect draft overlay: {result.get('error')}"
+        assert result, f"Failed to detect draft overlay: {result.error}"
 
         print("\n========================================")
         print("STEP 7: Validating SMS draft message")
         print("========================================")
         # Validate Messages app is open with the draft message
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"Messages app (Google Messages or SMS app) is open showing a conversation with a contact (could be {sms_full} or '{sms_short}'  (either is fine). "
             "At the bottom of the screen, there is a colored overlay or message input field containing text "
             "similar to 'hey testing SMS from whiz voice'. "
             "There may or may not be a white notification bubble with an outline of something (it's a robot head) "
-            "and there may or may not be an icon inside the outline - the test should pass either way. "
+            "and there may or may not be an icon inside the outline - the test should pass either way. ",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Draft message validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_message_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS draft message validated successfully!")
-        assert validation_result, "Failed to draft SMS message correctly"
+        assert validation_result, (
+            f"Failed to draft SMS message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 8: Requesting to modify the message")
@@ -1396,22 +1467,23 @@ def test_sms_draft_message(tester):
         print("STEP 9: Validating draft message was updated")
         print("========================================")
         # Validate that the draft was updated
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             "A messaging app is open with a draft-edit overlay near the bottom of the screen. "
             "The overlay contains text similar to 'testing SMS' (not necessarily an exact match) shown as "
             "an EDIT: some text in red strikethrough and some text in blue. "
             "Return True as long as you can see that red-strikethrough-and-blue edited draft text. "
             "Do NOT require identifying which messaging app it is — a translucent assistant bubble may be "
-            "covering the top of the screen. There may or may not be a robot-head notification bubble; either is fine."
+            "covering the top of the screen. There may or may not be a robot-head notification bubble; either is fine.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Draft update validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "draft_updated_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ Draft message successfully updated with strikethrough and new text!")
-        assert validation_result, "Failed to update SMS draft message correctly"
+        assert validation_result, (
+            f"Failed to update SMS draft message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 10: Sending the SMS message")
@@ -1434,9 +1506,7 @@ def test_sms_draft_message(tester):
         print("STEP 11: Validating message was sent")
         print("========================================")
         # Validate that the message was sent
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
             "Look for a SENT message bubble (colored bubble on the right side of the screen) that contains "
             "the words 'Testing SMS' or 'Whiz Voice' or similar text about testing. The message may have been "
@@ -1445,14 +1515,17 @@ def test_sms_draft_message(tester):
             "There should be NO colored overlay covering the bottom of the screen. "
             "A notification bubble with a robot head outline may be visible. "
             "Return True if there is a sent message bubble containing any text related to 'testing SMS' or 'Whiz Voice'. "
-            "Return False ONLY if the message text is still sitting in the input field at the bottom and was NOT sent."
+            "Return False ONLY if the message text is still sitting in the input field at the bottom and was NOT sent.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Message sent validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_sent_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS message successfully sent!")
-        assert validation_result, "Failed to send SMS message correctly"
+        assert validation_result, (
+            f"Failed to send SMS message correctly: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("STEP 12: Cleaning up - Deleting sent message")
@@ -1465,32 +1538,82 @@ def test_sms_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
-        # Click "Delete" in the long-press context menu (Google Messages, confirmed coords)
-        print("🗑️  Tapping delete button at (695, 1937)...")
-        tester.tap(695, 1937)
+        # Verify the long press actually entered selection mode. Without this, a missed long press
+        # cascades silently: the trash tap lands on the conversation and the confirm tap lands on
+        # nothing, and the only symptom is an undeleted message at the end.
+        selection_active = tester.check(
+            "Google Messages is in message selection mode: a top action bar is showing with icons such "
+            "as a trash/delete icon, and at least one message is selected or highlighted. "
+            "Return False if the normal conversation view is showing with no selection action bar.",
+            screenshot_path=screenshot_path,
+        )
+        if not selection_active:
+            print("❌ Long press did not enter selection mode!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
+        assert selection_active, (
+            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
+        )
+
+        # Click the trash/delete icon in the top selection action bar. Long-pressing a message in
+        # current Google Messages enters multi-select mode with a top app bar (✎ ⧉ 🗑 ★ ⋮) — there is
+        # no bottom floating "Delete" menu. The old (695, 1937) tapped empty conversation space, so
+        # nothing was deleted. Trash-icon position verified on-device (Pixel 8) 2026-07.
+        print("🗑️  Tapping delete (top trash icon) at (752, 217)...")
+        tester.tap(752, 217)
         time.sleep(2)
 
-        # Confirm in the "Delete for everyone" dialog (the Delete button, bottom-right)
-        print("✔️  Confirming delete at (809, 1539)...")
-        tester.tap(809, 1539)
+        # Verify the trash tap opened the confirmation dialog, so a missed icon is reported here
+        # rather than surfacing as a mysteriously undeleted message two steps later.
+        confirm_showing = tester.check(
+            "A delete confirmation dialog or prompt is showing, with a button to confirm deletion "
+            "(labelled something like 'Delete' or 'Delete for everyone'). "
+            "Return False if no confirmation dialog is visible.",
+            screenshot_path=screenshot_path,
+        )
+        if not confirm_showing:
+            print("❌ Delete confirmation dialog did not appear!")
+            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "no_delete_confirm_dialog", existing_screenshot=screenshot_path)
+        assert confirm_showing, (
+            f"Tapping the trash icon at (752, 217) did not open a delete confirmation dialog: {confirm_showing.error}"
+        )
+
+        # Confirm in the "Delete this message?" dialog (the Delete button, bottom-right of the card).
+        # The old (809, 1539) sat 157px BELOW the button's bottom edge (bounds [701,1329][812,1382])
+        # and outside the dialog card entirely, so it dismissed the dialog instead of confirming —
+        # which looks identical to a successful delete until you check the message list.
+        # Bounds re-read from a live uiautomator dump on-device (Pixel 8) 2026-08-10.
+        print("✔️  Confirming delete at (756, 1355)...")
+        tester.tap(756, 1355)
         time.sleep(2)
 
         print("\n========================================")
         print("STEP 13: Validating message was deleted")
         print("========================================")
         # Validate that the message was deleted
-        tester.screenshot(screenshot_path)
-        validation_result = tester.validate_screenshot(
-            screenshot_path,
+        validation_result = tester.check(
             f"Messages app (Google Messages or SMS app) is open showing a conversation with the contact {sms_full} or '{sms_short}' (either is fine). "
-            "The most recent message in the chat has been deleted. Other messages may or may not be deleted."
+            "Look at the MOST RECENT message in the conversation - the bottom-most message bubble. "
+            "The test message is some version of 'hey testing SMS from whiz voice' - it may have been reworded "
+            "to be more polite, e.g. 'Hey! Just testing SMS from Whiz Voice. Hope this message finds you well!'. "
+            "Return True if the most recent message is anything OTHER than that test message text. That "
+            "includes ALL of these, each of which means the delete succeeded: the conversation has no messages "
+            "at all; the most recent message is an unrelated or older message; or the most recent message is a "
+            "deletion placeholder such as 'Message deleted' or 'You deleted this message'. "
+            "Return False ONLY if the actual test message text is still visible as the most recent message - "
+            "that is the one case where the delete failed. "
+            "IMPORTANT: deleting may or may not leave a placeholder behind, and BOTH outcomes are successful "
+            "deletes. Do not require a placeholder to be present, and do not treat the presence of one as a "
+            "failure. Judge solely by whether the test message text itself is still there.",
+            screenshot_path=screenshot_path,
         )
         if not validation_result:
             print("❌ Message deletion validation failed!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "message_deleted_validation", existing_screenshot=screenshot_path)
         else:
             print("✅ SMS message successfully deleted!")
-        assert validation_result, "Failed to delete the sent SMS message"
+        assert validation_result, (
+            f"Failed to delete the sent SMS message: {validation_result.error}"
+        )
 
         print("\n========================================")
         print("🎉 TEST COMPLETED SUCCESSFULLY!")

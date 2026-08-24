@@ -113,6 +113,21 @@ class ChatViewModel @Inject constructor(
     private val initialChatId = savedStateHandle.get<Long>("chatId") ?: -1L
     private val _chatId = MutableStateFlow<Long>(initialChatId)
     val chatId: StateFlow<Long> = _chatId.asStateFlow()
+
+    // Persist the real (server-backed) chat id into savedStateHandle whenever we have one. If the
+    // process is killed while viewing a chat that was opened under an optimistic id and has since
+    // migrated, restore then uses the REAL id rather than the stale optimistic id the screen was
+    // navigated to (migration updates _chatId in memory but not the nav argument). This is what lets
+    // us stop persisting optimistic→real mappings for already-migrated chats server-side.
+    init {
+        viewModelScope.launch {
+            _chatId.collect { id ->
+                if (id > 0 && savedStateHandle.get<Long>("chatId") != id) {
+                    savedStateHandle["chatId"] = id
+                }
+            }
+        }
+    }
     private val _chatTitle = MutableStateFlow<String>("New Chat")
     val chatTitle = _chatTitle.asStateFlow()
     
@@ -2323,10 +2338,11 @@ class ChatViewModel @Inject constructor(
             pendingTTSCheckJob?.cancel()
             pendingTTSMessage = null
 
-            if (ttsManager.isSpeaking.value) {
-                Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
-                ttsManager.stop()
-            }
+            // Stop unconditionally: an utterance handed to the engine reports
+            // isSpeaking=false until the engine's onStart fires (~700ms), so gating
+            // on isSpeaking lets it start speaking after the screen is off (bug #1516).
+            Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
+            ttsManager.stop()
 
             voiceManager.setVoiceResponseEnabled(false)
         } else {

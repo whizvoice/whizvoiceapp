@@ -13,7 +13,7 @@ import com.example.whiz.wakeword.metrics.MetricsSource
  */
 class ScoreSmoother(
     private val windowSize: Int,
-    private var enterThreshold: Float,
+    private val enterThreshold: Float,
     private val hysteresis: Float,
     private val refractoryMs: Int,
 ) : MetricsSource {
@@ -61,11 +61,6 @@ class ScoreSmoother(
         armed = true
         refractoryUntilMs = Long.MIN_VALUE
         lastMean = 0f
-    }
-
-    @Synchronized
-    fun setEnterThreshold(t: Float) {
-        this.enterThreshold = t
     }
 
     override fun snapshot(): Map<String, Any> = mapOf(
