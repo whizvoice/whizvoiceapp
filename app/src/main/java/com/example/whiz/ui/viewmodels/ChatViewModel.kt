@@ -2338,10 +2338,11 @@ class ChatViewModel @Inject constructor(
             pendingTTSCheckJob?.cancel()
             pendingTTSMessage = null
 
-            if (ttsManager.isSpeaking.value) {
-                Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
-                ttsManager.stop()
-            }
+            // Stop unconditionally: an utterance handed to the engine reports
+            // isSpeaking=false until the engine's onStart fires (~700ms), so gating
+            // on isSpeaking lets it start speaking after the screen is off (bug #1516).
+            Log.d(TAG, "[LOG] Stopping TTS audio as app is going to background")
+            ttsManager.stop()
 
             voiceManager.setVoiceResponseEnabled(false)
         } else {
