@@ -736,6 +736,12 @@ class MainActivity : ComponentActivity() {
                                     onOpenSettings = { executeWithUnlock { openAccessibilitySettings() } }
                                 )
                             }
+                            PermissionManager.RequiredStep.ACCESSIBILITY_RECONNECT -> {
+                                com.example.whiz.ui.components.AccessibilityReconnectDialog(
+                                    onDismiss = { /* User dismissed the dialog */ },
+                                    onOpenSettings = { executeWithUnlock { openAccessibilitySettings() } }
+                                )
+                            }
                             PermissionManager.RequiredStep.OVERLAY -> {
                                 com.example.whiz.ui.components.OverlayPermissionDialog(
                                     onDismiss = { /* User dismissed the dialog */ },

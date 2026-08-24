@@ -19,6 +19,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.whiz.BuildConfig
 import com.example.whiz.MainActivity
+import com.example.whiz.accessibility.AccessibilityChecker
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.services.BubbleOverlayService
@@ -41,9 +42,26 @@ import javax.inject.Singleton
 @Singleton
 class ScreenAgentTools @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val apiService: ApiService
+    private val apiService: ApiService,
+    private val accessibilityChecker: AccessibilityChecker
 ) {
     private val TAG = "ScreenAgentTools"
+
+    /**
+     * Error message for a WhizAccessibilityService.getInstance() == null failure.
+     * Distinguishes the "enabled in Settings but not bound by the OS" zombie state (recovery
+     * is toggling the service off and on, not enabling it) from genuinely disabled, and raises
+     * the in-app reconnect dialog for the zombie case so the user gets actionable instructions.
+     */
+    private fun accessibilityUnavailableMessage(): String {
+        return if (accessibilityChecker.isServiceEnabled()) {
+            WhizAccessibilityService.reportReconnectNeeded()
+            "Accessibility service disconnected: it is enabled in Settings but the system has not started it. " +
+                "The user has been shown instructions to fix this by toggling the Whiz accessibility service off and back on in Accessibility settings."
+        } else {
+            "Accessibility service not enabled. Please enable it in settings."
+        }
+    }
 
     // Recent actions tracking for UI dump context (max 5 actions)
     private val recentActions = mutableListOf<String>()
@@ -336,7 +354,7 @@ class ScreenAgentTools @Inject constructor(
         val accessibilityService = WhizAccessibilityService.getInstance()
             ?: return CallButtonResult(
                 success = false,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
 
         val rootNode = accessibilityService.getCurrentRootNode()
@@ -881,7 +899,7 @@ class ScreenAgentTools @Inject constructor(
                 return CloseOtherAppResult(
                     success = false,
                     appName = appLabel,
-                    error = "Accessibility service not enabled. Please enable it in settings."
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -1213,7 +1231,7 @@ class ScreenAgentTools @Inject constructor(
         val accessibilityService = WhizAccessibilityService.getInstance()
             ?: return PressBackResult(
                 success = false,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
         val ok = accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
         return if (ok) PressBackResult(success = true)
@@ -1237,7 +1255,7 @@ class ScreenAgentTools @Inject constructor(
                 success = false,
                 dump = "",
                 nodeCount = 0,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
         val root = accessibilityService.getCurrentRootNode()
             ?: return GetUiResult(
@@ -1278,7 +1296,7 @@ class ScreenAgentTools @Inject constructor(
                 success = false,
                 dump = "",
                 nodeCount = 0,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
         }
 
@@ -1415,7 +1433,7 @@ class ScreenAgentTools @Inject constructor(
             ?: return ClickResult(
                 success = false,
                 elementId = elementId,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
         val root = accessibilityService.getCurrentRootNode()
             ?: return ClickResult(
@@ -1468,7 +1486,7 @@ class ScreenAgentTools @Inject constructor(
             ?: return InsertTextResult(
                 success = false,
                 elementId = elementId,
-                error = "Accessibility service not enabled. Please enable it in settings."
+                error = accessibilityUnavailableMessage()
             )
         val root = accessibilityService.getCurrentRootNode()
             ?: return InsertTextResult(
@@ -1693,7 +1711,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "select_chat",
                     chatName = chatName,
-                    error = "Accessibility service not enabled. Please enable it in settings."
+                    error = accessibilityUnavailableMessage()
                 )
             }
             
@@ -2075,7 +2093,7 @@ class ScreenAgentTools @Inject constructor(
                 return DraftResult(
                     success = false,
                     message = message,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -2232,11 +2250,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.whatsapp")
+                logScreenAgentError("accessibility_unavailable", accessibilityUnavailableMessage(), "com.whatsapp")
                 return WhatsAppResult(
                     success = false,
                     action = "send_message",
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -2352,7 +2370,7 @@ class ScreenAgentTools @Inject constructor(
                         success = false,
                         action = "select_chat",
                         contactName = contactName,
-                        error = "Accessibility service not enabled. Please enable it in settings."
+                        error = accessibilityUnavailableMessage()
                     )
                 }
             }
@@ -2791,7 +2809,7 @@ class ScreenAgentTools @Inject constructor(
                 return DraftResult(
                     success = false,
                     message = message,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -3007,11 +3025,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.messaging")
+                logScreenAgentError("accessibility_unavailable", accessibilityUnavailableMessage(), "com.google.android.apps.messaging")
                 return SMSResult(
                     success = false,
                     action = "send_message",
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -3204,7 +3222,7 @@ class ScreenAgentTools @Inject constructor(
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
-                ?: return DraftResult(success = false, message = message, error = "Accessibility service not enabled")
+                ?: return DraftResult(success = false, message = message, error = accessibilityUnavailableMessage())
 
             val currentRoot = accessibilityService.getCurrentRootNode()
                 ?: return DraftResult(success = false, message = message, error = "No foreground app")
@@ -3251,7 +3269,7 @@ class ScreenAgentTools @Inject constructor(
 
         try {
             val accessibilityService = WhizAccessibilityService.getInstance()
-                ?: return SendResult(success = false, error = "Accessibility service not enabled")
+                ?: return SendResult(success = false, error = accessibilityUnavailableMessage())
 
             val draftMessage = MessageDraftOverlayService.currentDraftMessage
                 ?: return SendResult(success = false, error = "No active draft to send")
@@ -3731,7 +3749,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "play_song",
                     query = query,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -3865,7 +3883,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "queue_song",
                     query = query,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -4103,7 +4121,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "search_location",
                     location = address,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -4413,7 +4431,7 @@ class ScreenAgentTools @Inject constructor(
                     success = false,
                     action = "get_directions",
                     mode = mode,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -5127,11 +5145,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
+                logScreenAgentError("accessibility_unavailable", accessibilityUnavailableMessage(), "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "recenter",
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -5244,11 +5262,11 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
+                logScreenAgentError("accessibility_unavailable", accessibilityUnavailableMessage(), "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "select_location",
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -5352,12 +5370,12 @@ class ScreenAgentTools @Inject constructor(
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
-                logScreenAgentError("accessibility_unavailable", "Accessibility service not enabled", "com.google.android.apps.maps")
+                logScreenAgentError("accessibility_unavailable", accessibilityUnavailableMessage(), "com.google.android.apps.maps")
                 return MapsActionResult(
                     success = false,
                     action = "search_phrase",
                     location = searchPhrase,
-                    error = "Accessibility service not enabled"
+                    error = accessibilityUnavailableMessage()
                 )
             }
 
@@ -8475,7 +8493,7 @@ class ScreenAgentTools @Inject constructor(
             ?: return DraftResult(
                 success = false,
                 message = args.message,
-                error = "Accessibility service not enabled",
+                error = accessibilityUnavailableMessage(),
             )
 
         val rootNode = accessibilityService.getRootNodeForPackage(args.targetPackage)
@@ -8606,7 +8624,7 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun sendDraftedMessageCore(args: SendCoreInput): SendResult {
         val accessibilityService = WhizAccessibilityService.getInstance()
-            ?: return SendResult(success = false, error = "Accessibility service not enabled")
+            ?: return SendResult(success = false, error = accessibilityUnavailableMessage())
 
         // Dismiss the draft overlay if active so it doesn't sit on top of the
         // post-send UI.
@@ -10366,7 +10384,7 @@ class ScreenAgentTools @Inject constructor(
             val accessibilityService = WhizAccessibilityService.getInstance()
                 ?: return HealthDataResult(
                     success = false,
-                    error = "Accessibility service not enabled. Please enable it in settings."
+                    error = accessibilityUnavailableMessage()
                 )
 
             // Launch Fitbit app
