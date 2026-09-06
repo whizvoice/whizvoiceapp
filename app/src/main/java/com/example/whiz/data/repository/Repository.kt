@@ -52,7 +52,9 @@ class WhizRepository @Inject constructor(
     private val context: Context,
     private val messageDao: com.example.whiz.data.local.MessageDao,
     private val chatDao: com.example.whiz.data.local.ChatDao,
-    private val connectionStateManager: ConnectionStateManager
+    private val connectionStateManager: ConnectionStateManager,
+    // Provider to mirror TokenAuthenticator's pattern and avoid DI cycles via OkHttp
+    private val authRepositoryProvider: javax.inject.Provider<com.example.whiz.data.auth.AuthRepository>
 ) {
     private val TAG = "WhizRepository"
 
@@ -101,6 +103,11 @@ class WhizRepository @Inject constructor(
         CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
             try {
                 delay(100) // Small delay to ensure app initialization is complete
+
+                // Wait until a user is signed in before syncing. A sync without a token is
+                // a guaranteed 401, and TokenAuthenticator answers unrefreshable 401s with
+                // signOut() — which can race with (and wipe) a sign-in happening in between.
+                authRepositoryProvider.get().serverToken.first { it != null }
 
                 // Force a full sync on app startup to ensure we get all conversations
                 val conversations = getAllChatsIncremental(forceFullSync = true)
