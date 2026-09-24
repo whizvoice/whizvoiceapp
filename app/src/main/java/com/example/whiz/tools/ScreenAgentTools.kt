@@ -2914,7 +2914,9 @@ class ScreenAgentTools @Inject constructor(
         val inputs = mutableListOf<AccessibilityNodeInfo>()
         findEditTextNodes(root, inputs)
         val filtered = inputs.filter { node ->
-            val viewId = node.viewIdResourceName
+            // Newer Google Messages (Compose UI) exposes the compose EditText
+            // without a resource ID, so viewIdResourceName can be null.
+            val viewId = node.viewIdResourceName ?: ""
             viewId != searchBoxId && !viewId.contains("search")
         }
         inputs.filter { it !in filtered }.forEach { it.recycle() }
