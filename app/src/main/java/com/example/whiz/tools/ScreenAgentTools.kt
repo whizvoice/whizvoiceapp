@@ -509,6 +509,9 @@ class ScreenAgentTools @Inject constructor(
                 "spotify" to "com.spotify.music",
                 "netflix" to "com.netflix.mediaclient",
                 "settings" to "com.android.settings",
+                // Google Keep's launcher label is now "Keep Notes", so "google keep" no longer fuzzy-matches
+                "google keep" to "com.google.android.keep",
+                "google keep notes" to "com.google.android.keep",
                 "asana" to "com.asana.app",
                 "a sauna" to "com.asana.app"
             )
