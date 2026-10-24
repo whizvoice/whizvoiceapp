@@ -7024,6 +7024,19 @@ class ScreenAgentTools @Inject constructor(
      * For podcasts, we look for the Play button on the first (most recent) episode row.
      * For playlists/albums, we look for the big central Play button.
      */
+    /**
+     * Screen bounds of YouTube Music's bottom mini player, read from the tree itself
+     * (the `player_page` container, falling back to any `mini_player*` node), or null
+     * if no mini player is showing. Used to tell the mini player's play/pause button
+     * apart from a detail page's Play button without hard-coding screen positions.
+     */
+    private fun findMiniPlayerBounds(allNodes: List<AccessibilityNodeInfo>): android.graphics.Rect? {
+        val container = allNodes.firstOrNull { it.viewIdResourceName?.endsWith("/player_page") == true }
+            ?: allNodes.firstOrNull { it.viewIdResourceName?.contains("mini_player") == true }
+            ?: return null
+        return android.graphics.Rect().also { container.getBoundsInScreen(it) }
+    }
+
     private suspend fun clickPlayButtonOnDetailPage(accessibilityService: WhizAccessibilityService, contentType: String = "album"): Boolean {
         // Wait for the detail page to load
         delay(1000)
@@ -7047,16 +7060,23 @@ class ScreenAgentTools @Inject constructor(
 
                     for (node in allNodes) {
                         val contentDesc = node.contentDescription?.toString() ?: ""
+                        val resourceId = node.viewIdResourceName ?: ""
 
                         // Look for Play buttons with episode names (not just "Play")
                         if (node.isClickable && contentDesc.startsWith("Play ", ignoreCase = true)) {
                             val bounds = android.graphics.Rect()
                             node.getBoundsInScreen(bounds)
 
-                            // Skip mini player buttons (they're at the bottom of the screen, Y > 2000)
-                            if (bounds.top < 2000) {
+                            // Skip the mini player's own play/pause button. Identify it by its
+                            // resource id (mini_player_play_pause_replay_button, desc "Play video")
+                            // rather than by screen position: the Oct 2026 podcast page has a long
+                            // description, so the first episode's Play button can sit below y=2000
+                            // (observed at y=2064 on Pixel 8) and a y cutoff skipped every episode.
+                            if (!resourceId.contains("mini_player")) {
                                 Log.d(TAG, "Found podcast episode Play button: '$contentDesc' at Y=${bounds.top}")
                                 playButtons.add(Pair(node, bounds.top))
+                            } else {
+                                Log.d(TAG, "Skipping mini player Play button: '$contentDesc' (id='$resourceId')")
                             }
                         }
                     }
@@ -7076,6 +7096,7 @@ class ScreenAgentTools @Inject constructor(
                     }
                 } else {
                     // For playlists/albums/episodes, look for the big central Play button
+                    val miniPlayerBounds = findMiniPlayerBounds(allNodes)
                     for (node in allNodes) {
                         val contentDesc = node.contentDescription?.toString() ?: ""
                         val resourceId = node.viewIdResourceName ?: ""
@@ -7083,14 +7104,17 @@ class ScreenAgentTools @Inject constructor(
                         // Look for Play button - it should be clickable and have "Play" in content-desc
                         // Content-desc can be "Play" or "Play <episode/song name>" (e.g., "Play Mini-Stories: Volume 9")
                         if (node.isClickable && (contentDesc.equals("Play", ignoreCase = true) || contentDesc.startsWith("Play ", ignoreCase = true))) {
-                            // Make sure this isn't a mini player button by checking it's not too small
+                            // Make sure this isn't the mini player's play/pause button. Decide by
+                            // whether it lies inside the mini player's own container, not by size:
+                            // the Oct 2026 detail-page Play button is 147px wide, the same as the
+                            // mini player's, so the old ">150px" size heuristic skipped the real one.
                             val bounds = android.graphics.Rect()
                             node.getBoundsInScreen(bounds)
-                            val buttonSize = bounds.width()
+                            val isMiniPlayer = resourceId.contains("mini_player") ||
+                                (miniPlayerBounds != null && android.graphics.Rect.intersects(bounds, miniPlayerBounds))
 
-                            // Mini player play button is typically small (~126px), detail page button is larger
-                            if (buttonSize > 150) {
-                                Log.d(TAG, "Found Play button on detail page (size=$buttonSize): contentDesc='$contentDesc'")
+                            if (!isMiniPlayer) {
+                                Log.d(TAG, "Found Play button on detail page (size=${bounds.width()}, top=${bounds.top}): contentDesc='$contentDesc'")
                                 val clicked = accessibilityService.clickNode(node)
                                 allNodes.forEach { it.recycle() }
                                 rootNode.recycle()
@@ -7099,7 +7123,7 @@ class ScreenAgentTools @Inject constructor(
                                     return true
                                 }
                             } else {
-                                Log.d(TAG, "Skipping small Play button (size=$buttonSize), likely mini player")
+                                Log.d(TAG, "Skipping mini player Play button (top=${bounds.top}, id='$resourceId')")
                             }
                         }
 
@@ -7461,33 +7485,31 @@ class ScreenAgentTools @Inject constructor(
         return Pair(shuffleButton, artistName)
     }
 
-    private fun hasSongTypeIndicator(node: AccessibilityNodeInfo, acceptableTypes: List<String>): Boolean {
+    /**
+     * True if any descendant of [node] (down to [maxDepth] levels) has text or a content
+     * description starting with one of [acceptableTypes], e.g. "Song •" / "Album •".
+     *
+     * Older YouTube Music layouts put the type label one or two levels under the row;
+     * the Oct 2026 layout wraps the row content in an extra ViewGroup so the label sits
+     * three levels down (Button > ViewGroup > ViewGroup > ViewGroup(text)). A bounded
+     * recursive walk covers both without scanning unrelated subtrees.
+     */
+    private fun hasSongTypeIndicator(
+        node: AccessibilityNodeInfo,
+        acceptableTypes: List<String>,
+        maxDepth: Int = 4,
+    ): Boolean {
+        if (maxDepth <= 0) return false
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val childContentDesc = child.contentDescription?.toString() ?: ""
             val childText = child.text?.toString() ?: ""
-
-            for (type in acceptableTypes) {
-                if (childContentDesc.startsWith(type) || childText.startsWith(type)) {
-                    child.recycle()
-                    return true
-                }
+            val matches = acceptableTypes.any { type ->
+                childContentDesc.startsWith(type) || childText.startsWith(type)
             }
-
-            // Check grandchildren
-            for (j in 0 until child.childCount) {
-                val grandchild = child.getChild(j) ?: continue
-                val grandchildContentDesc = grandchild.contentDescription?.toString() ?: ""
-                val grandchildText = grandchild.text?.toString() ?: ""
-
-                for (type in acceptableTypes) {
-                    if (grandchildContentDesc.startsWith(type) || grandchildText.startsWith(type)) {
-                        grandchild.recycle()
-                        child.recycle()
-                        return true
-                    }
-                }
-                grandchild.recycle()
+            if (matches || hasSongTypeIndicator(child, acceptableTypes, maxDepth - 1)) {
+                child.recycle()
+                return true
             }
             child.recycle()
         }
