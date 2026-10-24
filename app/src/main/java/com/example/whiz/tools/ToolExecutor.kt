@@ -2317,10 +2317,11 @@ class ToolExecutor @Inject constructor(
             val isBackdated = logDate != null && logDate.isBefore(java.time.LocalDate.now(java.time.ZoneId.systemDefault()))
             Log.i(TAG, "Logging health data: type=$dataType value=$value date=${logDate ?: "today"}")
 
-            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
-                "calories" -> healthConnectManager.logCalories(value.toInt(), logDate)
-                "weight" -> healthConnectManager.logWeight(value, logDate)
-                else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
+            val hcType = com.example.whiz.health.HealthConnectManager.DataType.fromToolName(dataType)
+            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (hcType) {
+                com.example.whiz.health.HealthConnectManager.DataType.CALORIES -> healthConnectManager.logCalories(value.toInt(), logDate)
+                com.example.whiz.health.HealthConnectManager.DataType.WEIGHT -> healthConnectManager.logWeight(value, logDate)
+                null -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
             }
 
             // Upfront permission top-up: if we're missing ANY HC permission Whiz uses
@@ -2463,8 +2464,8 @@ class ToolExecutor @Inject constructor(
             // Flip success to false with reason=requires_connection so the assistant
             // cannot silently move on; include the unconnected apps' names so it can
             // mention them when offering to open agent_open_health_app_settings.
-            if (result.success && result.source == "health_connect") {
-                val unconnected = healthConnectManager.unconnectedHealthApps()
+            if (result.success && result.source == "health_connect" && hcType != null) {
+                val unconnected = healthConnectManager.unconnectedHealthApps(hcType)
                 if (unconnected.isNotEmpty()) {
                     val arr = org.json.JSONArray()
                     unconnected.forEach { app ->
