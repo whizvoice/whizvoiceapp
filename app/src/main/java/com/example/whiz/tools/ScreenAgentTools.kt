@@ -5940,7 +5940,14 @@ class ScreenAgentTools @Inject constructor(
         if (mode?.lowercase() == "transit") {
             Log.d(TAG, "Transit mode: looking for route options to click first")
 
-            // Poll for transit route cards using Android's built-in search (no depth limit)
+            // Poll for transit route cards. Two generations of Maps are handled:
+            //  1. Older builds expose each card's header as trip_card_main_header (id lookup,
+            //     Android's built-in search, no depth limit).
+            //  2. Oct 2026 builds ship the trip list with NO resource ids at all. Every card is a
+            //     clickable container whose descendants include a node with content description
+            //     "Duration N min" (seen as a TextView in Dec 2025 dumps and a LinearLayout in
+            //     Oct 2026 dumps), so that label is the stable, id-free signal for "this is a trip".
+            // The id path is tried first each attempt so older layouts keep their exact behaviour.
             var tripCardNodeList = emptyList<AccessibilityNodeInfo>()
             var transitRoot: AccessibilityNodeInfo? = null
             for (transitAttempt in 1..25) {
@@ -5952,6 +5959,13 @@ class ScreenAgentTools @Inject constructor(
                     continue
                 }
                 tripCardNodeList = transitRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_card_main_header")
+                if (tripCardNodeList.isEmpty()) {
+                    val durationNode = findTopmostTransitDurationNode(transitRoot)
+                    if (durationNode != null) {
+                        Log.d(TAG, "Transit mode: no trip_card_main_header ids; matched trip card by '${durationNode.contentDescription}' label")
+                        tripCardNodeList = listOf(durationNode)
+                    }
+                }
                 Log.d(TAG, "Transit mode: found ${tripCardNodeList.size} trip card nodes on attempt $transitAttempt")
                 if (tripCardNodeList.isNotEmpty()) break
             }
@@ -5985,6 +5999,33 @@ class ScreenAgentTools @Inject constructor(
         }
 
         return false
+    }
+
+    /**
+     * Id-free transit trip-card detection for Google Maps. Returns the node carrying the
+     * topmost "Duration N min" content description that sits inside a clickable card, or
+     * null if none. The caller clicks the node's clickable ancestor, exactly as it does for
+     * the id-based trip_card_main_header match, so the two paths converge.
+     */
+    private fun findTopmostTransitDurationNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(root, allNodes)
+        var best: AccessibilityNodeInfo? = null
+        var bestTop = Int.MAX_VALUE
+        for (node in allNodes) {
+            val desc = node.contentDescription?.toString() ?: ""
+            if (!desc.startsWith("Duration ", ignoreCase = true)) continue
+            val clickableCard = findClickableParent(node) ?: continue
+            clickableCard.recycle()
+            val bounds = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+            if (bounds.top < bestTop) {
+                best?.recycle()
+                best = AccessibilityNodeInfo.obtain(node)
+                bestTop = bounds.top
+            }
+        }
+        allNodes.forEach { it.recycle() }
+        return best
     }
 
     private fun dismissGoogleMapsWelcomePopup(accessibilityService: WhizAccessibilityService) {
