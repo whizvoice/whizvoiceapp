@@ -7869,7 +7869,7 @@ class ScreenAgentTools @Inject constructor(
 
         // Adaptive sizing: if input floats well above the keyboard, cover only
         // the keyboard region; else cover input container + below.
-        val imeRect = accessibilityService.getImeWindowBounds()
+        val imeRect = stableImeWindowBounds(accessibilityService)
         val density = context.resources.displayMetrics.density
         val gapThresholdPx = (48 * density).toInt()
         val keyboardTop = if (imeRect != null && imeRect.top - inputRect.bottom > gapThresholdPx) {
@@ -8137,6 +8137,30 @@ class ScreenAgentTools @Inject constructor(
      * Poll for a specific condition with exponential backoff.
      * @return true if condition was met within timeout
      */
+    /**
+     * Returns the IME window bounds once they have stopped moving.
+     *
+     * The IME window is still animating up when the keyboard-open signal fires, and a
+     * single read at that moment reports a top edge well below the keyboard's final
+     * resting position (observed ~170px low on Pixel 8), which places the draft overlay
+     * mid-keyboard. Polls until two consecutive reads agree; on timeout returns the last
+     * read so the caller can still fall back to its existing behaviour.
+     */
+    private suspend fun stableImeWindowBounds(service: WhizAccessibilityService, maxWaitMs: Long = 1500): Rect? {
+        var previous: Rect? = null
+        var latest: Rect? = null
+        val stable = waitForCondition(maxWaitMs = maxWaitMs, initialDelayMs = 100, maxIntervalMs = 100) {
+            latest = service.getImeWindowBounds()
+            val settled = latest != null && latest == previous
+            previous = latest
+            settled
+        }
+        if (!stable) {
+            Log.w(TAG, "stableImeWindowBounds: IME bounds did not settle within ${maxWaitMs}ms, using last read: $latest")
+        }
+        return latest
+    }
+
     private suspend fun waitForCondition(
         maxWaitMs: Long = 2000,
         initialDelayMs: Long = 50,

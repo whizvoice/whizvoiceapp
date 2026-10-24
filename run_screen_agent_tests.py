@@ -1554,28 +1554,42 @@ def test_sms_draft_message(tester):
         tester.long_press(500, long_press_y)
         time.sleep(2)
 
-        # Verify the long press actually entered selection mode. Without this, a missed long press
-        # cascades silently: the trash tap lands on the conversation and the confirm tap lands on
-        # nothing, and the only symptom is an undeleted message at the end.
-        selection_active = tester.check(
-            "Google Messages is in message selection mode: a top action bar is showing with icons such "
-            "as a trash/delete icon, and at least one message is selected or highlighted. "
-            "Return False if the normal conversation view is showing with no selection action bar.",
+        # Verify the long press actually did something. Without this, a missed long press cascades
+        # silently: the delete tap lands on the conversation and the confirm tap lands on nothing, and
+        # the only symptom is an undeleted message at the end.
+        #
+        # Google Messages has two long-press UIs, and we support both:
+        #   - Newer (seen 2026-10 on Pixel 8): an emoji reaction bar above the bubble and a floating
+        #     context menu below it (Forward / Copy / Star / Delete / Select more / Info).
+        #   - Older (2026-07): multi-select mode with a top action bar (✎ ⧉ 🗑 ★ ⋮).
+        context_menu = tester.check(
+            "Google Messages shows a long-press context menu for a message: a floating popup menu with "
+            "items such as Forward, Copy, Star, Delete, Select more, Info (possibly with an emoji reaction "
+            "bar above the message). Return False if no such popup menu is visible.",
             screenshot_path=screenshot_path,
         )
-        if not selection_active:
-            print("❌ Long press did not enter selection mode!")
-            tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
-        assert selection_active, (
-            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
-        )
-
-        # Click the trash/delete icon in the top selection action bar. Long-pressing a message in
-        # current Google Messages enters multi-select mode with a top app bar (✎ ⧉ 🗑 ★ ⋮) — there is
-        # no bottom floating "Delete" menu. The old (695, 1937) tapped empty conversation space, so
-        # nothing was deleted. Trash-icon position verified on-device (Pixel 8) 2026-07.
-        print("🗑️  Tapping delete (top trash icon) at (752, 217)...")
-        tester.tap(752, 217)
+        if context_menu:
+            # 'Delete' item bounds [640,1712][751,1765] from a live uiautomator dump (Pixel 8) 2026-10-23.
+            print("🗑️  Tapping 'Delete' in the long-press context menu at (695, 1738)...")
+            delete_tap = (695, 1738)
+        else:
+            selection_active = tester.check(
+                "Google Messages is in message selection mode: a top action bar is showing with icons such "
+                "as a trash/delete icon, and at least one message is selected or highlighted. "
+                "Return False if the normal conversation view is showing with no selection action bar.",
+                screenshot_path=screenshot_path,
+            )
+            if not selection_active:
+                print("❌ Long press did not open a context menu or enter selection mode!")
+                tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
+            assert selection_active, (
+                f"Long press at (500, {long_press_y}) did not open a context menu or enter selection mode: "
+                f"{context_menu.error} / {selection_active.error}"
+            )
+            # Trash-icon position in the top selection action bar, verified on-device (Pixel 8) 2026-07.
+            print("🗑️  Tapping delete (top trash icon) at (752, 217)...")
+            delete_tap = (752, 217)
+        tester.tap(*delete_tap)
         time.sleep(2)
 
         # Verify the trash tap opened the confirmation dialog, so a missed icon is reported here
@@ -1590,7 +1604,7 @@ def test_sms_draft_message(tester):
             print("❌ Delete confirmation dialog did not appear!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "sms_draft_message", "no_delete_confirm_dialog", existing_screenshot=screenshot_path)
         assert confirm_showing, (
-            f"Tapping the trash icon at (752, 217) did not open a delete confirmation dialog: {confirm_showing.error}"
+            f"Tapping delete at {delete_tap} did not open a delete confirmation dialog: {confirm_showing.error}"
         )
 
         # Confirm in the "Delete this message?" dialog (the Delete button, bottom-right of the card).
