@@ -85,18 +85,22 @@ def get_device_model():
 def get_phone_numbers():
     """Get phone numbers based on device type.
 
-    Returns tuple of (whatsapp_number, sms_number) in format '+1(628)XXX-XXXX'
+    Returns tuple of (whatsapp, sms). Each is (value spoken in the test request, name
+    shown in the messaging app's chat header). The spoken value is the raw number for
+    WhatsApp and the saved contact name for SMS; the header shows the saved contact name
+    for both since each test number is a saved contact on the other phone.
     """
     device_model = get_device_model()
     print(f"📱 Detected device: {device_model}")
 
+    # Pixel 8 is 209-9005, Pixel 7a is 227-4544. Each phone messages the OTHER phone,
+    # never itself, so WhatsApp never lands in a self-chat.
     if "Pixel 8" in device_model:
-        # Pixel 8: WhatsApp uses 209-9005, SMS uses 227-4544
-        whatsapp = ("+1(628)209-9005", "(628) 209-9005")
+        whatsapp = ("+1(628)227-4544", "Whiz Voice Test")
         sms = ("Whiz Voice Test", "+1(628)227-4544")
     else:
-        # Pixel 7a (default): WhatsApp uses 227-4544, SMS uses 209-9005
-        whatsapp = ("+1(628)227-4544", "(628) 227-4544")
+        # Pixel 7a (default)
+        whatsapp = ("+1(628)209-9005", "Ruth Grace Wong")
         sms = ("Ruth Grace Wong", "+1(628)209-9005")
 
     return whatsapp, sms
@@ -642,11 +646,23 @@ def test_whatsapp_draft_message(tester):
         print("STEP 12: Cleaning up - Deleting sent message")
         print("========================================")
         # Cleanup: Delete the sent message
-        # Long press on the newly sent message
+        # Long press on the newly sent message. Its vertical position depends on how much
+        # history the chat has, so locate the bubble visually and only fall back to the
+        # device-specific coordinate if it cannot be found.
         device_model = get_device_model()
         long_press_y = 1180 if "Pixel 8" in device_model else 1280
-        print(f"🖱️  Long pressing on message at (500, {long_press_y})...")
-        tester.long_press(500, long_press_y)
+        bubble = tester.observe(
+            "the most recent outgoing (sent by me, right-aligned, green) message bubble in the chat, "
+            "whose text is about testing Whiz Voice"
+        )
+        if bubble:
+            long_press_x, long_press_y = bubble.center()
+            print(f"🔎 Located sent message bubble at {bubble.bounds}")
+        else:
+            long_press_x = 500
+            print(f"⚠️  Could not locate sent message bubble visually, falling back to (500, {long_press_y})")
+        print(f"🖱️  Long pressing on message at ({long_press_x}, {long_press_y})...")
+        tester.long_press(long_press_x, long_press_y)
         time.sleep(2)
 
         # Verify the long press actually selected the message. Without this, a missed long press
@@ -662,7 +678,7 @@ def test_whatsapp_draft_message(tester):
             print("❌ Long press did not enter selection mode!")
             tester.save_debug_artifacts(SCREEN_AGENT_OUTPUT_DIR, "whatsapp_draft_message", "long_press_no_selection", existing_screenshot=screenshot_path)
         assert selection_active, (
-            f"Long press at (500, {long_press_y}) did not enter selection mode: {selection_active.error}"
+            f"Long press at ({long_press_x}, {long_press_y}) did not enter selection mode: {selection_active.error}"
         )
 
         # Click delete button
