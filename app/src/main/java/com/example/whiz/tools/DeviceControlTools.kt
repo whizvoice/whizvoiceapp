@@ -1358,7 +1358,11 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             val contactsList = JSONArray()
-            val contactIds = mutableListOf<Pair<String, String>>() // (contact_id, display_name)
+            val maxContacts = 5
+            // contact_id -> (display_name, matched_on). Insertion-ordered so name
+            // matches come first, then nickname matches; a contact that matches
+            // both is only recorded once (as a name match).
+            val contactIds = LinkedHashMap<String, Pair<String, String>>()
 
             // Query contacts by display name
             val contactsCursor: Cursor? = context.contentResolver.query(
@@ -1373,23 +1377,56 @@ class DeviceControlTools @Inject constructor(
             )
 
             contactsCursor?.use { cursor ->
-                var count = 0
-                while (cursor.moveToNext() && count < 5) {
+                while (cursor.moveToNext() && contactIds.size < maxContacts) {
                     val contactId = cursor.getString(
                         cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
                     )
                     val displayName = cursor.getString(
                         cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
                     )
-                    contactIds.add(Pair(contactId, displayName))
-                    count++
+                    contactIds[contactId] = Pair(displayName, "name")
+                }
+            }
+
+            // Query contacts by nickname (ContactsContract.CommonDataKinds.Nickname is a
+            // standard data row; DISPLAY_NAME_PRIMARY is built from the structured name
+            // and never includes it, so "Jonny" wouldn't otherwise find "Jonathan Smith").
+            if (contactIds.size < maxContacts) {
+                val nicknameCursor: Cursor? = context.contentResolver.query(
+                    ContactsContract.Data.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.Data.CONTACT_ID,
+                        ContactsContract.Data.DISPLAY_NAME_PRIMARY,
+                        ContactsContract.CommonDataKinds.Nickname.NAME
+                    ),
+                    "${ContactsContract.Data.MIMETYPE} = ? AND ${ContactsContract.CommonDataKinds.Nickname.NAME} LIKE ?",
+                    arrayOf(ContactsContract.CommonDataKinds.Nickname.CONTENT_ITEM_TYPE, "%$name%"),
+                    "${ContactsContract.Data.DISPLAY_NAME_PRIMARY} ASC"
+                )
+                nicknameCursor?.use { cursor ->
+                    while (cursor.moveToNext() && contactIds.size < maxContacts) {
+                        val contactId = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.Data.CONTACT_ID)
+                        )
+                        if (contactIds.containsKey(contactId)) continue
+                        val displayName = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.Data.DISPLAY_NAME_PRIMARY)
+                        )
+                        val nickname = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Nickname.NAME)
+                        )
+                        Log.i(TAG, "Nickname match for '$name': '$nickname' -> $displayName")
+                        contactIds[contactId] = Pair(displayName, "nickname")
+                    }
                 }
             }
 
             // For each contact, get phone numbers, emails, and addresses
-            for ((contactId, displayName) in contactIds) {
+            for ((contactId, nameAndMatch) in contactIds) {
+                val (displayName, matchedOn) = nameAndMatch
                 val contactJson = JSONObject().apply {
                     put("display_name", displayName)
+                    put("matched_on", matchedOn)
                 }
 
                 // Phone numbers
