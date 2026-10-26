@@ -7,9 +7,11 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.example.whiz.data.preferences.RageShakePreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,7 +19,8 @@ import kotlin.math.sqrt
 
 @Singleton
 class RageShakeDetector @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val preferences: RageShakePreferences
 ) : SensorEventListener {
 
     companion object {
@@ -34,8 +37,12 @@ class RageShakeDetector @Inject constructor(
     private val _shakeDetected = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val shakeDetected: SharedFlow<Unit> = _shakeDetected.asSharedFlow()
 
+    /** Emitted whenever detection is paused (snoozed or permanently disabled) so open dialogs can close. */
     private val _snoozed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val snoozed: SharedFlow<Unit> = _snoozed.asSharedFlow()
+
+    /** Persistent on/off state. False means shaking never triggers until re-enabled. */
+    val isEnabled: StateFlow<Boolean> = preferences.isEnabled
 
     private val shakeTimestamps = mutableListOf<Long>()
 
@@ -77,8 +84,24 @@ class RageShakeDetector @Inject constructor(
         Log.i(TAG, "Rage shake snoozed for 10 minutes")
     }
 
+    /**
+     * Permanently enable or disable shake detection. Enabling also cancels any active snooze
+     * so "turn it back on" takes effect immediately.
+     */
+    fun setEnabled(enabled: Boolean) {
+        preferences.setEnabled(enabled)
+        if (enabled) {
+            snoozeUntil = 0L
+            Log.i(TAG, "Rage shake enabled")
+        } else {
+            _snoozed.tryEmit(Unit)
+            Log.i(TAG, "Rage shake disabled until re-enabled")
+        }
+    }
+
     @VisibleForTesting
     fun processAcceleration(x: Float, y: Float, z: Float) {
+        if (!preferences.isEnabled.value) return
         if (clock() < snoozeUntil) return
 
         val acceleration = sqrt(x * x + y * y + z * z) - SensorManager.GRAVITY_EARTH

@@ -407,7 +407,7 @@ class ToolExecutor @Inject constructor(
                         executeStopRinging(requestId)
                     }
                     "agent_snooze_rage_shake" -> {
-                        executeSnoozeRageShake(requestId)
+                        executeSnoozeRageShake(requestId, params)
                     }
                     "agent_submit_bug_report" -> {
                         executeSubmitBugReport(requestId, params)
@@ -2089,13 +2089,28 @@ class ToolExecutor @Inject constructor(
         }
     }
 
-    private suspend fun executeSnoozeRageShake(requestId: String) {
+    private suspend fun executeSnoozeRageShake(requestId: String, params: JSONObject) {
         try {
-            Log.i(TAG, "Executing agent_snooze_rage_shake")
-            rageShakeDetector.snooze()
+            val mode = params.optString("mode", "snooze").ifBlank { "snooze" }
+            Log.i(TAG, "Executing agent_snooze_rage_shake mode=$mode")
+            val message = when (mode) {
+                "off" -> {
+                    rageShakeDetector.setEnabled(false)
+                    "Shake-to-report is now off until you turn it back on."
+                }
+                "on" -> {
+                    rageShakeDetector.setEnabled(true)
+                    "Shake-to-report is back on."
+                }
+                else -> {
+                    rageShakeDetector.snooze()
+                    "Shake detection paused for 10 minutes."
+                }
+            }
             val resultJson = JSONObject().apply {
                 put("success", true)
-                put("message", "Shake detection paused for 10 minutes.")
+                put("mode", mode)
+                put("message", message)
             }
             Log.i(TAG, "[TOOL_RESULT] agent_snooze_rage_shake result for requestId=$requestId: ${resultJson.toString(2)}")
             _toolResults.emit(

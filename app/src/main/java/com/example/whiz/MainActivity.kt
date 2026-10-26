@@ -856,6 +856,12 @@ class MainActivity : ComponentActivity() {
                                 isSubmittingRageShake.value = false
                                 pendingSnapshot = null
                             },
+                            onDisableForever = {
+                                rageShakeDetector.setEnabled(false)
+                                showRageShakeDialog.value = false
+                                isSubmittingRageShake.value = false
+                                pendingSnapshot = null
+                            },
                             onSubmit = { description ->
                                 submitRageShakeReport(description)
                             }

@@ -23,6 +23,7 @@ fun RageShakeReportDialog(
     isSubmitting: Boolean,
     onDismiss: () -> Unit,
     onSnooze: () -> Unit,
+    onDisableForever: () -> Unit,
     onSubmit: (description: String) -> Unit
 ) {
     var description by remember { mutableStateOf("") }
@@ -60,34 +61,45 @@ fun RageShakeReportDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onSubmit(description) },
-                enabled = !isSubmitting,
-                modifier = Modifier.semantics {
-                    contentDescription = "Submit bug report button"
+            // Stacked full-width buttons: easy to hit one-handed while moving.
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { onSubmit(description) },
+                    enabled = !isSubmitting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "Submit bug report button" }
+                ) {
+                    if (isSubmitting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Text("Submit")
+                    }
                 }
-            ) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text("Submit")
+                TextButton(
+                    onClick = onSnooze,
+                    enabled = !isSubmitting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "Snooze shaking button" }
+                ) {
+                    Text("Not now")
+                }
+                TextButton(
+                    onClick = onDisableForever,
+                    enabled = !isSubmitting,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "Turn off shaking forever button" }
+                ) {
+                    Text("Never shake again")
                 }
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onSnooze,
-                enabled = !isSubmitting,
-                modifier = Modifier.semantics {
-                    contentDescription = "Turn off shaking button"
-                }
-            ) {
-                Text("Turn off shaking")
-            }
-        }
+        dismissButton = null
     )
 }
