@@ -44,6 +44,17 @@ class WhizAccessibilityService : AccessibilityService() {
         private val _serviceState = MutableStateFlow(ServiceState.DISCONNECTED)
         val serviceState: StateFlow<ServiceState> = _serviceState.asStateFlow()
 
+        // Set when a tool needed the service while Settings still list it as enabled but the
+        // OS has not bound it (the "enabled but disconnected" zombie state — survives process
+        // restarts; recovery requires the user to toggle the service off and on in Settings).
+        // Cleared automatically the moment the OS binds the service again.
+        private val _reconnectNeeded = MutableStateFlow(false)
+        val reconnectNeeded: StateFlow<Boolean> = _reconnectNeeded.asStateFlow()
+
+        fun reportReconnectNeeded() {
+            _reconnectNeeded.value = true
+        }
+
         fun getInstance(): WhizAccessibilityService? = instance
 
         // Legacy method - kept for backward compatibility
@@ -142,6 +153,7 @@ class WhizAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         _serviceState.value = ServiceState.CONNECTED
+        _reconnectNeeded.value = false
         Log.d(TAG, "Accessibility service connected - state: CONNECTED")
         
         val info = AccessibilityServiceInfo().apply {

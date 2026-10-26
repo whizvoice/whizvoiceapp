@@ -1,6 +1,7 @@
 package com.example.whiz.data
 
 import android.util.Log
+import com.example.whiz.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,7 +96,12 @@ class ConnectionStateManager @Inject constructor() {
         
         chatMigrationMapping[optimisticChatId] = realChatId
         migrationTimestamps[optimisticChatId] = System.currentTimeMillis()
-        Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        // Per-mapping line is gated behind debug builds: the sync loop re-registers the whole
+        // history (hundreds of chats) on every cold start, so at INFO this floods the bug-report
+        // logcat. The caller (Repository.getAllChatsFlow) already logs a summary count.
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "registerChatMigration: Registered migration $optimisticChatId → $realChatId")
+        }
         
         // If the current active conversation is the optimistic ID, update it
         if (_activeConversationId.value == optimisticChatId) {

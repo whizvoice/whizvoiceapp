@@ -270,6 +270,8 @@ dependencies {
     testImplementation("app.cash.turbine:turbine:1.0.0")
     testImplementation("androidx.room:room-testing:2.6.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Real org.json for JVM unit tests (android.jar stubs return defaults, so JSONObject is unusable)
+    testImplementation("org.json:json:20240303")
     
     // Hilt Testing
     testImplementation("com.google.dagger:hilt-android-testing:2.56")

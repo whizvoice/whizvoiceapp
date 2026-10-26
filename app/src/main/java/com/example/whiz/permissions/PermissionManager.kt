@@ -38,6 +38,7 @@ open class PermissionManager @Inject constructor(
     enum class RequiredStep {
         MICROPHONE,
         ACCESSIBILITY,
+        ACCESSIBILITY_RECONNECT,  // enabled in Settings but the OS never bound the service — user must toggle it off/on
         OVERLAY
     }
 
@@ -64,6 +65,15 @@ open class PermissionManager @Inject constructor(
 
         // Observe accessibility service state changes to automatically update permission status
         observeAccessibilityServiceState()
+
+        // Show/clear the reconnect dialog when a tool detects the enabled-but-unbound zombie
+        // state (flag clears itself in WhizAccessibilityService.onServiceConnected).
+        scope.launch {
+            WhizAccessibilityService.reconnectNeeded.collect { needed ->
+                Log.d(TAG, "Accessibility reconnectNeeded changed: $needed")
+                updateNextRequiredStep()
+            }
+        }
     }
 
     /**
@@ -140,6 +150,7 @@ open class PermissionManager @Inject constructor(
         val nextStep = when {
             !_microphonePermissionGranted.value -> RequiredStep.MICROPHONE
             !_accessibilityPermissionGranted.value -> RequiredStep.ACCESSIBILITY
+            WhizAccessibilityService.reconnectNeeded.value -> RequiredStep.ACCESSIBILITY_RECONNECT
             !_overlayPermissionGranted.value -> RequiredStep.OVERLAY
             else -> null
         }
