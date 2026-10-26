@@ -4110,7 +4110,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Poll for search results to load (wait for search_list_layout or location details to appear)
-            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+            val resultsLoaded = waitForCondition(maxWaitMs = 15000) {
                 val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                 if (node != null) {
                     // Dismiss "Exit navigation?" dialog if present
@@ -4403,12 +4403,12 @@ class ScreenAgentTools @Inject constructor(
             // Maps was still coming to the foreground (dump 1349). This is an intelligent
             // wait — it returns the instant Maps foregrounds, so the higher ceiling costs
             // nothing on the common path; only the genuine never-ready case waits longer.
-            // 8s + the 10s directions wait (below) = 18s, safely under the 25s server timeout
+            // 15s + the 10s directions wait (below) = 25s, under the 40s server timeout
             // (whizvoice/maps_tools.py:563).
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 8000
+                maxWaitMs = 15000
             )
 
             if (!appReady) {
@@ -4607,7 +4607,7 @@ class ScreenAgentTools @Inject constructor(
                 GoogleMapsScreenState.SEARCH_LOADING -> {
                     Log.d(TAG, "Maps is loading, waiting for LOCATION_DETAILS or SEARCH_RESULTS_LIST")
                     rootNode.recycle()
-                    val loaded = waitForCondition(maxWaitMs = 8000) {
+                    val loaded = waitForCondition(maxWaitMs = 15000) {
                         val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                         if (node != null) {
                             val state = detectGoogleMapsScreenState(node)
@@ -4717,7 +4717,7 @@ class ScreenAgentTools @Inject constructor(
             if (stateAfterHandling == GoogleMapsScreenState.SEARCH_LOADING) {
                 Log.d(TAG, "Maps still loading after handling - waiting for result")
                 currentRootNode?.recycle()
-                waitForCondition(maxWaitMs = 8000) {
+                waitForCondition(maxWaitMs = 15000) {
                     val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (node != null) {
                         val state = detectGoogleMapsScreenState(node)
@@ -4845,7 +4845,7 @@ class ScreenAgentTools @Inject constructor(
                 currentRootNode.recycle()
             }
 
-            // Wait for the directions screen to be ready. Ceiling 10s — well under the 25s
+            // Wait for the directions screen to be ready. Ceiling 10s — well under the 40s
             // server timeout for this tool (whizvoice/maps_tools.py:563) — so a slow bicycle
             // route calc (the Palace-of-Fine-Arts bug, dumps 1314/1315) has room to finish.
             var modeRootNode: AccessibilityNodeInfo? = null
@@ -5053,8 +5053,8 @@ class ScreenAgentTools @Inject constructor(
      * interactive yet, the tap no-ops and navigation never begins (bug 1410). We confirm by polling
      * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
      *
-     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 8s appReady + 10s
-     * directions waits above (both ceilings rarely hit together), worst case stays under the 25s
+     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 15s appReady + 10s
+     * directions waits above (both ceilings rarely hit together), worst case stays under the 40s
      * server timeout (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
      */
     private suspend fun verifyNavigationStarted(
@@ -5363,7 +5363,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Poll for search results to load
-            val resultsLoaded = waitForCondition(maxWaitMs = 8000) {
+            val resultsLoaded = waitForCondition(maxWaitMs = 15000) {
                 val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                 if (node != null) {
                     // Dismiss "Exit navigation?" dialog if present
