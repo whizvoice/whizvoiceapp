@@ -40,6 +40,16 @@ import com.example.whiz.tools.ToolExecutionResult
 
 
 
+/**
+ * Structured server error codes that open the API-key dialog (routes to Settings)
+ * instead of rendering an inline "Server Error" chat bubble.
+ */
+val AUTH_DIALOG_ERROR_CODES: Set<String> = setOf(
+    "CLAUDE_AUTHENTICATION_ERROR",
+    "CLAUDE_API_KEY_MISSING",
+    "CLAUDE_USAGE_LIMIT",
+)
+
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // Added OptIn annotation
 @HiltViewModel
 class ChatViewModel @Inject constructor(
@@ -851,8 +861,8 @@ class ChatViewModel @Inject constructor(
                                             Log.w(TAG, "Handling structured ASANA_AUTH_ERROR from server: $errorMessageFromServer")
                                             _showAsanaSetupDialog.value = true // Show dialog
                                         }
-                                        "CLAUDE_AUTHENTICATION_ERROR", "CLAUDE_API_KEY_MISSING" -> {
-                                            Log.w(TAG, "Handling Claude authentication error ($errorCode) from server: $errorMessageFromServer")
+                                        in AUTH_DIALOG_ERROR_CODES -> {
+                                            Log.w(TAG, "Handling Claude API key error ($errorCode) from server: $errorMessageFromServer")
                                             _showAuthErrorDialog.value = errorMessageFromServer
                                         }
                                         "CLAUDE_OVERLOADED" -> {
