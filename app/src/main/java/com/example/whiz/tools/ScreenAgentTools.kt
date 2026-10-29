@@ -4926,16 +4926,7 @@ class ScreenAgentTools @Inject constructor(
                 modeTabNodes?.forEach { it.recycle() }
 
                 if (hasModeTabs) {
-                    var currentMode: String? = null
-                    val allModeCheckNodes = root.findAccessibilityNodeInfosByText("mode")
-                    for (modeNode in allModeCheckNodes) {
-                        val desc = modeNode.contentDescription?.toString()
-                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
-                            currentMode = desc.substringBefore(":").trim()
-                            break
-                        }
-                    }
-                    allModeCheckNodes.forEach { it.recycle() }
+                    val currentMode = currentlySelectedTransportMode(root)
 
                     if (currentMode?.contains("Transit", ignoreCase = true) == true) {
                         Log.d(TAG, "Found mode tabs in transit mode (no Start button expected)")
@@ -5869,6 +5860,26 @@ class ScreenAgentTools @Inject constructor(
         return hasStart
     }
 
+    /**
+     * The transport tab Maps currently has selected on the directions screen, as the leading
+     * part of its content description ("Driving mode", "Transit mode", "Bicycling mode", ...),
+     * or null if no selected tab is found. Maps remembers the user's last mode, so when the
+     * caller did not request one this is the only way to know which screen we are on.
+     */
+    private fun currentlySelectedTransportMode(root: AccessibilityNodeInfo): String? {
+        var selected: String? = null
+        val modeNodes = root.findAccessibilityNodeInfosByText("mode")
+        for (modeNode in modeNodes) {
+            val desc = modeNode.contentDescription?.toString()
+            if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
+                selected = desc.substringBefore(":").trim()
+                break
+            }
+        }
+        modeNodes.forEach { it.recycle() }
+        return selected
+    }
+
     /** True while Maps is still computing a route (bottom sheet reads "Finding best route..."). */
     private fun isRouteStillComputing(root: AccessibilityNodeInfo): Boolean {
         val nodes = root.findAccessibilityNodeInfosByText("Finding best route")
@@ -5902,17 +5913,7 @@ class ScreenAgentTools @Inject constructor(
                 if (freshRoot == null) {
                     Log.w(TAG, "Could not get fresh root node for transport mode selection")
                 } else {
-                    // Detect currently selected mode using built-in search (no depth limit)
-                    var currentlySelected: String? = null
-                    val allModeNodes = freshRoot.findAccessibilityNodeInfosByText("mode")
-                    for (modeNode in allModeNodes) {
-                        val desc = modeNode.contentDescription?.toString()
-                        if (modeNode.isSelected && desc != null && desc.contains("mode", ignoreCase = true)) {
-                            currentlySelected = desc.substringBefore(":").trim()
-                            break
-                        }
-                    }
-                    allModeNodes.forEach { it.recycle() }
+                    val currentlySelected = currentlySelectedTransportMode(freshRoot)
                     Log.d(TAG, "Currently selected transport mode: $currentlySelected, desired: $modeText")
 
                     // If the mode is not already selected, click it
@@ -6025,8 +6026,21 @@ class ScreenAgentTools @Inject constructor(
 
         Log.w(TAG, "Could not find or click Start button")
 
-        // For transit mode, we need to click a route first, then find the Start button
-        if (mode?.lowercase() == "transit") {
+        // For transit mode, we need to click a route first, then find the Start button.
+        // That also applies when no mode was requested and Maps opened on its remembered
+        // Transit tab: the screen is a transit route list with no Start button, so the
+        // only way forward is the transit path (dumps 1578/1579/1630/1668-1670, bugs
+        // 1581/1632/1672 — "Selected null mode but Start button not found").
+        val transitSelectedByDefault = mode == null && run {
+            val root = accessibilityService.getCurrentRootNode() ?: return@run false
+            val selected = currentlySelectedTransportMode(root)
+            root.recycle()
+            selected?.contains("Transit", ignoreCase = true) == true
+        }
+        if (transitSelectedByDefault) {
+            Log.d(TAG, "No mode requested and Maps is on the Transit tab; taking the transit path")
+        }
+        if (mode?.lowercase() == "transit" || transitSelectedByDefault) {
             Log.d(TAG, "Transit mode: looking for route options to click first")
 
             // Poll for transit route cards. Two generations of Maps are handled:
