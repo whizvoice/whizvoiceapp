@@ -3,6 +3,7 @@ package com.example.whiz.setup
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import com.example.whiz.test_helpers.PermissionAutomator
 import dagger.hilt.android.testing.HiltAndroidRule
@@ -47,6 +48,10 @@ class PermissionSetupTest {
     @Before
     fun setUp() {
         hiltRule.inject()
+        // Keep our accessibility service bound while UiAutomation is attached
+        Configurator.getInstance().setUiAutomationFlags(
+            android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+        )
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         permissionAutomator = PermissionAutomator()
 

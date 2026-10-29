@@ -110,14 +110,13 @@ abstract class BaseIntegrationTest {
         // Use FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES to allow accessibility services during testing
         val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-        // Configure UiAutomation to not suppress accessibility services
-        try {
-            // This flag tells Android to allow accessibility services to run during testing
-            instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
-            android.util.Log.d("BaseIntegrationTest", "✅ UiAutomation configured to allow accessibility services")
-        } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not set UiAutomation flag: ${e.message}")
-        }
+        // Configure UiAutomation to not suppress accessibility services.
+        // This must go through Configurator: UiDevice re-requests UiAutomation with
+        // Configurator's flags on every call, and Instrumentation reconnects (re-enabling
+        // suppression and unbinding our service) whenever the requested flags differ.
+        Configurator.getInstance().setUiAutomationFlags(
+            android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+        )
 
         device = UiDevice.getInstance(instrumentation)
         context = instrumentation.context
