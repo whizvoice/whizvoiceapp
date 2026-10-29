@@ -1,19 +1,27 @@
 package com.example.whiz.viewmodels
 
 import com.example.whiz.ui.viewmodels.AUTH_DIALOG_ERROR_CODES
+import com.example.whiz.ui.viewmodels.PLAIN_MESSAGE_ERROR_CODES
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Server error codes that should open the API-key dialog (which routes the user to
- * Settings) rather than render as an inline "Server Error" chat bubble.
+ * Settings), versus those shown as a plain chat message (no dialog, no "Server
+ * Error:" prefix).
  */
 class ServerErrorCodeRoutingTest {
 
     @Test
-    fun usageLimit_opensApiKeyDialog() {
-        assertTrue("CLAUDE_USAGE_LIMIT" in AUTH_DIALOG_ERROR_CODES)
+    fun usageLimit_isPlainChatMessage_notDialog() {
+        assertTrue("CLAUDE_USAGE_LIMIT" in PLAIN_MESSAGE_ERROR_CODES)
+        assertFalse("CLAUDE_USAGE_LIMIT" in AUTH_DIALOG_ERROR_CODES)
+    }
+
+    @Test
+    fun overloaded_isPlainChatMessage() {
+        assertTrue("CLAUDE_OVERLOADED" in PLAIN_MESSAGE_ERROR_CODES)
     }
 
     @Test
