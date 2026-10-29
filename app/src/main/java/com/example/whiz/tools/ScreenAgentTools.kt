@@ -146,8 +146,44 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
+            // Word overlap (e.g. "google keep" -> label "Keep Notes"). Brand words are
+            // dropped from the query first so "google" can't pull in the "Google" app.
+            // Only a full overlap that includes the label's head word is strong enough
+            // to launch; any other overlap scores low so it can still be surfaced as a
+            // candidate without launching the wrong app (e.g. "google notes" vs
+            // "Keep Notes" / "Samsung Notes").
+            val labelWords = normalizedLabel.split(" ").filter { it.isNotBlank() }
+            val queryWords = searchWords.filter { it.isNotBlank() }
+            val contentWords = queryWords.filter { it !in BRAND_WORDS }.ifEmpty { queryWords }
+            val overlap = contentWords.count { it in labelWords }
+            if (overlap > 0 && labelWords.isNotEmpty()) {
+                val fullOverlap = overlap == contentWords.size
+                val hitsHeadWord = labelWords.first() in contentWords
+                if (fullOverlap && hitsHeadWord) return 0.75f
+                return 0.3f * overlap / contentWords.size
+            }
+
             return 0.0f
         }
+
+        /** Leading qualifiers the model emits that rarely appear in launcher labels. */
+        private val BRAND_WORDS = setOf("google", "microsoft", "samsung", "android")
+
+        /**
+         * Rank installed apps (label, package) by [calculateMatchScore] against a normalized
+         * [searchTerm], best first, dropping zero-score entries. Used to suggest candidates
+         * when no app clears the launch threshold.
+         */
+        internal fun rankCandidates(
+            searchTerm: String,
+            installed: List<Pair<String, String>>,
+            limit: Int = 3
+        ): List<String> = installed
+            .map { (label, pkg) -> label to calculateMatchScore(searchTerm, label, pkg) }
+            .filter { it.second > 0f }
+            .sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
     }
 
     /**
@@ -188,7 +224,9 @@ class ScreenAgentTools @Inject constructor(
         val packageName: String? = null,
         val error: String? = null,
         val overlayStarted: Boolean = false,
-        val overlayPermissionRequired: Boolean = false
+        val overlayPermissionRequired: Boolean = false,
+        /** Closest installed app labels when [success] is false and nothing matched. */
+        val candidates: List<String> = emptyList()
     )
     
     data class WhatsAppResult(
@@ -519,6 +557,7 @@ class ScreenAgentTools @Inject constructor(
             
             // Try to find the app by label (display name)
             var bestMatch: Pair<String, Float>? = null
+            val launchable = mutableListOf<Pair<String, String>>() // (label, package)
             
             for (appInfo in installedApps) {
                 // Skip system apps that aren't launchable
@@ -528,6 +567,7 @@ class ScreenAgentTools @Inject constructor(
                 // Get the app label
                 val appLabel = packageManager.getApplicationLabel(appInfo).toString()
                 val normalizedLabel = appLabel.lowercase()
+                launchable.add(appLabel to appInfo.packageName)
                 
                 // Calculate match score
                 val matchScore = calculateMatchScore(normalizedAppName, normalizedLabel, appInfo.packageName)
@@ -669,16 +709,26 @@ class ScreenAgentTools @Inject constructor(
                 }
             }
 
-            Log.w(TAG, "Could not find app matching: $appName")
+            val candidates = rankCandidates(normalizedAppName, launchable)
+            val errorMessage = buildString {
+                append("Could not find an app matching '$appName'")
+                if (candidates.isNotEmpty()) {
+                    append(". Closest installed apps: ")
+                    append(candidates.joinToString(", "))
+                    append(". If one of these is what the user meant, call again with that exact name; otherwise ask the user.")
+                }
+            }
+            Log.w(TAG, "Could not find app matching: $appName (candidates=$candidates)")
             logScreenAgentError(
                 reason = "app_not_found",
-                errorMessage = "Could not find an app matching '$appName'",
+                errorMessage = errorMessage,
                 packageName = null
             )
             return LaunchResult(
                 success = false,
                 appName = appName,
-                error = "Could not find an app matching '$appName'"
+                error = errorMessage,
+                candidates = candidates
             )
 
         } catch (e: Exception) {

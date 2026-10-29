@@ -67,6 +67,29 @@ class ToolExecutor @Inject constructor(
     private val bugReportSubmitter: BugReportSubmitter,
     private val healthConnectManager: com.example.whiz.health.HealthConnectManager,
 ) {
+
+    companion object {
+        /**
+         * Tools to advertise in an agent_launch_app result: the app-specific shortcuts
+         * for the launched package followed by the generic screen tools that work in
+         * any app. (name, description) pairs; JSON is built at the call site.
+         */
+        internal fun toolsForLaunchResult(
+            appSpecific: List<Pair<String, String>>
+        ): List<Pair<String, String>> {
+            val seen = appSpecific.map { it.first }.toSet()
+            return appSpecific + GENERIC_SCREEN_TOOLS.filter { it.first !in seen }
+        }
+
+        /** Screen tools that work in any app, advertised on every launch result. */
+        internal val GENERIC_SCREEN_TOOLS: List<Pair<String, String>> = listOf(
+            "agent_get_ui" to "Works in any app: dump the current on-screen UI to get element_ids. Use this (then agent_click / agent_insert_text) to operate apps that have no dedicated tools, e.g. adding an item to a list in Keep Notes.",
+            "agent_click" to "Works in any app: click an element by element_id from agent_get_ui.",
+            "agent_insert_text" to "Works in any app: type into a text field by element_id from agent_get_ui.",
+            "agent_press_back" to "Works in any app: press the system back button."
+        )
+    }
+
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.Main)
@@ -545,61 +568,25 @@ class ToolExecutor @Inject constructor(
         }
     }
     
-    private fun getToolsForPackage(packageName: String): List<JSONObject> {
+    private fun getToolsForPackage(packageName: String): List<Pair<String, String>> {
         return when (packageName) {
             "com.google.android.apps.maps" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_search_google_maps_location")
-                    put("description", "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_search_google_maps_phrase")
-                    put("description", "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps")
-                },
-                JSONObject().apply {
-                    put("name", "agent_get_google_maps_directions")
-                    put("description", "Get directions to the currently selected location. Must call search first.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_select_location_from_list")
-                    put("description", "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_recenter_google_maps")
-                    put("description", "Re-center the map to your current location")
-                },
-                JSONObject().apply {
-                    put("name", "agent_fullscreen_google_maps")
-                    put("description", "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay")
-                }
+                "agent_search_google_maps_location" to "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.",
+                "agent_search_google_maps_phrase" to "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps",
+                "agent_get_google_maps_directions" to "Get directions to the currently selected location. Must call search first.",
+                "agent_select_location_from_list" to "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.",
+                "agent_recenter_google_maps" to "Re-center the map to your current location",
+                "agent_fullscreen_google_maps" to "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay"
             )
             "com.google.android.apps.youtube.music" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_play_youtube_music")
-                    put("description", "Play a song or artist in YouTube Music")
-                },
-                JSONObject().apply {
-                    put("name", "agent_queue_youtube_music")
-                    put("description", "Add a song or artist to the YouTube Music queue")
-                },
-                JSONObject().apply {
-                    put("name", "agent_pause_youtube_music")
-                    put("description", "Pause or resume YouTube Music playback")
-                }
+                "agent_play_youtube_music" to "Play a song or artist in YouTube Music",
+                "agent_queue_youtube_music" to "Add a song or artist to the YouTube Music queue",
+                "agent_pause_youtube_music" to "Pause or resume YouTube Music playback"
             )
             "com.whatsapp" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_select_chat")
-                    put("description", "Select a specific chat in WhatsApp by contact/group name")
-                },
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_draft_message")
-                    put("description", "Draft a message for user review before sending")
-                },
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_send_message")
-                    put("description", "Send the drafted message (must draft first)")
-                }
+                "agent_whatsapp_select_chat" to "Select a specific chat in WhatsApp by contact/group name",
+                "agent_whatsapp_draft_message" to "Draft a message for user review before sending",
+                "agent_whatsapp_send_message" to "Send the drafted message (must draft first)"
             )
             else -> {
                 // Check if this is the default SMS app
@@ -610,18 +597,9 @@ class ToolExecutor @Inject constructor(
                     authRepository.saveDefaultSmsAppPackage(packageName)
 
                     listOf(
-                        JSONObject().apply {
-                            put("name", "agent_sms_select_chat")
-                            put("description", "Select a specific SMS conversation by contact name")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_sms_draft_message")
-                            put("description", "Draft an SMS message for user review before sending")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_sms_send_message")
-                            put("description", "Send the drafted SMS message (must draft first)")
-                        }
+                        "agent_sms_select_chat" to "Select a specific SMS conversation by contact name",
+                        "agent_sms_draft_message" to "Draft an SMS message for user review before sending",
+                        "agent_sms_send_message" to "Send the drafted SMS message (must draft first)"
                     )
                 } else {
                     // Generic draft/send for any other foreground app. The tool
@@ -632,14 +610,8 @@ class ToolExecutor @Inject constructor(
                     // Telegram, Instagram, Discord, Slack, Twitter/X compose,
                     // GitHub comments, email compose, Reddit DMs, etc.).
                     listOf(
-                        JSONObject().apply {
-                            put("name", "agent_draft_message")
-                            put("description", "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_send_message")
-                            put("description", "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually.")
-                        }
+                        "agent_draft_message" to "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.",
+                        "agent_send_message" to "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually."
                     )
                 }
             }
@@ -661,12 +633,18 @@ class ToolExecutor @Inject constructor(
                 result.packageName?.let {
                     put("package_name", it)
                     // Add available tools for this app
-                    val availableTools = getToolsForPackage(it)
-                    if (availableTools.isNotEmpty()) {
-                        put("available_tools", org.json.JSONArray(availableTools))
+                    val availableTools = toolsForLaunchResult(getToolsForPackage(it)).map { (name, desc) ->
+                        JSONObject().apply {
+                            put("name", name)
+                            put("description", desc)
+                        }
                     }
+                    put("available_tools", org.json.JSONArray(availableTools))
                 }
                 result.error?.let { put("error", it) }
+                if (result.candidates.isNotEmpty()) {
+                    put("candidates", org.json.JSONArray(result.candidates))
+                }
                 put("overlay_started", result.overlayStarted)
                 put("overlayPermissionRequired", result.overlayPermissionRequired)
             }
@@ -2771,7 +2749,7 @@ class ToolExecutor @Inject constructor(
             "agent_launch_app" -> {
                 JSONObject().apply {
                     put("name", "agent_launch_app")
-                    put("description", "Launch an application by its name. The return value includes an 'available_tools' array listing specialized tools that can control the launched app (e.g., for Maps, YouTube Music, WhatsApp). Check the return value and use those tools to complete the user's request.")
+                    put("description", "Launch an application by its name. The return value includes an 'available_tools' array: app-specific shortcuts for the launched app (e.g., for Maps, YouTube Music, WhatsApp) followed by the generic screen tools (agent_get_ui, agent_click, agent_insert_text, agent_press_back) that work in any app. Use the shortcuts when they fit; otherwise drive the app with the generic tools.")
                     put("parameters", JSONObject().apply {
                         put("app_name", JSONObject().apply {
                             put("type", "string")
