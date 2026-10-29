@@ -11,6 +11,7 @@ import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.example.whiz.accessibility.WhizAccessibilityService
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -66,6 +68,7 @@ class ToolExecutor @Inject constructor(
     private val rageShakeDetector: RageShakeDetector,
     private val bugReportSubmitter: BugReportSubmitter,
     private val healthConnectManager: com.example.whiz.health.HealthConnectManager,
+    private val accessibilityChecker: com.example.whiz.accessibility.AccessibilityChecker,
 ) {
 
     companion object {
@@ -94,26 +97,57 @@ class ToolExecutor @Inject constructor(
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.Main)
 
-    private val toolsRequiringUnlock = setOf(
-        "agent_launch_app",
-        "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
-        "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
-        "agent_draft_message", "agent_send_message",
-        "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
-        "agent_search_google_maps_location", "agent_search_google_maps_phrase",
-        "agent_get_google_maps_directions", "agent_recenter_google_maps",
-        "agent_fullscreen_google_maps", "agent_select_location_from_list",
-        "agent_dial_phone_number",
-        "agent_press_call_button",
-        "agent_save_calendar_event", "agent_draft_calendar_event",
-        "agent_log_health_data",
-        "agent_open_health_app_settings",
-        "agent_delete_alarm",
-        "agent_close_other_app",
-        "agent_click",
-        "agent_insert_text",
-        "agent_peek_app"
+    /** What a tool needs from the device before it can run. Checked in declaration order. */
+    enum class Requirement {
+        /** Drives another app's UI through WhizAccessibilityService; useless without it bound. */
+        ACCESSIBILITY,
+        /** Needs the keyguard gone (launches/controls other apps, starts calls, writes to apps). */
+        UNLOCK,
+    }
+
+    private val A = Requirement.ACCESSIBILITY
+    private val U = Requirement.UNLOCK
+
+    // Single source of truth for pre-execution gates. ACCESSIBILITY is always checked before
+    // UNLOCK: enabling the service means going into Settings (which unlocks the phone anyway),
+    // and prompting for unlock first buries the accessibility dialog behind the keyguard and
+    // then behind the launched app. Tools absent from this map run with no gate.
+    private val toolRequirements: Map<String, Set<Requirement>> = mapOf(
+        // Screen-agent tools: drive another app, so need both.
+        "agent_launch_app" to setOf(A, U),
+        "agent_whatsapp_select_chat" to setOf(A, U),
+        "agent_whatsapp_send_message" to setOf(A, U),
+        "agent_whatsapp_draft_message" to setOf(A, U),
+        "agent_sms_select_chat" to setOf(A, U),
+        "agent_sms_draft_message" to setOf(A, U),
+        "agent_sms_send_message" to setOf(A, U),
+        "agent_draft_message" to setOf(A, U),
+        "agent_send_message" to setOf(A, U),
+        "agent_play_youtube_music" to setOf(A, U),
+        "agent_queue_youtube_music" to setOf(A, U),
+        "agent_pause_youtube_music" to setOf(A, U),
+        "agent_search_google_maps_location" to setOf(A, U),
+        "agent_search_google_maps_phrase" to setOf(A, U),
+        "agent_get_google_maps_directions" to setOf(A, U),
+        "agent_recenter_google_maps" to setOf(A, U),
+        "agent_fullscreen_google_maps" to setOf(A, U),
+        "agent_select_location_from_list" to setOf(A, U),
+        "agent_press_call_button" to setOf(A, U),
+        "agent_close_other_app" to setOf(A, U),
+        "agent_click" to setOf(A, U),
+        "agent_insert_text" to setOf(A, U),
+        "agent_peek_app" to setOf(A, U),
+        // Unlock only: intent/API based, work without the accessibility service.
+        "agent_dial_phone_number" to setOf(U),
+        "agent_save_calendar_event" to setOf(U),
+        "agent_draft_calendar_event" to setOf(U),
+        "agent_log_health_data" to setOf(U),
+        "agent_open_health_app_settings" to setOf(U),
+        "agent_delete_alarm" to setOf(U),
     )
+
+    private fun requires(toolName: String, requirement: Requirement): Boolean =
+        toolRequirements[toolName]?.contains(requirement) == true
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
@@ -142,6 +176,92 @@ class ToolExecutor @Inject constructor(
     // is normally what ends the wait; this only fires if it can't.
     private val UNLOCK_WAIT_CEILING_MS = 210_000L
 
+    // ===== "waiting for accessibility service" state =====
+    // Same shape as the unlock wait: a screen-agent tool dispatched while the accessibility
+    // service is unbound parks until the OS binds it (user enables it in Settings) or the wait is
+    // abandoned by the idle timer / hard ceiling. Single-slot, like the unlock wait.
+    @Volatile private var pendingAccessibilityCont: CancellableContinuation<Boolean>? = null
+    @Volatile private var awaitingAccessibilityToolName: String? = null
+    private val _isAwaitingAccessibility = MutableStateFlow(false)
+    val isAwaitingAccessibility: StateFlow<Boolean> = _isAwaitingAccessibility.asStateFlow()
+
+    /**
+     * Give up the current accessibility wait (idle-timer teardown or the hard ceiling). The parked
+     * tool resumes with `false` and emits an error result for the ORIGINAL request_id.
+     */
+    fun abandonAccessibilityWait() {
+        val cont = pendingAccessibilityCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "♿ Abandoning accessibility wait for $awaitingAccessibilityToolName")
+        cont.resume(false)
+    }
+
+    /**
+     * Park the current tool coroutine until the accessibility service binds (returns true → run
+     * the tool) or the wait is abandoned (returns false → caller emits an error result). While
+     * parked, re-emits waiting_for_accessibility every ~50s so the server extends its deadline,
+     * and exposes isAwaitingAccessibility for MainActivity (idle timer runs as the deadline).
+     */
+    private suspend fun awaitAccessibility(toolName: String, requestId: String): Boolean = coroutineScope {
+        val keepAlive = launch {
+            var elapsed = 0L
+            while (isActive) {
+                delay(UNLOCK_KEEPALIVE_INTERVAL_MS)
+                elapsed += UNLOCK_KEEPALIVE_INTERVAL_MS
+                if (elapsed >= UNLOCK_WAIT_CEILING_MS) {
+                    Log.w(TAG, "♿ Accessibility wait hit hard ceiling for $toolName — abandoning")
+                    abandonAccessibilityWait()
+                    break
+                }
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_accessibility",
+                    message = accessibilityWaitingMessage()
+                ))
+            }
+        }
+        // Resume as soon as the OS binds the service.
+        val connected = launch {
+            WhizAccessibilityService.serviceState
+                .first { it == WhizAccessibilityService.ServiceState.CONNECTED }
+            val cont = pendingAccessibilityCont
+            if (cont != null && cont.isActive) {
+                Log.i(TAG, "♿ Accessibility service connected — resuming parked tool $toolName")
+                cont.resume(true)
+            }
+        }
+        try {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                pendingAccessibilityCont = cont
+                awaitingAccessibilityToolName = toolName
+                _isAwaitingAccessibility.value = true
+                cont.invokeOnCancellation {
+                    pendingAccessibilityCont = null
+                    awaitingAccessibilityToolName = null
+                    _isAwaitingAccessibility.value = false
+                }
+                // Surface the enable / reconnect dialog in MainActivity and bring it to the front.
+                MainActivity.requestAccessibilityCallback?.invoke()
+            }
+        } finally {
+            keepAlive.cancel()
+            connected.cancel()
+            pendingAccessibilityCont = null
+            awaitingAccessibilityToolName = null
+            _isAwaitingAccessibility.value = false
+        }
+    }
+
+    /** Human/LLM-facing explanation of why the tool is waiting; distinguishes the zombie state. */
+    private fun accessibilityWaitingMessage(): String {
+        return if (accessibilityChecker.isServiceEnabled()) {
+            "Whiz accessibility service is enabled in Settings but not running. Waiting for the user to toggle it off and on in Accessibility settings."
+        } else {
+            "Whiz accessibility service is not enabled. Waiting for the user to enable it in Accessibility settings."
+        }
+    }
+
     /**
      * Cancel all in-flight tool executions. Called when user dismisses the bubble.
      * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
@@ -156,6 +276,9 @@ class ToolExecutor @Inject constructor(
         awaitingToolName = null
         _isAwaitingUnlock.value = false
         com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
+        pendingAccessibilityCont = null
+        awaitingAccessibilityToolName = null
+        _isAwaitingAccessibility.value = false
         supervisorJob.cancelChildren()
         inFlightRequestIds.clear()
         _activeToolCount.value = 0
@@ -296,9 +419,43 @@ class ToolExecutor @Inject constructor(
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
 
+                // Accessibility gate (runs BEFORE the keyguard gate — see toolRequirements).
+                if (requires(toolName, Requirement.ACCESSIBILITY) && WhizAccessibilityService.getInstance() == null) {
+                    val waitingMessage = accessibilityWaitingMessage()
+                    Log.i(TAG, "♿ Tool $toolName needs the accessibility service but it is not bound - showing dialog and parking until it connects")
+                    if (accessibilityChecker.isServiceEnabled()) {
+                        WhizAccessibilityService.reportReconnectNeeded()
+                    }
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "waiting_for_accessibility",
+                        message = waitingMessage
+                    ))
+                    val connected = awaitAccessibility(toolName, requestId)
+                    if (!connected) {
+                        Log.i(TAG, "♿ Accessibility wait abandoned for tool $toolName — emitting error result")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Accessibility service was not enabled in time. " + waitingMessage.replace("Waiting for the user to", "The user needs to")
+                        ))
+                        return@launch
+                    }
+                    // State changed: parked → running (see the unlock gate for why).
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "running",
+                        message = "Accessibility service connected. Running the tool now."
+                    ))
+                    // Let the freshly bound service settle before the tool uses it.
+                    delay(300)
+                }
+
                 // Check if device is locked and tool requires unlock
                 val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                if (km.isKeyguardLocked && toolName in toolsRequiringUnlock) {
+                if (km.isKeyguardLocked && requires(toolName, Requirement.UNLOCK)) {
                     Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and parking until unlock")
                     val unlockCallback = MainActivity.requestUnlockCallback
                     if (unlockCallback == null) {
@@ -333,6 +490,16 @@ class ToolExecutor @Inject constructor(
                         ))
                         return@launch
                     }
+
+                    // State changed: parked → running. Tell the server so the placeholder the model
+                    // sees stops saying "waiting for unlock" (it answers mid-tool interjections from
+                    // that text), and so the tool gets a fresh deadline for its own work.
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "running",
+                        message = "Phone unlocked. Running the tool now."
+                    ))
 
                     // Small delay after unlock to let the system settle
                     delay(500)

@@ -494,6 +494,22 @@ class WhizAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * Swipes up from the lock-screen's lock icon, the gesture the keyguard wants after face
+     * unlock has passed but "skip lock screen" is off. Uses the real window bounds (not
+     * displayMetrics, which can exclude the nav bar) so the start point lands on the icon
+     * (~74% down, centred) and the stroke ends well above it. Caller is responsible for only
+     * sending this in the face-passed state — see [FaceUnlockSwiper].
+     */
+    suspend fun performUnlockSwipe(): Boolean {
+        val bounds = getSystemService(android.view.WindowManager::class.java).currentWindowMetrics.bounds
+        val x = bounds.width() / 2f
+        val startY = bounds.height() * 0.74f
+        val endY = bounds.height() * 0.30f
+        Log.i(TAG, "Dispatching keyguard unlock swipe from ($x, $startY) to ($x, $endY)")
+        return performScrollGesture(x, startY, x, endY, duration = 250)
+    }
+
+    /**
      * Performs a scroll gesture (swipe) on the screen
      * @param startX Starting X coordinate
      * @param startY Starting Y coordinate
