@@ -8,43 +8,64 @@ from helpers import (
 )
 
 
-def test_autofix_ytmusic_app_not_ready(tester):
-    """Verify fix for ytmusic_app_not_ready.
+def test_autofix_sms_send_error(tester):
+    """Verify fix for sms_send_error.
 
-    Tests that the screen agent can detect YouTube Music as ready even when
-    the Whiz bubble overlay or another window has the active-window slot.
-    The fix adds a windows-list fallback to waitForAppReady so the target
-    app is detected as soon as its window appears anywhere in the window list.
+    The screen agent crashed with a NullPointerException in smsFindBestInput
+    when sending an SMS via the updated Google Messages app: the generic
+    EditText fallback called String.contains() on a null viewIdResourceName
+    (newer Compose-based message inputs have no resource ID). The fix null-
+    guards the resource ID so the compose input is accepted instead of
+    crashing the whole send.
+
+    This test drives the actual screen agent: it asks Whiz to text a contact
+    via SMS, then confirms sending, and validates that the message was
+    delivered (i.e. no "Error sending message: null" failure).
     """
-    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
+    success, error = navigate_to_my_chats(tester, "autofix_sms_send_error")
     assert success, f"Could not reach My Chats: {error}"
 
+    # Open a new chat and let the UI settle before sending a voice command.
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("play Clean Bandit on YouTube Music")
-    time.sleep(40)
-
-    tester.screenshot("/tmp/whiz_ytmusic_play.png")
-    result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_play.png",
-        "YouTube Music is open and showing search results, an artist/song page, "
-        "a now-playing screen with playback controls, or a sign-in / onboarding "
-        "screen with options to sign in or browse device files"
+    # Ask Whiz to draft an SMS to the test contact. This routes through the
+    # screen agent's SMS draft pipeline (selectSMSChat + draftSMSMessage).
+    send_voice_command(
+        "Send a text message to Ruth Grace Wong saying No rush at all. Godspeed"
     )
+    time.sleep(30)  # wait for draft to be shown in Messages
+
+    # Confirm the send. This triggers agent_sms_send_message -> sendSMSMessage,
+    # which is exactly the path that previously NPE'd in smsFindBestInput.
+    send_voice_command("Yes send it")
+    time.sleep(20)  # wait for screen agent to send
+
+    # Validate the message was actually sent in Google Messages.
+    tester.screenshot("/tmp/whiz_sms_sent.png")
+    result = tester.validate_screenshot(
+        "/tmp/whiz_sms_sent.png",
+        "The Google Messages conversation with Ruth Grace Wong shows the sent "
+        "message bubble containing 'No rush at all' / 'Godspeed' in the "
+        "conversation thread (a sent SMS, not just a draft in the input box)."
+    )
+
     if not result:
+        # Fall back to checking the Whiz chat: the assistant should NOT report
+        # an SMS send error like "Error sending message: null".
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
+        tester.screenshot("/tmp/whiz_sms_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_ytmusic_chat_result.png",
-            "The Whiz chat shows an assistant message about playing music or about "
-            "YouTube Music. It should NOT show an error about YouTube Music not "
-            "becoming ready in time."
+            "/tmp/whiz_sms_chat_result.png",
+            "The Whiz chat shows the assistant confirming the text message was "
+            "sent to Ruth Grace Wong. It should NOT show an error about failing "
+            "to send the message (e.g. 'Error sending message: null')."
         )
         if not result:
-            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
+            save_failed_screenshot(tester, "autofix_sms_send_error", "validation_failed")
+
     assert result, (
-        "YouTube Music did not reach a ready state after deep link launch — "
-        "ytmusic_app_not_ready may still be triggering"
+        "SMS message was not sent — sms_send_error (NPE in smsFindBestInput) "
+        "may still be triggering"
     )
