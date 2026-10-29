@@ -36,10 +36,7 @@ class LoginPriorityTest : BaseIntegrationTest() {
     
     @get:Rule(order = 2)
     val composeTestRule = createAndroidComposeRule<MainActivity>()
-    
-    @Inject
-    lateinit var permissionManager: PermissionManager
-    
+
     @Before
     fun setup() {
         // Ensure user is logged out

@@ -87,11 +87,6 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-    
-
 
     // device is inherited from BaseIntegrationTest
     private val instrumentation = InstrumentationRegistry.getInstrumentation()

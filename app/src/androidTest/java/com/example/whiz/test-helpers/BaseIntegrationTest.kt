@@ -79,6 +79,9 @@ abstract class BaseIntegrationTest {
     @Inject
     open lateinit var speechRecognitionService: SpeechRecognitionService
 
+    @Inject
+    open lateinit var permissionManager: PermissionManager
+
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
     protected val packageName = "com.example.whiz.debug"
@@ -110,17 +113,19 @@ abstract class BaseIntegrationTest {
         // Use FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES to allow accessibility services during testing
         val instrumentation = InstrumentationRegistry.getInstrumentation()
 
-        // Configure UiAutomation to not suppress accessibility services
-        try {
-            // This flag tells Android to allow accessibility services to run during testing
-            instrumentation.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
-            android.util.Log.d("BaseIntegrationTest", "✅ UiAutomation configured to allow accessibility services")
-        } catch (e: Exception) {
-            android.util.Log.w("BaseIntegrationTest", "⚠️ Could not set UiAutomation flag: ${e.message}")
-        }
+        // Configure UiAutomation to not suppress accessibility services.
+        // This must go through Configurator: UiDevice re-requests UiAutomation with
+        // Configurator's flags on every call, and Instrumentation reconnects (re-enabling
+        // suppression and unbinding our service) whenever the requested flags differ.
+        Configurator.getInstance().setUiAutomationFlags(
+            android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+        )
 
         device = UiDevice.getInstance(instrumentation)
         context = instrumentation.context
+
+        // Must run before anything in this process opens the microphone (see method docs).
+        ensureAccessibilityServiceEnabled()
         
         // Set up screenshot directory
         setupScreenshotDirectory()
@@ -228,6 +233,75 @@ abstract class BaseIntegrationTest {
     }
     
     /**
+     * Make sure WhizAccessibilityService is in enabled_accessibility_services and bound.
+     *
+     * Android 16 drops a package's accessibility services from the enabled list whenever that
+     * package is force-stopped or reinstalled. Gradle's connected task reinstalls the app and
+     * `am instrument` force-stops it before every run, so the service is always disabled by the
+     * time test code runs. Re-enabling has to happen here, in setUp, because since the October
+     * 2026 Play services update the system refuses to enable an accessibility service while
+     * the app holds a VOICE_COMMUNICATION mic session (the "Can't complete action during call"
+     * scam-protection dialog), and the shell `settings put` is silently reverted. At this point
+     * the test process exists but nothing has started listening yet, so the enable goes through
+     * and the service then survives the app starting its mic later.
+     */
+    protected fun ensureAccessibilityServiceEnabled(timeoutMs: Long = 10_000) {
+        if (WhizAccessibilityService.isServiceConnected()) {
+            android.util.Log.d("BaseIntegrationTest", "Accessibility service already connected")
+            return
+        }
+        val component = "$packageName/com.example.whiz.accessibility.WhizAccessibilityService"
+        try {
+            // UiAutomation.executeShellCommand uses Runtime.exec, which splits on whitespace and
+            // passes quote characters through literally, so the value must not be quoted.
+            val current = device.executeShellCommand(
+                "settings get secure enabled_accessibility_services"
+            ).trim()
+            val others = current.split(":")
+                .filter { it.isNotBlank() && it != "null" && it != component }
+            // The instrumentation force-stop kills the service process but can leave the
+            // setting untouched, and the system only rebinds on a settings change. So always
+            // write the list without our service and then with it, which forces a rebind even
+            // when the entry was already present.
+            // `settings put` with an empty value fails with "Bad arguments", so when ours is
+            // the only service the list has to be deleted instead.
+            if (others.isEmpty()) {
+                device.executeShellCommand("settings delete secure enabled_accessibility_services")
+            } else {
+                device.executeShellCommand(
+                    "settings put secure enabled_accessibility_services " + others.joinToString(":")
+                )
+            }
+            device.executeShellCommand(
+                "settings put secure enabled_accessibility_services " +
+                    (others + component).joinToString(":")
+            )
+            device.executeShellCommand("settings put secure accessibility_enabled 1")
+        } catch (e: Exception) {
+            android.util.Log.w("BaseIntegrationTest", "Could not enable accessibility service via shell", e)
+            return
+        }
+
+        val start = SystemClock.uptimeMillis()
+        while (!WhizAccessibilityService.isServiceConnected()
+            && SystemClock.uptimeMillis() - start < timeoutMs) {
+            SystemClock.sleep(250)
+        }
+        if (WhizAccessibilityService.isServiceConnected()) {
+            android.util.Log.d("BaseIntegrationTest",
+                "Accessibility service connected after ${SystemClock.uptimeMillis() - start} ms")
+        } else {
+            val after = try {
+                device.executeShellCommand("settings get secure enabled_accessibility_services").trim()
+            } catch (e: Exception) { "?" }
+            android.util.Log.w("BaseIntegrationTest",
+                "Accessibility service not connected after ${timeoutMs} ms " +
+                "(enabled_accessibility_services=$after). If the setting was reverted, the " +
+                "scam-protection in-call block fired: something opened the mic before setUp.")
+        }
+    }
+
+    /**
      * Restore original permission states
      */
     private fun restoreOriginalPermissions() {
@@ -253,9 +327,10 @@ abstract class BaseIntegrationTest {
             val grantResult = device.executeShellCommand("pm grant $packageName ${Manifest.permission.RECORD_AUDIO}")
             android.util.Log.d("BaseIntegrationTest", "Microphone permission grant result: $grantResult")
             Thread.sleep(300) // Give the system time to process
-            
-            // Note: Child classes may have their own permissionManager injection
-            
+
+            // Keep the in-app PermissionManager state in sync with the shell grant
+            permissionManager.updateMicrophonePermission(true)
+
             val currentState = isMicrophoneGranted()
             android.util.Log.d("BaseIntegrationTest", "Microphone permission after grant: $currentState")
         } catch (e: Exception) {

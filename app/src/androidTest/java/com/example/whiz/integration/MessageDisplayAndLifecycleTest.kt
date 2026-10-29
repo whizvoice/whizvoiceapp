@@ -1,7 +1,6 @@
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -49,11 +48,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @get:Rule
     val composeTestRule = createEmptyComposeRule()
     
-    @get:Rule
-    val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
-        android.Manifest.permission.RECORD_AUDIO
-    )
-
     @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
@@ -71,9 +65,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
     private var testChatId = 0L
     private var createdServerChatId = 0L // Track the server chat ID created during test

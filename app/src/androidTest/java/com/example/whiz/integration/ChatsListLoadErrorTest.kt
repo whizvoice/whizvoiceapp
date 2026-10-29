@@ -45,9 +45,6 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     lateinit var testInterceptor: TestInterceptor
 
     @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
-    @Inject
     override lateinit var whizServerRepository: WhizServerRepository
 
     companion object {
@@ -58,10 +55,6 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-
-        // Grant microphone permission
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
 
         // Reset test interceptor state
         testInterceptor.resetErrorState()
