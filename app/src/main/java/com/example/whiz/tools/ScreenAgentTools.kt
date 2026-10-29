@@ -4913,21 +4913,7 @@ class ScreenAgentTools @Inject constructor(
                     return@waitForCondition true
                 }
 
-                val startNodes = root.findAccessibilityNodeInfosByText("Start")
-                val hasStart = startNodes.any { node ->
-                    if (node.isClickable && node.className == "android.widget.Button") {
-                        true
-                    } else {
-                        val parent = node.parent
-                        val parentMatch = parent != null && parent.isClickable &&
-                            parent.className == "android.widget.Button" &&
-                            parent.contentDescription?.toString()?.equals("Start") == true
-                        parent?.recycle()
-                        parentMatch
-                    }
-                }
-                startNodes.forEach { it.recycle() }
-                if (hasStart) {
+                if (hasClickableStartButton(root)) {
                     Log.d(TAG, "Found Start button")
                     modeRootNode = root
                     return@waitForCondition true
@@ -5104,8 +5090,9 @@ class ScreenAgentTools @Inject constructor(
      * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
      *
      * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 15s appReady + 10s
-     * directions waits above (both ceilings rarely hit together), worst case stays under the 40s
-     * server timeout (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
+     * directions waits above and the 6s post-mode-switch route wait in selectTransportModeAndStart
+     * (the ceilings are rarely hit together), worst case stays under the 40s server timeout
+     * (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
      */
     private suspend fun verifyNavigationStarted(
         accessibilityService: WhizAccessibilityService,
@@ -5858,7 +5845,39 @@ class ScreenAgentTools @Inject constructor(
         return false
     }
 
-    private fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String?, accessibilityService: WhizAccessibilityService): Boolean {
+    /**
+     * True when the directions sheet shows a tappable Start button: either a clickable
+     * Button with text "Start", or a "Start" label whose parent is a clickable Button
+     * described as "Start". Shared by the directions-screen wait and the post-mode-switch
+     * wait so both agree on what "ready to start" looks like.
+     */
+    private fun hasClickableStartButton(root: AccessibilityNodeInfo): Boolean {
+        val startNodes = root.findAccessibilityNodeInfosByText("Start")
+        val hasStart = startNodes.any { node ->
+            if (node.isClickable && node.className == "android.widget.Button") {
+                true
+            } else {
+                val parent = node.parent
+                val parentMatch = parent != null && parent.isClickable &&
+                    parent.className == "android.widget.Button" &&
+                    parent.contentDescription?.toString()?.equals("Start") == true
+                parent?.recycle()
+                parentMatch
+            }
+        }
+        startNodes.forEach { it.recycle() }
+        return hasStart
+    }
+
+    /** True while Maps is still computing a route (bottom sheet reads "Finding best route..."). */
+    private fun isRouteStillComputing(root: AccessibilityNodeInfo): Boolean {
+        val nodes = root.findAccessibilityNodeInfosByText("Finding best route")
+        val computing = nodes.isNotEmpty()
+        nodes.forEach { it.recycle() }
+        return computing
+    }
+
+    private suspend fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String?, accessibilityService: WhizAccessibilityService): Boolean {
         // If no mode specified, just click Start without changing the mode
         if (mode == null) {
             Log.d(TAG, "No mode specified, using currently selected mode")
@@ -5925,9 +5944,29 @@ class ScreenAgentTools @Inject constructor(
                             // Continue anyway - might already be on correct mode
                         }
 
-                        // Wait for mode change to complete
+                        // Switching tabs makes Maps recompute the route for the new mode. Until
+                        // that finishes the sheet shows "Finding best route..." and there is no
+                        // Start button at all; a fixed 500ms sleep here lost that race in every
+                        // captured bike-mode failure (dumps 1580, 1631, 1671 → bugs 1581/1632/1672).
+                        // Wait for the route to be ready instead. Ceiling 6s: with the 15s appReady
+                        // + 10s directions waits above and the 5s verify budget below, worst case
+                        // stays under the 40s server timeout (whizvoice/maps_tools.py).
                         if (modeChanged) {
-                            Thread.sleep(500)
+                            val routeReady = waitForCondition(maxWaitMs = 6000, maxIntervalMs = 300) {
+                                val root = accessibilityService.getCurrentRootNode()
+                                    ?: return@waitForCondition false
+                                val ready = when {
+                                    isRouteStillComputing(root) -> false
+                                    // Transit has no Start button; the route list is the ready state.
+                                    modeText == "Transit mode" -> true
+                                    else -> hasClickableStartButton(root)
+                                }
+                                root.recycle()
+                                ready
+                            }
+                            if (!routeReady) {
+                                Log.w(TAG, "Route not ready 6s after switching to $modeText; trying Start anyway")
+                            }
                         }
                     }
                     freshRoot.recycle()
