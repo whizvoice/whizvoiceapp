@@ -5096,8 +5096,17 @@ class ScreenAgentTools @Inject constructor(
                     ?: return@waitForCondition false
                 val state = detectGoogleMapsScreenState(node)
                 node.recycle()
-                state == GoogleMapsScreenState.ACTIVE_NAVIGATION ||
-                    state == GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL
+                if (state == GoogleMapsScreenState.ACTIVE_NAVIGATION ||
+                    state == GoogleMapsScreenState.TRANSIT_ROUTE_DETAIL) {
+                    return@waitForCondition true
+                }
+                // When a trip is already active, Maps answers the Start tap with a
+                // "Start this trip?" dialog instead of navigating. Confirm it from inside the
+                // poll so a late dialog is caught whenever it appears, with no fixed delay.
+                if (dismissStartThisTripDialog(accessibilityService)) {
+                    Log.d(TAG, "Confirmed 'Start this trip?' dialog; waiting for navigation")
+                }
+                false
             }
             if (confirmed) {
                 Log.d(TAG, "Navigation start confirmed after $tap Start tap(s)")
@@ -5990,9 +5999,8 @@ class ScreenAgentTools @Inject constructor(
                         startNodes.forEach { it.recycle() }
                         freshStartRoot.recycle()
 
-                        // Check for and dismiss "Start this trip?" dialog (appears when already on an active trip)
-                        dismissStartThisTripDialog(accessibilityService)
-
+                        // The "Start this trip?" dialog (shown when a trip is already active) is
+                        // handled inside verifyNavigationStarted's poll, so no fixed delay here.
                         // Check for and dismiss welcome popup (no wait needed - detect by text)
                         dismissGoogleMapsWelcomePopup(accessibilityService)
 
@@ -6010,7 +6018,6 @@ class ScreenAgentTools @Inject constructor(
                             startNodes.forEach { it.recycle() }
                             freshStartRoot.recycle()
 
-                            dismissStartThisTripDialog(accessibilityService)
                             dismissGoogleMapsWelcomePopup(accessibilityService)
 
                             return true
@@ -6051,30 +6058,57 @@ class ScreenAgentTools @Inject constructor(
             //     "Duration N min" (seen as a TextView in Dec 2025 dumps and a LinearLayout in
             //     Oct 2026 dumps), so that label is the stable, id-free signal for "this is a trip".
             // The id path is tried first each attempt so older layouts keep their exact behaviour.
+            // Intelligent wait (same shape as the directions-screen wait above): succeed the
+            // moment trip cards are on screen, and stop early on outcomes that polling cannot
+            // change — Maps reporting no route, or the user leaving Maps — instead of burning
+            // the whole ceiling. Ceiling 5s matches the previous 25 x 200ms loop.
             var tripCardNodeList = emptyList<AccessibilityNodeInfo>()
             var transitRoot: AccessibilityNodeInfo? = null
-            for (transitAttempt in 1..25) {
-                Thread.sleep(200)
-                transitRoot?.recycle()
-                transitRoot = accessibilityService.getCurrentRootNode()
-                if (transitRoot == null) {
-                    Log.w(TAG, "Transit mode: could not get fresh root node on attempt $transitAttempt")
-                    continue
+            var transitFailure: String? = null
+            waitForCondition(maxWaitMs = 5000, maxIntervalMs = 300) {
+                val root = accessibilityService.getCurrentRootNode()
+                    ?: return@waitForCondition false
+
+                val pkg = root.packageName?.toString()
+                if (pkg != null && pkg != "com.google.android.apps.maps") {
+                    transitFailure = "User navigated away from Google Maps (now in $pkg)"
+                    root.recycle()
+                    return@waitForCondition true
                 }
-                tripCardNodeList = transitRoot.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_card_main_header")
-                if (tripCardNodeList.isEmpty()) {
-                    val durationNode = findTopmostTransitDurationNode(transitRoot)
-                    if (durationNode != null) {
-                        Log.d(TAG, "Transit mode: no trip_card_main_header ids; matched trip card by '${durationNode.contentDescription}' label")
-                        tripCardNodeList = listOf(durationNode)
+                for (errText in listOf("Can't find route", "Directions are not available", "No route found")) {
+                    val errNodes = root.findAccessibilityNodeInfosByText(errText)
+                    val found = errNodes.isNotEmpty()
+                    errNodes.forEach { it.recycle() }
+                    if (found) {
+                        transitFailure = "Maps could not find a route: $errText"
+                        root.recycle()
+                        return@waitForCondition true
                     }
                 }
-                Log.d(TAG, "Transit mode: found ${tripCardNodeList.size} trip card nodes on attempt $transitAttempt")
-                if (tripCardNodeList.isNotEmpty()) break
+
+                var cards = root.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/trip_card_main_header")
+                if (cards.isEmpty()) {
+                    val durationNode = findTopmostTransitDurationNode(root)
+                    if (durationNode != null) {
+                        Log.d(TAG, "Transit mode: no trip_card_main_header ids; matched trip card by '${durationNode.contentDescription}' label")
+                        cards = listOf(durationNode)
+                    }
+                }
+                if (cards.isEmpty()) {
+                    root.recycle()
+                    return@waitForCondition false
+                }
+                tripCardNodeList = cards
+                transitRoot = root
+                true
             }
 
-            if (transitRoot == null) {
-                Log.w(TAG, "Transit mode: could not get fresh root node after all attempts")
+            if (transitFailure != null) {
+                Log.w(TAG, "Transit mode: giving up early: $transitFailure")
+                return false
+            }
+            val cardsRoot = transitRoot ?: run {
+                Log.w(TAG, "Transit mode: no trip cards appeared within 5s")
                 return false
             }
 
@@ -6089,7 +6123,7 @@ class ScreenAgentTools @Inject constructor(
                     // Google Maps now goes directly to trip details after clicking a card
                     // (previously required clicking "Start glanceable directions" button)
                     tripCardNodeList.forEach { it.recycle() }
-                    transitRoot.recycle()
+                    cardsRoot.recycle()
                     return true
                 } else {
                     Log.w(TAG, "Transit mode: could not find clickable parent for trip card")
@@ -6098,7 +6132,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Transit mode: no trip cards found in UI")
             }
             tripCardNodeList.forEach { it.recycle() }
-            transitRoot.recycle()
+            cardsRoot.recycle()
         }
 
         return false
@@ -6171,35 +6205,48 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
-    private fun dismissStartThisTripDialog(accessibilityService: WhizAccessibilityService) {
+    /**
+     * If Maps is showing its "Start this trip?" dialog, confirm it. Returns true when the
+     * dialog was found and its positive button clicked, false when there is no dialog (the
+     * common case) or it could not be clicked. Has no delay of its own: it is polled from
+     * verifyNavigationStarted, so a late dialog is caught whenever it appears.
+     */
+    private fun dismissStartThisTripDialog(accessibilityService: WhizAccessibilityService): Boolean {
         try {
-            // Brief delay to allow the dialog to appear
-            Thread.sleep(500)
+            val rootNode = accessibilityService.getCurrentRootNode() ?: return false
 
-            val rootNode = accessibilityService.getCurrentRootNode() ?: return
-
-            // Check if the "Start this trip?" dialog is present by looking for dialog_title
-            val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_title")
-            val hasStartTripDialog = titleNodes.any { it.text?.toString() == "Start this trip?" }
-            titleNodes.forEach { it.recycle() }
+            // Match the dialog by its title text first; Maps has been dropping resource ids
+            // (the Oct 2026 transit list has none), so the dialog_title id is only a fallback.
+            val titleByText = rootNode.findAccessibilityNodeInfosByText("Start this trip?")
+            var hasStartTripDialog = titleByText.isNotEmpty()
+            titleByText.forEach { it.recycle() }
+            if (!hasStartTripDialog) {
+                val titleNodes = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_title")
+                hasStartTripDialog = titleNodes.any { it.text?.toString() == "Start this trip?" }
+                titleNodes.forEach { it.recycle() }
+            }
 
             if (!hasStartTripDialog) {
-                Log.d(TAG, "No 'Start this trip?' dialog detected")
                 rootNode.recycle()
-                return
+                return false
             }
 
             Log.d(TAG, "Found 'Start this trip?' dialog, clicking 'Start trip' button")
 
-            // Click the positive button ("Start trip")
-            val positiveButtons = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_positive_button")
+            // Click the positive button ("Start trip"): by id, else by its label.
+            var positiveButtons = rootNode.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/dialog_positive_button")
+            if (positiveButtons.isEmpty()) {
+                positiveButtons = rootNode.findAccessibilityNodeInfosByText("Start trip")
+            }
             try {
                 for (button in positiveButtons) {
-                    if (button.isClickable) {
-                        val clicked = button.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    val target = if (button.isClickable) button else findClickableParent(button)
+                    if (target != null) {
+                        val clicked = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (target !== button) target.recycle()
                         if (clicked) {
                             Log.d(TAG, "Dismissed 'Start this trip?' dialog by clicking 'Start trip'")
-                            return
+                            return true
                         }
                     }
                 }
@@ -6211,6 +6258,7 @@ class ScreenAgentTools @Inject constructor(
         } catch (e: Exception) {
             Log.w(TAG, "Error dismissing 'Start this trip?' dialog: ${e.message}")
         }
+        return false
     }
 
     private fun dismissExitNavigationDialog(rootNode: AccessibilityNodeInfo): Boolean {
