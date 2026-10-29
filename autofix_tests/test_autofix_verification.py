@@ -8,43 +8,59 @@ from helpers import (
 )
 
 
-def test_autofix_ytmusic_app_not_ready(tester):
-    """Verify fix for ytmusic_app_not_ready.
+def test_autofix_sms_stuck_in_search_screen(tester):
+    """Verify fix for sms_stuck_in_search_screen.
 
-    Tests that the screen agent can detect YouTube Music as ready even when
-    the Whiz bubble overlay or another window has the active-window slot.
-    The fix adds a windows-list fallback to waitForAppReady so the target
-    app is detected as soon as its window appears anywhere in the window list.
+    The screen agent searches for an SMS contact via the Messages search box,
+    then must click the matching search result to open the conversation before
+    drafting. Newer Google Messages renders search results into a
+    `zero_state_search_list_view` ListView instead of the older
+    `zero_state_search_chat_results` RecyclerView, so the agent never detected
+    the results, never opened the conversation, and got stuck on the search
+    screen ("Cannot draft message: still in search screen").
+
+    This test sends a voice command that drafts an SMS to a contact that exists
+    on the emulator and verifies the agent successfully leaves the search screen
+    and opens/drafts the conversation rather than getting stuck.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
+    success, error = navigate_to_my_chats(tester, "autofix_sms_stuck_in_search_screen")
     assert success, f"Could not reach My Chats: {error}"
 
+    # Open a new chat and let the UI settle before sending a voice command
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("play Clean Bandit on YouTube Music")
-    time.sleep(40)
+    # Draft an SMS to a contact that exists on the emulator. This exercises the
+    # search-then-select flow inside selectSMSChat / performSMSSearch.
+    send_voice_command("Send a text message to Ruth Grace Wong saying see you soon")
+    time.sleep(30)  # wait for the screen agent to search, open the chat, and draft
 
-    tester.screenshot("/tmp/whiz_ytmusic_play.png")
+    # Validate the agent is NOT stuck on the SMS search screen and actually
+    # opened the conversation / drafted the message.
+    tester.screenshot("/tmp/whiz_sms_search.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_play.png",
-        "YouTube Music is open and showing search results, an artist/song page, "
-        "a now-playing screen with playback controls, or a sign-in / onboarding "
-        "screen with options to sign in or browse device files"
+        "/tmp/whiz_sms_search.png",
+        "Google Messages has an open SMS conversation with Ruth Grace Wong "
+        "(a message thread / text input field is visible), or a Whiz draft "
+        "overlay showing the drafted message is visible. It must NOT be the "
+        "Messages search screen showing 'No results found'."
     )
     if not result:
+        # Fall back to checking the Whiz chat for a successful draft message
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
+        tester.screenshot("/tmp/whiz_sms_chat_result.png")
         result = tester.validate_screenshot(
-            "/tmp/whiz_ytmusic_chat_result.png",
-            "The Whiz chat shows an assistant message about playing music or about "
-            "YouTube Music. It should NOT show an error about YouTube Music not "
-            "becoming ready in time."
+            "/tmp/whiz_sms_chat_result.png",
+            "The Whiz chat shows an assistant message about drafting or sending a "
+            "text message to Ruth Grace Wong. It must NOT show an error about "
+            "being stuck in the search screen or being unable to find the contact."
         )
         if not result:
-            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
+            save_failed_screenshot(
+                tester, "autofix_sms_stuck_in_search_screen", "validation_failed"
+            )
     assert result, (
-        "YouTube Music did not reach a ready state after deep link launch — "
-        "ytmusic_app_not_ready may still be triggering"
+        "Screen agent got stuck on the SMS search screen — "
+        "sms_stuck_in_search_screen may still be triggering"
     )
