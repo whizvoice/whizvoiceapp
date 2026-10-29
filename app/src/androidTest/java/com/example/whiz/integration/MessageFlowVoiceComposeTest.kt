@@ -84,9 +84,6 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
 
     @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
     // Track chats created during tests for cleanup

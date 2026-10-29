@@ -41,9 +41,6 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
-    @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
@@ -59,11 +56,6 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-
-        // Grant microphone permission for these tests
-        Log.d(TAG, "Granting microphone permission for tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
 
         Log.d(TAG, "Microphone button state test setup complete")
     }

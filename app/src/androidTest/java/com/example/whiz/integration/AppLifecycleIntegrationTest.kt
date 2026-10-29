@@ -25,7 +25,6 @@ import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.ui.viewmodels.ChatViewModel
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.integration.GoogleSignInAutomator
 import com.example.whiz.MainActivity
@@ -52,9 +51,6 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
     @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService  // ← Direct access to speech service
-    
-    @Inject
-    lateinit var permissionManager: PermissionManager  // ← Permission coordinator
     
     @Inject
     lateinit var appLifecycleService: AppLifecycleService
@@ -84,13 +80,6 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             navigationScopedViewModel = viewModel
         }
 
-        // Grant microphone permission for testing continuous listening
-        Log.d(TAG, "🔐 Granting microphone permission for testing...")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
-        
         // Clean up any existing test chats proactively
         runBlocking {
             cleanupTestChats()

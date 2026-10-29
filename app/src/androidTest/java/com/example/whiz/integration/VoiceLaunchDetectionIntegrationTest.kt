@@ -19,7 +19,6 @@ import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.BaseIntegrationTest
-import com.example.whiz.permissions.PermissionManager
 import org.junit.Assert.*
 import org.junit.After
 
@@ -49,9 +48,6 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
-    @Inject
-    lateinit var permissionManager: PermissionManager
-
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     // Track chats created during tests for cleanup
@@ -62,13 +58,6 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
 
     @Before
     fun setUp() {
-        // Grant microphone permission for voice tests
-        android.util.Log.d(TAG, "🎙️ Granting microphone permission for voice tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
-
         // Set up activity monitor to capture launched activity for cleanup
         activityMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
 

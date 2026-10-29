@@ -10,7 +10,6 @@ import androidx.test.uiautomator.Until
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
@@ -65,9 +64,6 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     override lateinit var ttsManager: TTSManager
 
     @Inject
-    lateinit var permissionManager: PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
     
     @Inject
@@ -81,18 +77,11 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
-        // Grant microphone permission for voice tests
-        Log.d(TAG, "🎙️ Granting microphone permission for bubble mode test")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
+
         // Grant overlay permission for bubble using appops (SYSTEM_ALERT_WINDOW can't be granted via pm grant)
         Log.d(TAG, "🔵 Granting overlay permission for bubble")
         device.executeShellCommand("appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow")
-        
-        // Update permission manager state
-        permissionManager.updateMicrophonePermission(true)
-        
+
         // Clean up any existing test chats
         runBlocking {
             cleanupTestChats(

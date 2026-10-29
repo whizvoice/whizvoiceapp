@@ -79,6 +79,9 @@ abstract class BaseIntegrationTest {
     @Inject
     open lateinit var speechRecognitionService: SpeechRecognitionService
 
+    @Inject
+    open lateinit var permissionManager: PermissionManager
+
     protected lateinit var device: UiDevice
     protected lateinit var context: Context
     protected val packageName = "com.example.whiz.debug"
@@ -252,9 +255,10 @@ abstract class BaseIntegrationTest {
             val grantResult = device.executeShellCommand("pm grant $packageName ${Manifest.permission.RECORD_AUDIO}")
             android.util.Log.d("BaseIntegrationTest", "Microphone permission grant result: $grantResult")
             Thread.sleep(300) // Give the system time to process
-            
-            // Note: Child classes may have their own permissionManager injection
-            
+
+            // Keep the in-app PermissionManager state in sync with the shell grant
+            permissionManager.updateMicrophonePermission(true)
+
             val currentState = isMicrophoneGranted()
             android.util.Log.d("BaseIntegrationTest", "Microphone permission after grant: $currentState")
         } catch (e: Exception) {

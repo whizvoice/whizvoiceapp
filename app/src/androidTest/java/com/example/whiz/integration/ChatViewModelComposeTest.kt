@@ -56,9 +56,6 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
     // Track chats created during tests for cleanup
     private val createdChatIds = mutableListOf<Long>()
     private var createdNewChatThisTest = false
@@ -78,13 +75,6 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
-        // Grant microphone permission for rapid message testing
-        Log.d(TAG, "🎙️ Granting microphone permission for rapid message tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
 
         // This might be set automatically by test framework
         val animationScale = Settings.Global.getFloat(

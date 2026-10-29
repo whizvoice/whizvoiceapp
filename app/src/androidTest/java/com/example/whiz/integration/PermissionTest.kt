@@ -47,9 +47,6 @@ class PermissionTest : BaseIntegrationTest() {
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     @Inject
-    lateinit var permissionManager: PermissionManager
-    
-    @Inject
     lateinit var accessibilityChecker: AccessibilityChecker
 
     @Before

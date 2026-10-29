@@ -11,7 +11,6 @@ import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.di.AppModule
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.test_helpers.ComposeTestHelper
 import dagger.hilt.android.testing.HiltAndroidTest
 import dagger.hilt.android.testing.UninstallModules
@@ -50,20 +49,12 @@ class KeepScreenOnTest : BaseIntegrationTest() {
     @Inject
     lateinit var repository: WhizRepository
 
-    @Inject
-    lateinit var permissionManager: PermissionManager
-
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val createdChatIds = mutableListOf<Long>()
 
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-
-        // Grant microphone permission for these tests
-        Log.d(TAG, "🎙️ Granting microphone permission for keep-screen-on tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
 
         // Clean up any existing test chats
         runBlocking {

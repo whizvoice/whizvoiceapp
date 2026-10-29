@@ -12,7 +12,6 @@ import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.di.AppModule
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.ui.viewmodels.VoiceManager
 import dagger.hilt.android.testing.HiltAndroidTest
@@ -54,9 +53,6 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
     override lateinit var voiceManager: VoiceManager
 
     @Inject
-    lateinit var permissionManager: PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -71,11 +67,6 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-
-        // Grant microphone permission for voice tests
-        Log.d(TAG, "🎙️ Granting microphone permission for power button tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
 
         // Clean up any existing test chats
         runBlocking {

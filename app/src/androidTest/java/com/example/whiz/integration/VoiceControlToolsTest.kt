@@ -63,9 +63,6 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
     @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
     private val createdChatIds = mutableListOf<Long>()
     private val uniqueTestId = System.currentTimeMillis()
 
@@ -73,11 +70,6 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
     override fun setUpAuthentication() {
         super.setUpAuthentication()
         Log.d(TAG, "🧪 voice control tools test setup complete")
-
-        // Grant microphone permission for continuous listening tests
-        Log.d(TAG, "🎙️ Granting microphone permission")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
     }
 
     @After

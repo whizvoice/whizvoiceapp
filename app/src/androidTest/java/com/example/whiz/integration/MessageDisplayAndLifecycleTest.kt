@@ -65,9 +65,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
     private var testChatId = 0L
     private var createdServerChatId = 0L // Track the server chat ID created during test
