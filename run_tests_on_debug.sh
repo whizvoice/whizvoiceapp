@@ -593,7 +593,10 @@ run_integration_tests_with_logcat() {
     echo "🔍 Capturing app-specific logs, test runner output, and system errors/warnings" >> test_summary.log
     
     # Run gradle command and capture ONLY its output to test_gradle_output.log
-    local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon"
+    # leaveApksInstalledAfterRun: by default AGP uninstalls the app and test APKs after the
+    # run, which on Android 16 wipes enabled_accessibility_services and forces a fresh install
+    # (and a manual accessibility re-enable) before the app can be used again.
+    local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
     if [[ -n "$SINGLE_TEST" ]]; then
         # Fix the test class path if it's missing the integration package
         # This handles the case where WebSocketReconnectionTest is specified without the full package path
@@ -1050,8 +1053,6 @@ if [[ "$SKIP_UNIT_TESTS" == "true" ]]; then
     UNIT_TESTS_PASSED="skipped"
     UNIT_TESTS_FAILED="0"
 else
-    adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
-
     log_with_time "📱 Running tests sequentially for maximum reliability..."
     
     # Run unit tests first (don't exit on failure)
@@ -1061,9 +1062,10 @@ else
     set -e  # Re-enable exit on error
 fi
 
-# Clean app state and device screenshots/UI dumps before integration tests
-log_with_time "🧹 Cleaning app state, device screenshots, and UI dumps before integration tests..."
-adb shell am force-stop com.example.whiz.debug >/dev/null 2>&1 || true
+# Clean device screenshots/UI dumps before integration tests.
+# No force-stop here: `am instrument` restarts the app itself, and on Android 16 a force-stop
+# disables the accessibility service, which BaseIntegrationTest then has to re-enable.
+log_with_time "🧹 Cleaning device screenshots and UI dumps before integration tests..."
 
 # Clean old screenshots and UI dumps from device (local artifacts already cleaned at script start)
 # BaseIntegrationTest saves screenshots and UI dumps to /sdcard/Download/test_screenshots/
@@ -1084,6 +1086,29 @@ set +e  # Temporarily disable exit on error
 run_integration_tests_with_logcat
 integration_exit_code=$?
 set -e  # Re-enable exit on error
+
+# The end-of-instrumentation force-stop leaves our accessibility service in the system's
+# "crashed services" list; it stays enabled in settings but is never rebound, not even when
+# the app is launched. Rewriting the setting forces a rebind. This must run now, while the
+# app process is dead: once the app is listening (VOICE_COMMUNICATION mic), Play services'
+# in-call scam protection refuses to enable accessibility services.
+rebind_accessibility_service() {
+    local svc="com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"
+    local current others
+    current=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r')
+    others=$(echo "$current" | tr ':' '\n' | grep -v "^$svc$" | grep -v "^null$" | grep -v '^$' | paste -sd: -)
+    # `settings put` with an empty value fails ("Bad arguments"), so delete the row instead
+    # when ours is the only service; the point is to change the value so the system rebinds.
+    if [[ -z "$others" ]]; then
+        adb shell settings delete secure enabled_accessibility_services >/dev/null 2>&1 || true
+    else
+        adb shell settings put secure enabled_accessibility_services "$others" >/dev/null 2>&1 || true
+    fi
+    adb shell settings put secure enabled_accessibility_services "${others:+$others:}$svc" >/dev/null 2>&1 || true
+    adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1 || true
+}
+log_with_time "🔁 Rebinding accessibility service after instrumentation..."
+rebind_accessibility_service
 
 # Pull screenshots from device to local folder after all tests complete (fallback for success cases)
 if ! pull_test_screenshots; then
