@@ -532,7 +532,11 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // a LazyColumn scrollable when its content actually overflows, so short chat
             // lists (e.g. after cleanup runs) yield null. Chat rows are long-clickable;
             // the header buttons and the New Chat FAB aren't, so that distinguishes them.
-            val firstRow = device.findObjects(By.clickable(true).longClickable(true).pkg(packageName))
+            // The "My Chats" header renders before the list has loaded ("Loading chats..."),
+            // so wait for a row to appear rather than scanning immediately.
+            val rowSelector = By.clickable(true).longClickable(true).pkg(packageName)
+            device.wait(Until.hasObject(rowSelector), 10000)
+            val firstRow = device.findObjects(rowSelector)
                 .firstOrNull { it.findObject(By.clazz("android.widget.TextView")) != null }
             if (firstRow == null) {
                 failWithScreenshot("Could not find any chat row to tap in chats list")

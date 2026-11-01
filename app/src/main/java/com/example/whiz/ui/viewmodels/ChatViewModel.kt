@@ -953,30 +953,28 @@ class ChatViewModel @Inject constructor(
                                         // 🔧 REMOVED: Manual refresh is unnecessary - messages flow updates automatically
                                         // The database update from migration will trigger the flow naturally
                                         
-                                        // 🔧 CROSS-CHAT MIGRATION: Handle UI switching during rapid messaging
-                                        val currentChatIsOptimistic = _chatId.value < 0
-                                        val shouldSwitchToMigratedChat = currentChatIsOptimistic || _chatId.value == originalChatId
-                                        
-                                        Log.d(TAG, "🔧 CHAT_ID_UPDATE: currentChatIsOptimistic=$currentChatIsOptimistic, shouldSwitch=$shouldSwitchToMigratedChat, _chatId=${_chatId.value}, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId")
-                                        
+                                        // Any other in-flight requests from the same optimistic chat now belong
+                                        // to the server chat. This is data bookkeeping, so it runs regardless of
+                                        // which chat is on screen.
+                                        val requestsToUpdate = pendingRequests.filter { it.value == originalChatId }
+                                        requestsToUpdate.forEach { (requestId, _) ->
+                                            pendingRequests[requestId] = effectiveConversationId
+                                            Log.d(TAG, "📝 Updated pending request $requestId from chat $originalChatId to $effectiveConversationId")
+                                        }
+
+                                        // 🔧 CROSS-CHAT MIGRATION: Only move the screen if it is still showing the
+                                        // chat this request was sent from. Previously any negative id on screen
+                                        // qualified, so a fresh new chat (id -1, e.g. forced by the power button)
+                                        // was hijacked by a late reply for the previous chat.
+                                        val shouldSwitchToMigratedChat = _chatId.value == originalChatId
+
+                                        Log.d(TAG, "🔧 CHAT_ID_UPDATE: shouldSwitch=$shouldSwitchToMigratedChat, _chatId=${_chatId.value}, originalChatId=$originalChatId, effectiveConversationId=$effectiveConversationId")
+
                                         if (shouldSwitchToMigratedChat) {
                                             // Check if migration was already done by immediate migration above
                                             val alreadyMigrated = _chatId.value == effectiveConversationId
                                             if (!alreadyMigrated) {
-                                                // 🔧 Migration will be registered when migrateChatMessages is called
-                                                val oldChatId = _chatId.value
-                                                if (oldChatId < 0 && effectiveConversationId > 0) {
-                                                    // No need to register here - migrateChatMessages will handle it
-                                                    Log.d(TAG, "🔄 Chat migration needed: $oldChatId → $effectiveConversationId")
-                                                    
-                                                    // Update pendingRequests to use the new chat ID
-                                                    val requestsToUpdate = pendingRequests.filter { it.value == oldChatId }
-                                                    requestsToUpdate.forEach { (requestId, _) ->
-                                                        pendingRequests[requestId] = effectiveConversationId
-                                                        Log.d(TAG, "📝 Updated pending request $requestId from chat $oldChatId to $effectiveConversationId")
-                                                    }
-                                                }
-                                                
+                                                Log.d(TAG, "🔄 Chat migration needed: ${_chatId.value} → $effectiveConversationId")
                                                 Log.d(TAG, "🔧 CHAT_ID_UPDATE: Updating _chatId from ${_chatId.value} to $effectiveConversationId")
                                                 _chatId.value = effectiveConversationId
                                                 connectionStateManager.setActiveConversation(effectiveConversationId)
@@ -1016,11 +1014,14 @@ class ChatViewModel @Inject constructor(
                                     }
                                 }
                                 
-                                // No input text preservation needed - this is just ID sync
-                                _chatId.value = effectiveConversationId
-                                connectionStateManager.setActiveConversation(effectiveConversationId)
-                                // Update WhizServerRepository so reconnections use the correct ID
-                                // No longer needed - chatId is passed directly to sendMessage
+                                // Same rule as the other branches: only move the screen if it is still on
+                                // the chat this request was sent from.
+                                if (_chatId.value == originalChatId) {
+                                    _chatId.value = effectiveConversationId
+                                    connectionStateManager.setActiveConversation(effectiveConversationId)
+                                } else {
+                                    Log.d(TAG, "🔧 CHAT_ID_UPDATE (scenario 2): screen is on ${_chatId.value}, not origin $originalChatId - leaving it; reply routed to $effectiveConversationId")
+                                }
                             } else {
                                 // 🔧 SCENARIO 3: Same chat ID - regular message processing
                             }
