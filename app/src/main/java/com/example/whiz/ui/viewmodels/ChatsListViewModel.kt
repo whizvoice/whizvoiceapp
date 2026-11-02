@@ -94,14 +94,14 @@ class ChatsListViewModel @Inject constructor(
         }
     }
 
-    // Pull-to-refresh: incremental sync
+    // Pull-to-refresh: sync
     fun refreshChats() {
         viewModelScope.launch {
             _isRefreshing.value = true
             try {
-                Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
+                Log.d(TAG, "refreshChats: Starting sync to pick up new chats")
                 val result = repository.syncChats()
-                Log.d(TAG, "refreshChats: Incremental sync completed successfully")
+                Log.d(TAG, "refreshChats: Sync completed successfully")
 
                 // Clean up stale never-synced chats
                 repository.cleanupStaleUnsyncedChats()
@@ -117,7 +117,7 @@ class ChatsListViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Log.e(TAG, "refreshChats: Error during incremental sync", e)
+                Log.e(TAG, "refreshChats: Error during sync", e)
                 // Even on error, we show cached data
                 _isShowingCachedData.value = true
             } finally {

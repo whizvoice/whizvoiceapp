@@ -160,6 +160,8 @@ fun WhizNavHost(
         ) {
             ChatsListScreen(
                 onChatSelected = { chatId ->
+                    // Preload chat data before navigating
+                    preloadManager.preloadChat(chatId)
                     navController.navigate(Screen.Chat.route(chatId)) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
