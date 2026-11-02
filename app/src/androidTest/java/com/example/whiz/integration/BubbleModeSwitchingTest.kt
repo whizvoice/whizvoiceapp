@@ -72,7 +72,7 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     @Before
     override fun setUpAuthentication() {

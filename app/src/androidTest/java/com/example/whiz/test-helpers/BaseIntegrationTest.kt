@@ -28,6 +28,7 @@ import dagger.hilt.android.testing.HiltAndroidRule
 import dagger.hilt.android.testing.HiltAndroidTest
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -2682,12 +2683,26 @@ abstract class BaseIntegrationTest {
     }
 
     /**
+     * Syncs chats from the server and returns the local list. Declared as a member extension
+     * because each test class injects its own `repository`: call as `repository.listChats()`.
+     */
+    protected suspend fun com.example.whiz.data.repository.WhizRepository.listChats(): List<com.example.whiz.data.local.ChatEntity> {
+        syncChats()
+        return observeChats().first()
+    }
+
+    /** Deletes a chat by its client id (locally if it has no serverId, else on the server too). */
+    protected suspend fun com.example.whiz.data.repository.WhizRepository.deleteChatById(chatId: String) {
+        deleteChat(chatId)
+    }
+
+    /**
      * Simplified cleanup method for test chats
      * Focuses on ID tracking with optional pattern matching fallback
      */
     protected suspend fun cleanupTestChats(
         repository: com.example.whiz.data.repository.WhizRepository,
-        trackedChatIds: List<Long> = emptyList(),
+        trackedChatIds: List<String> = emptyList(),
         additionalPatterns: List<String> = emptyList(),
         enablePatternFallback: Boolean = false
     ) {
@@ -2714,7 +2729,7 @@ abstract class BaseIntegrationTest {
             if (enablePatternFallback && additionalPatterns.isNotEmpty()) {
                 android.util.Log.d("BaseIntegrationTest", "🔍 Checking for pattern-matched chats as fallback")
                 android.util.Log.d("BaseIntegrationTest", "   Patterns: $additionalPatterns")
-                val allChats = repository.getAllChats()
+                val allChats = repository.listChats()
                 android.util.Log.d("BaseIntegrationTest", "   Total chats: ${allChats.size}")
                 val testChats = allChats.filter { chat ->
                     !trackedChatIds.contains(chat.id) &&

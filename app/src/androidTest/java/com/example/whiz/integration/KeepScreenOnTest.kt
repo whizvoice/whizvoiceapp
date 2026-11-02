@@ -50,7 +50,7 @@ class KeepScreenOnTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     @Before
     override fun setUpAuthentication() {

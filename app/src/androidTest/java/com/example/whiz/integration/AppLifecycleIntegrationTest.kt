@@ -65,7 +65,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     private val uniqueTestId = "LIFECYCLE_TEST_${System.currentTimeMillis()}"
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     // Track the navigation-scoped ViewModel for thinking indicator tests
     private var navigationScopedViewModel: ChatViewModel? = null
@@ -216,7 +216,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 
                 // Capture initial chat count before creating new chat
-                val initialChats = runBlocking { repository.getAllChats() }
+                val initialChats = runBlocking { repository.listChats() }
                 
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 if (!clickNewChatButtonAndWaitForChatScreen()) {
@@ -226,7 +226,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 
                 // Track the newly created chat for cleanup
                 try {
-                    val currentChats = runBlocking { repository.getAllChats() }
+                    val currentChats = runBlocking { repository.listChats() }
                     val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
                     newChats.forEach { chat ->
                         createdChatIds.add(chat.id)
@@ -591,7 +591,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             // Track any chat created by the voice launch so cleanup picks it up
             try {
-                val currentChats = runBlocking { repository.getAllChats() }
+                val currentChats = runBlocking { repository.listChats() }
                 currentChats.filter { it.id !in createdChatIds }.forEach { chat ->
                     createdChatIds.add(chat.id)
                     Log.d(TAG, "📝 Tracked voice-launch chat for cleanup: ${chat.id} ('${chat.title}')")

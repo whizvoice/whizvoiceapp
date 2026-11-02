@@ -61,7 +61,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
     private var chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
     
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private var createdNewChatThisTest = false
 
     companion object {
@@ -73,7 +73,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
      * Enhanced failure method that dumps database contents before failing
      * This helps debug test failures on GitHub Actions
      */
-    private suspend fun failWithDatabaseDump(message: String, reason: String, chatId: Long? = null) {
+    private suspend fun failWithDatabaseDump(message: String, reason: String, chatId: String? = null) {
         Log.e(TAG, "❌ TEST FAILURE: $message")
         Log.e(TAG, "📊 Dumping database contents for debugging...")
         
@@ -81,7 +81,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             // If a specific chat ID is provided, dump messages for that chat
             if (chatId != null) {
                 Log.e(TAG, "📊 Messages for chat $chatId:")
-                val messages = repository.getMessagesForChat(chatId).first()
+                val messages = repository.observeMessages(chatId).first()
                 messages.forEachIndexed { index, msg ->
                     Log.e(TAG, "  Message[$index] ID=${msg.id}, Type=${msg.type}, Timestamp=${msg.timestamp}, Content='${msg.content.take(50)}...'")
                 }
@@ -100,7 +100,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             
             // Dump all chats
             Log.e(TAG, "📊 All chats in database:")
-            val allChats = repository.getChatDao().getAllChatsFlow().first()
+            val allChats = repository.observeChats().first()
             allChats.forEach { chat ->
                 Log.e(TAG, "  Chat ID=${chat.id}, Title='${chat.title}', LastMessageTime=${chat.lastMessageTime}")
             }
@@ -111,7 +111,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
             val recentChats = allChats.takeLast(3)
             recentChats.forEach { chat ->
                 try {
-                    val chatMessages = repository.getMessagesForChat(chat.id).first().takeLast(5)
+                    val chatMessages = repository.observeMessages(chat.id).first().takeLast(5)
                     chatMessages.forEach { msg ->
                         Log.e(TAG, "  Chat ${chat.id} Msg: ID=${msg.id}, Type=${msg.type}, Timestamp=${msg.timestamp}, Content='${msg.content.take(30)}...'")
                     }
@@ -246,7 +246,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 createdNewChatThisTest = true
                 
                 // Capture initial chats before creating new ones
-                val initialChats = repository.getAllChats()
+                val initialChats = repository.listChats()
                 
                 // Step 1: Launch app with manual launch mode
                 Log.d(TAG, "📱 Step 1: Launching app in manual mode")
@@ -276,11 +276,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Sent user message: $userMessage")
                 
                 // Track the newly created chat for cleanup
-                var chatId: Long? = null
+                var chatId: String? = null
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val currentChats = repository.getAllChats()
+                            val currentChats = repository.listChats()
                             val newChats = currentChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id)
                             }
@@ -390,7 +390,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Also check database to ensure no bot messages yet
                 val messagesWhileDisconnected = if (chatId != null) {
-                    repository.getMessagesForChat(chatId!!).first()
+                    repository.observeMessages(chatId!!).first()
                 } else {
                     emptyList()
                 }
@@ -454,7 +454,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 if (!botResponseAfterReconnect) {
                     // Check if message is in database but not UI
                     val messagesAfterReconnect = if (chatId != null) {
-                        repository.getMessagesForChat(chatId!!).first()
+                        repository.observeMessages(chatId!!).first()
                     } else {
                         emptyList()
                     }
@@ -546,7 +546,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Get messages from database to verify order
                 val finalMessages = if (chatId != null) {
-                    repository.getMessagesForChat(chatId!!).first()
+                    repository.observeMessages(chatId!!).first()
                 } else {
                     emptyList()
                 }
@@ -593,7 +593,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 createdNewChatThisTest = true
                 
                 // Capture initial chats before creating new ones
-                val initialChats = repository.getAllChats()
+                val initialChats = repository.listChats()
                 
                 // Step 1: Launch app with manual launch mode
                 Log.d(TAG, "📱 Step 1: Launching app in manual mode")
@@ -654,12 +654,12 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Get the first chat ID from local database since we're disconnected
-                var chatId1: Long? = null
+                var chatId1: String? = null
                 try {
                     withTimeout(5000) {
                         while (true) {
                             // Use DAO directly to get local chats when disconnected
-                            val localChats = repository.getChatDao().getAllChatsFlow().first()
+                            val localChats = repository.observeChats().first()
                             val newChats = localChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id)
                             }
@@ -761,11 +761,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 }
                 
                 // Get the second chat ID from local database since we're disconnected
-                var chatId2: Long? = null
+                var chatId2: String? = null
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val localChats = repository.getChatDao().getAllChatsFlow().first()
+                            val localChats = repository.observeChats().first()
                             val newChats = localChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
                             }
@@ -773,7 +773,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                                 // Check each new chat to find the one with the second message
                                 for (chat in newChats) {
                                     try {
-                                        val messages = repository.getMessagesForChat(chat.id).first()
+                                        val messages = repository.observeMessages(chat.id).first()
                                         if (messages.any { it.content.contains("pasta") || it.content.contains("alfredo") }) {
                                             chatId2 = chat.id
                                             Log.d(TAG, "Second chat created with ID: $chatId2")
@@ -803,7 +803,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 
                 // Also track any other new chats that were created during the test
                 try {
-                    val currentLocalChats = repository.getChatDao().getAllChatsFlow().first()
+                    val currentLocalChats = repository.observeChats().first()
                     val additionalNewChats = currentLocalChats.filter { chat -> 
                         !initialChats.map { it.id }.contains(chat.id) && 
                         !createdChatIds.contains(chat.id)
@@ -1082,7 +1082,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 createdNewChatThisTest = true
                 
                 // Capture initial chats before creating new ones
-                val initialChats = repository.getAllChats()
+                val initialChats = repository.listChats()
                 
                 // Step 1: Launch app with manual launch mode
                 Log.d(TAG, "📱 Step 1: Launching app in manual mode")
@@ -1107,11 +1107,11 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 Log.d(TAG, "✅ Sent first message: $firstMessage")
                 
                 // Track the first chat ID
-                var chatId1: Long? = null
+                var chatId1: String? = null
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val currentChats = repository.getAllChats()
+                            val currentChats = repository.listChats()
                             val newChats = currentChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id)
                             }
@@ -1222,17 +1222,17 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 // Track the second chat ID after disconnecting
                 // The chat was created when we sent the message, even though we're disconnected
                 // We need to get it from local database since we're disconnected
-                var chatId2: Long? = null
+                var chatId2: String? = null
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val currentChats = repository.getChatDao().getAllChatsFlow().first()
+                            val currentChats = repository.observeChats().first()
                             val newChats = currentChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id) && chat.id != chatId1
                             }
                             if (newChats.isNotEmpty()) {
                                 chatId2 = newChats.first().id
-                                Log.d(TAG, "✅ Second chat created with ID: $chatId2 (optimistic: ${chatId2 < 0})")
+                                Log.d(TAG, "✅ Second chat created with ID: $chatId2")
                                 break
                             }
                             delay(100)
@@ -1389,7 +1389,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 if (!parisResponseFound) {
                     // Get the actual chat ID for database dump
                     val actualChatId = try {
-                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val localChats = repository.observeChats().first()
                         val firstChat = localChats.find { chat -> 
                             chat.title?.contains("capital of France") == true ||
                             chat.title?.contains("Test message") == true
@@ -1576,7 +1576,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 if (!romeResponseFound) {
                     // Get the actual chat ID for database dump
                     val actualChatId = try {
-                        val localChats = repository.getChatDao().getAllChatsFlow().first()
+                        val localChats = repository.observeChats().first()
                         val secondChat = localChats.find { chat -> 
                             chat.title?.contains("capital of Italy") == true ||
                             chat.title?.contains("following test questions") == true

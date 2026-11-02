@@ -63,7 +63,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
     @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private val uniqueTestId = System.currentTimeMillis()
 
     @Before
@@ -154,7 +154,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Step 2: Navigate to new chat
             Log.d(TAG, "➕ step 2: navigating to new chat...")
             val initialChats = try {
-                repository.getAllChats()
+                repository.listChats()
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
@@ -192,7 +192,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             val chatViewModel = capturedViewModel!!
 
             // Track the new chat
-            val currentChats = repository.getAllChats()
+            val currentChats = repository.listChats()
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 if (!createdChatIds.contains(chat.id)) {
@@ -535,7 +535,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Track final chat ID for cleanup
             try {
                 val finalChatId = chatViewModel.chatId.value
-                if (finalChatId != null && finalChatId != -1L && finalChatId != 0L && !createdChatIds.contains(finalChatId)) {
+                if (finalChatId != null && !createdChatIds.contains(finalChatId)) {
                     createdChatIds.add(finalChatId)
                     Log.d(TAG, "📝 Tracked final chat ID: $finalChatId")
                 }
@@ -581,7 +581,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
         try {
             // Capture initial chats before voice launch
             val initialChats = try {
-                repository.getAllChats()
+                repository.listChats()
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
@@ -642,7 +642,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Track chat for cleanup
             try {
                 val currentChatId = capturedViewModel?.chatId?.value
-                if (currentChatId != null && currentChatId != -1L && currentChatId != 0L) {
+                if (currentChatId != null) {
                     if (!createdChatIds.contains(currentChatId)) {
                         createdChatIds.add(currentChatId)
                         Log.d(TAG, "📝 Tracked chat: $currentChatId")
@@ -913,7 +913,7 @@ class VoiceControlToolsTest : BaseIntegrationTest() {
             // Track final chat ID
             try {
                 val finalChatId = capturedViewModel?.chatId?.value
-                if (finalChatId != null && finalChatId > 0 && !createdChatIds.contains(finalChatId)) {
+                if (finalChatId != null && !createdChatIds.contains(finalChatId)) {
                     createdChatIds.add(finalChatId)
                     Log.d(TAG, "📝 Tracked final chat ID: $finalChatId")
                 }

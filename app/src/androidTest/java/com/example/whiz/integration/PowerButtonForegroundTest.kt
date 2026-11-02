@@ -56,7 +56,7 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private var mainActivity: MainActivity? = null
 
     companion object {
@@ -265,12 +265,12 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
         runBlocking { delay(2000) }
 
         // Step 5: Get the current chat state before power button
-        val chatsBeforePowerButton = runBlocking { repository.getAllChats() }
+        val chatsBeforePowerButton = runBlocking { repository.listChats() }
         val chatCountBefore = chatsBeforePowerButton.size
         Log.d(TAG, "📊 Chats before power button: $chatCountBefore")
 
         // Track the existing chat for cleanup
-        chatsBeforePowerButton.filter { it.id < 0 || it.title?.contains("test message") == true }
+        chatsBeforePowerButton.filter { it.serverId == null || it.title?.contains("test message") == true }
             .forEach { createdChatIds.add(it.id) }
 
         // Verify old message is visible
@@ -392,7 +392,7 @@ class PowerButtonForegroundTest : BaseIntegrationTest() {
 
         // Track any new chats for cleanup
         runBlocking {
-            val chatsAfterPowerButton = repository.getAllChats()
+            val chatsAfterPowerButton = repository.listChats()
             val newChats = chatsAfterPowerButton.filter { chat ->
                 !chatsBeforePowerButton.map { it.id }.contains(chat.id)
             }

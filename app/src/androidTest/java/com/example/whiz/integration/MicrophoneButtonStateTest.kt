@@ -46,7 +46,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     @Inject
     override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     companion object {
         private const val TAG = "MicrophoneButtonStateTest"
@@ -296,7 +296,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
 
             // Track the newly created chat for cleanup (chat is created when first message is sent)
             try {
-                val currentChats = repository.getAllChats()
+                val currentChats = repository.listChats()
                 val latestChat = currentChats.maxByOrNull { it.createdAt }
                 if (latestChat != null) {
                     createdChatIds.add(latestChat.id)

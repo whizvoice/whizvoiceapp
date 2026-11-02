@@ -59,7 +59,7 @@ class ChatLoadErrorTest : BaseIntegrationTest() {
     }
     
     // Track created chats for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     
     @Before
     override fun setUpAuthentication() {

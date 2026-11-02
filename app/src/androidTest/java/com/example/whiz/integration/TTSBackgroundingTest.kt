@@ -69,7 +69,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     // Monitor to capture launched activity for cleanup
     private var activityMonitor: android.app.Instrumentation.ActivityMonitor? = null
@@ -141,7 +141,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
             putExtra("tracing_intent_id", System.currentTimeMillis()) // Dynamic trace ID for voice launch
         }
 
-        val initialChats = runBlocking { repository.getAllChats() }
+        val initialChats = runBlocking { repository.listChats() }
         
         // Set up callback to capture ChatViewModel when it's created
         MainActivity.testViewModelCallback = { vm ->
@@ -167,7 +167,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         // Track the newly created chat immediately after voice launch
         try {
-            val currentChats = runBlocking { repository.getAllChats() }
+            val currentChats = runBlocking { repository.listChats() }
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 createdChatIds.add(chat.id)

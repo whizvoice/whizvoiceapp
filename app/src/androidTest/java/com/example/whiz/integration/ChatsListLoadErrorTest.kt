@@ -79,7 +79,7 @@ class ChatsListLoadErrorTest : BaseIntegrationTest() {
             
             // Now try to connect with a fake chat ID
             if (!whizServerRepository.isConnected()) {
-                whizServerRepository.connect(conversationId = 9999999L)
+                whizServerRepository.connect(chatId = "fake-chat-id-9999999")
                 // Wait for connection
                 withTimeout(5000) {
                     while (!whizServerRepository.isConnected()) {

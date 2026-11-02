@@ -48,7 +48,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private var createdNewChatThisTest = false
     private var testUniqueId: Long = 0
 
@@ -160,7 +160,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
             createdNewChatThisTest = true
 
             // Capture initial chats before creating new ones
-            val initialChats = repository.getAllChats()
+            val initialChats = repository.listChats()
 
             // Step 1: Verify app is ready
             Log.d(TAG, "📱 Step 1: Verifying app is ready")
@@ -262,7 +262,7 @@ class ConsecutiveToolUseTest : BaseIntegrationTest() {
 
             // Track the newly created chat for cleanup
             try {
-                val currentChats = repository.getAllChats()
+                val currentChats = repository.listChats()
                 val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
                 newChats.forEach { chat ->
                     createdChatIds.add(chat.id)

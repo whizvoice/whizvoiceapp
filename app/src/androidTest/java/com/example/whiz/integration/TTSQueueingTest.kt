@@ -70,7 +70,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
     @Inject
     override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     @Before
     override fun setUpAuthentication() {
@@ -183,7 +183,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             // Track chat for cleanup
             val currentChatId = capturedViewModel?.chatId?.value
-            if (currentChatId != null && currentChatId != 0L) {
+            if (currentChatId != null) {
                 createdChatIds.add(currentChatId)
             }
 
@@ -467,7 +467,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             // Track chat for cleanup
             val currentChatId = capturedViewModel?.chatId?.value
-            if (currentChatId != null && currentChatId != 0L) {
+            if (currentChatId != null) {
                 createdChatIds.add(currentChatId)
             }
 
