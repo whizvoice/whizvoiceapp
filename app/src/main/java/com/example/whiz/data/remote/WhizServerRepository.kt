@@ -48,7 +48,7 @@ sealed class WebSocketEvent {
     data class Error(val error: Throwable) : WebSocketEvent()
     data class AuthError(val message: String) : WebSocketEvent()
     data class Cancelled(val cancelledRequestId: String, val requestId: String? = null) : WebSocketEvent()
-    data class DeleteMessage(val messageId: Long?, val conversationId: Long, val requestId: String?, val reason: String?, val chatId: String? = null) : WebSocketEvent()
+    data class DeleteMessage(val messageId: Long?, val conversationId: Long?, val requestId: String?, val reason: String?, val chatId: String? = null) : WebSocketEvent()
     object Closed : WebSocketEvent()
     object Connected : WebSocketEvent()
     object Reconnecting : WebSocketEvent()
@@ -428,12 +428,12 @@ class WhizServerRepository @Inject constructor(
     /**
      * Chat id to attribute an inbound frame to when the payload carries none:
      * the chat this socket is connected (or connecting) to, else the active chat.
+     * Null when there is none - callers must not invent an id.
      */
-    private fun fallbackChatId(): String {
+    private fun fallbackChatId(): String? {
         return getConnectedChatId()
             ?: connectingToChatId
             ?: connectionStateManager.getLastActiveConversationId()
-            ?: ""
     }
 
     suspend fun connect(chatId: String? = null, turnOffPersistentDisconnect: Boolean = false, forPriming: Boolean = false) {
@@ -720,11 +720,11 @@ class WhizServerRepository @Inject constructor(
 
                                 val deleteChatId = readClientChatId(jsonObject)
 
-                                if (conversationId != null) {
+                                if (deleteChatId != null || conversationId != null) {
                                     Log.d(TAG, "📥 Delete message notification: messageId=$messageId, conversationId=$conversationId, chatId=$deleteChatId, requestId=$deleteRequestId, reason=$reason")
                                     scope.launch { emitEvent(WebSocketEvent.DeleteMessage(messageId, conversationId, deleteRequestId, reason, deleteChatId)) }
                                 } else {
-                                    Log.w(TAG, "Received delete_message without conversation_id")
+                                    Log.w(TAG, "Received delete_message without client_chat_id or conversation_id")
                                 }
                                 messageHandled = true
                             }
@@ -747,9 +747,13 @@ class WhizServerRepository @Inject constructor(
 
                                 Log.d(TAG, "📥 Processing stream_chunk with content: ${content.take(50)}...")
 
-                                // Emit the content as a regular message, not the raw JSON
-                                scope.launch {
-                                    emitEvent(WebSocketEvent.Message(content, requestId, chunkChatId, conversationId))
+                                if (chunkChatId == null) {
+                                    Log.w(TAG, "Dropping stream_chunk with no chat to attribute it to")
+                                } else {
+                                    // Emit the content as a regular message, not the raw JSON
+                                    scope.launch {
+                                        emitEvent(WebSocketEvent.Message(content, requestId, chunkChatId, conversationId))
+                                    }
                                 }
                                 messageHandled = true
                             }
@@ -758,8 +762,14 @@ class WhizServerRepository @Inject constructor(
                                 val errorMessage = jsonObject.getString("error")
                                 val errorChatId = readClientChatId(jsonObject) ?: fallbackChatId()
 
-                                // Emit the error message as a regular message for ChatViewModel to handle
-                                scope.launch { emitEvent(WebSocketEvent.Message(errorMessage, requestId, errorChatId)) }
+                                if (errorChatId != null) {
+                                    // Emit the error message as a regular message for ChatViewModel to handle
+                                    scope.launch { emitEvent(WebSocketEvent.Message(errorMessage, requestId, errorChatId)) }
+                                } else {
+                                    // No chat to attribute it to - surface as a connection-level error instead
+                                    Log.w(TAG, "Error payload with no chat to attribute it to: $errorMessage")
+                                    scope.launch { emitEvent(WebSocketEvent.Error(Exception(errorMessage))) }
+                                }
                                 messageHandled = true
                             }
                             // Handle normal structured response with request_id and conversation_id
@@ -772,8 +782,7 @@ class WhizServerRepository @Inject constructor(
                                 val conversationId = if (jsonObject.has("conversation_id") && !jsonObject.isNull("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
-                                val payloadChatId = readClientChatId(jsonObject)
-                                val responseChatId = payloadChatId ?: fallbackChatId()
+                                val responseChatId = readClientChatId(jsonObject) ?: fallbackChatId()
                                 val serverTimestamp = if (jsonObject.has("timestamp") && !jsonObject.isNull("timestamp")) {
                                     jsonObject.getString("timestamp")
                                 } else null
@@ -784,29 +793,17 @@ class WhizServerRepository @Inject constructor(
                                 } else "unknown"
                                 Log.d(TAG, "Handling message type: $messageType with response field (chatId=$responseChatId, conversationId=$conversationId)")
 
-                                val emitStartTime = System.currentTimeMillis()
-                                scope.launch {
-                                    // Make sure the chat row exists locally (a reply/broadcast can reference a chat
-                                    // this device has never seen), then record the server's integer id on it.
-                                    // Both complete before the event is emitted. Only done when the server named
-                                    // the chat (response/broadcast payloads always carry client_chat_id).
-                                    if (payloadChatId != null) {
-                                        try {
-                                            repository.ensureChatRowForIncoming(payloadChatId, responseText)
-                                            if (conversationId != null) {
-                                                repository.recordServerId(payloadChatId, conversationId)
-                                            }
-                                        } catch (e: CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            Log.e(TAG, "Failed to ensure chat row / record server id for chat $payloadChatId", e)
+                                if (responseChatId == null) {
+                                    Log.w(TAG, "Dropping $messageType with no client_chat_id and no chat to attribute it to: ${responseText.take(100)}")
+                                } else {
+                                    val emitStartTime = System.currentTimeMillis()
+                                    scope.launch {
+                                        emitEvent(WebSocketEvent.Message(responseText, requestId, responseChatId, conversationId, serverTimestamp))
+                                        val emitEndTime = System.currentTimeMillis()
+                                        val emitDuration = emitEndTime - emitStartTime
+                                        if (emitDuration > 50) {
+                                            Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
                                         }
-                                    }
-                                    emitEvent(WebSocketEvent.Message(responseText, requestId, responseChatId, conversationId, serverTimestamp))
-                                    val emitEndTime = System.currentTimeMillis()
-                                    val emitDuration = emitEndTime - emitStartTime
-                                    if (emitDuration > 50) {
-                                        Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
                                     }
                                 }
                                 messageHandled = true
@@ -833,13 +830,18 @@ class WhizServerRepository @Inject constructor(
                             } else {
                                 // Default for any unhandled or plain text message
 
-                                val emitStartTime = System.currentTimeMillis()
-                                scope.launch { 
-                                    emitEvent(WebSocketEvent.Message(text, requestId, fallbackChatId()))
-                                    val emitEndTime = System.currentTimeMillis()
-                                    val emitDuration = emitEndTime - emitStartTime
-                                    if (emitDuration > 50) {
-                                        Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
+                                val textChatId = fallbackChatId()
+                                if (textChatId == null) {
+                                    Log.w(TAG, "Dropping plain-text message with no chat to attribute it to: ${text.take(100)}")
+                                } else {
+                                    val emitStartTime = System.currentTimeMillis()
+                                    scope.launch {
+                                        emitEvent(WebSocketEvent.Message(text, requestId, textChatId))
+                                        val emitEndTime = System.currentTimeMillis()
+                                        val emitDuration = emitEndTime - emitStartTime
+                                        if (emitDuration > 50) {
+                                            Log.w(TAG, "WebSocket emit delay: ${emitDuration}ms")
+                                        }
                                     }
                                 }
                             }

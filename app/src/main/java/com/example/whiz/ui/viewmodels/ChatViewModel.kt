@@ -1135,6 +1135,7 @@ class ChatViewModel @Inject constructor(
      * never seen the chat. With a request id the reply is placed right after its user message.
      */
     private suspend fun storeAssistantReply(chatId: String, content: String, requestId: String?, serverTimestamp: String?) {
+        if (chatId.isBlank()) { Log.w(TAG, "storeAssistantReply: blank chatId, dropping reply (requestId=$requestId)"); return }
         repository.ensureChatRowForIncoming(chatId, content)
         if (requestId != null) {
             repository.addAssistantMessageAfterRequest(chatId, content, requestId, serverTimestamp)
