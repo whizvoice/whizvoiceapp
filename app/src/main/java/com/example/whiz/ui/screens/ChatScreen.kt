@@ -694,8 +694,12 @@ fun ChatScreen(
             Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), navigating to a new chat")
             // Clear the signal on this entry before leaving it
             navController.currentBackStackEntry?.savedStateHandle?.remove<Long>("FORCE_NEW_CHAT")
+            // Replace the current chat entry (Home, if present, stays below). Popping by the
+            // current destination also covers the assistant cold-start stack, which has no Home.
+            val currentId = navController.currentBackStackEntry?.destination?.id
             navController.navigate(Screen.Chat.newChatRoute()) {
-                popUpTo(Screen.Home.route)
+                if (currentId != null) popUpTo(currentId) { inclusive = true }
+                launchSingleTop = true
             }
             // The new ChatScreen reads ENABLE_VOICE_MODE on its own entry and re-enables listening
             navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)

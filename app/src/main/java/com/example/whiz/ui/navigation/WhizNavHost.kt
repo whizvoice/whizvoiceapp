@@ -239,9 +239,7 @@ fun WhizNavHost(
             popEnterTransition = { null },
             popExitTransition = { null }
         ) { backStackEntry ->
-            // The route always carries a chat id; the fallback is defensive only.
-            val chatId = backStackEntry.arguments?.getString("chatId")
-                ?: remember { java.util.UUID.randomUUID().toString() }
+            val chatId = checkNotNull(backStackEntry.arguments?.getString("chatId")) { "chat route requires chatId" }
 
             // For voice launch, enable voice mode
             if (isVoiceLaunch) {
