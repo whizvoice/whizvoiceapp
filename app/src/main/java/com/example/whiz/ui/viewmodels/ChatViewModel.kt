@@ -1179,6 +1179,9 @@ class ChatViewModel @Inject constructor(
         loadChatWithVoiceMode(chatId, false)
     }
 
+    /** A chat is new until its first send creates the local row. */
+    suspend fun isNewChat(chatId: String): Boolean = repository.getChatById(chatId) == null
+
     fun loadChatWithVoiceMode(chatId: String, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
         Log.d(TAG, "🔥 STACK TRACE for loadChatWithVoiceMode:", Exception("Stack trace"))

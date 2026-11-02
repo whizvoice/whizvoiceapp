@@ -57,7 +57,7 @@ fun WhizNavHost(
     val currentVoiceMode = currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true
     val currentFromAssistant = currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
     val fromAssistant = isVoiceLaunch || previousFromAssistant || currentVoiceMode || currentFromAssistant
-    val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
+    val chatId = navController.previousBackStackEntry?.arguments?.getString("NAVIGATE_TO_CHAT_ID")
     
     // Debug logging for voice launch detection
     Log.d("WhizNavHost", "🔍 Voice launch detection:")
@@ -94,7 +94,7 @@ fun WhizNavHost(
     fun NavHostController.preloadAndNavigate(route: String) {
         when {
             route.startsWith("chat/") && route != "chat/new" -> {
-                val chatId = route.substringAfter("chat/").toLong()
+                val chatId = route.substringAfter("chat/")
                 preloadManager.preloadChat(chatId)
             }
         }
@@ -107,8 +107,8 @@ fun WhizNavHost(
     // on recomposition, which would create duplicate ChatScreen/ViewModel instances
     val startDestination = remember {
         if (isAuthenticated) {
-            if (fromAssistant && chatId > 0) "chat/$chatId"
-            else if (fromAssistant) "chat/-1"
+            if (fromAssistant && chatId != null) Screen.Chat.route(chatId)
+            else if (fromAssistant) Screen.Chat.newChatRoute()
             else Screen.Home.route
         } else {
             Screen.Login.route
@@ -213,7 +213,7 @@ fun WhizNavHost(
 
         composable(
             route = "chat/{chatId}",
-            arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
+            arguments = listOf(navArgument("chatId") { type = NavType.StringType }),
             enterTransition = {
                 when (initialState.destination.route) {
                     Screen.Home.route -> {
@@ -239,7 +239,9 @@ fun WhizNavHost(
             popEnterTransition = { null },
             popExitTransition = { null }
         ) { backStackEntry ->
-            val chatId = backStackEntry.arguments?.getLong("chatId") ?: -1L
+            // The route always carries a chat id; the fallback is defensive only.
+            val chatId = backStackEntry.arguments?.getString("chatId")
+                ?: remember { java.util.UUID.randomUUID().toString() }
 
             // For voice launch, enable voice mode
             if (isVoiceLaunch) {

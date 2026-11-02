@@ -1201,13 +1201,14 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
-            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to chat/-1")
-            Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
+            val newChatRoute = Screen.Chat.newChatRoute()
+            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to $newChatRoute")
+            Log.d(TAG, "🚨 Note: No chat row is created here - ChatViewModel creates it when the first message is sent")
 
-            // Navigate to new chat screen without pre-creating optimistic chat
+            // Navigate to a freshly minted chat id without creating a row
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
-            Log.d(TAG, "🚨 About to call navigateWhenReady for chat/-1")
-            navigateWhenReady("chat/-1") {
+            Log.d(TAG, "🚨 About to call navigateWhenReady for $newChatRoute")
+            navigateWhenReady(newChatRoute) {
                 Log.d(TAG, "🚨 Inside navigateWhenReady callback - navigation should be complete")
                 // Pass the voice mode flag and initial transcription to the ChatScreen
                 if (enableVoiceMode) {
@@ -1221,7 +1222,7 @@ class MainActivity : ComponentActivity() {
             }
         } else if (enableVoiceMode && ::navController.isInitialized) {
             // Voice launch via FROM_ASSISTANT (onCreate path) — NavHost already navigated
-            // to chat/-1 via startDestination. Just pass voice mode flag to ChatScreen.
+            // to a new chat route via startDestination. Just pass voice mode flag to ChatScreen.
             Log.d(TAG, "🎤 Voice mode without CREATE_NEW_CHAT_ON_START - setting ENABLE_VOICE_MODE in savedStateHandle")
 
             // Clear extras to prevent reprocessing from onResume / LaunchedEffect
@@ -1237,7 +1238,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            currentIntent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
+            currentIntent?.getStringExtra("NAVIGATE_TO_CHAT_ID")?.takeIf { it.isNotBlank() }?.let { chatId ->
                 Log.d(TAG, "Intent to navigate to chat ID: $chatId")
                 if (::navController.isInitialized) {
                 val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false)
@@ -1249,7 +1250,7 @@ class MainActivity : ComponentActivity() {
                 
                 if (fromAssistant && forceNavigation) {
                     // If coming from assistant with force navigation, clear everything and go to chat
-                    navigateWhenReady("chat/$chatId", clearBackStack = true) {
+                    navigateWhenReady(Screen.Chat.route(chatId), clearBackStack = true) {
                         // Pass the voice mode flag and initial transcription to the ChatScreen
                         if (enableVoiceMode) {
                             Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
@@ -1270,7 +1271,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     // Normal navigation
                     Log.d(TAG, "Executing normal navigation to chat/$chatId")
-                    navController.navigate("chat/$chatId") {
+                    navController.navigate(Screen.Chat.route(chatId)) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
@@ -1456,7 +1457,7 @@ class MainActivity : ComponentActivity() {
             val createNewChat = currentIntent.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false)
             val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false) 
             val enableVoice = currentIntent.getBooleanExtra("ENABLE_VOICE_MODE", false)
-            val navToChatId = currentIntent.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)
+            val navToChatId = currentIntent.getStringExtra("NAVIGATE_TO_CHAT_ID")
             Log.d(TAG, "🔍 RESUME DEBUG: CREATE_NEW_CHAT_ON_START = $createNewChat")
             Log.d(TAG, "🔍 RESUME DEBUG: FROM_ASSISTANT = $fromAssistant")
             Log.d(TAG, "🔍 RESUME DEBUG: ENABLE_VOICE_MODE = $enableVoice")

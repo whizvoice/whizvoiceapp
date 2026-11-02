@@ -470,7 +470,7 @@ fun ChatLoadErrorView(
 @OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ChatScreen(
-    chatId: Long,
+    chatId: String,
     onChatsListClick: () -> Unit,
     permissionManager: com.example.whiz.permissions.PermissionManager,
     voiceManager: VoiceManager,
@@ -691,10 +691,14 @@ fun ChatScreen(
     // React to force new chat signal from power button long-press while app is open
     LaunchedEffect(forceNewChatTimestamp) {
         if (forceNewChatTimestamp > 0L) {
-            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), resetting to new chat")
-            viewModel.loadChatWithVoiceMode(-1L, true)
-            // Clear the signal after handling
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), navigating to a new chat")
+            // Clear the signal on this entry before leaving it
             navController.currentBackStackEntry?.savedStateHandle?.remove<Long>("FORCE_NEW_CHAT")
+            navController.navigate(Screen.Chat.newChatRoute()) {
+                popUpTo(Screen.Home.route)
+            }
+            // The new ChatScreen reads ENABLE_VOICE_MODE on its own entry and re-enables listening
+            navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
         }
     }
 
@@ -705,7 +709,7 @@ fun ChatScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, chatId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && chatId != -1L && chatId != 0L) {
+            if (event == Lifecycle.Event.ON_RESUME) {
                 // Only sync on resume if this is NOT the initial load
                 // Initial load already syncs via loadChat
                 if (!isInitialLoad) {
@@ -720,24 +724,6 @@ fun ChatScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-    
-    // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
-    // Track previous viewModelChatId to distinguish real migrations (new chat → server ID)
-    // from stale state (screen re-composed while ViewModel still has old chat ID)
-    var previousViewModelChatId by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(viewModelChatId) {
-        val prev = previousViewModelChatId
-        previousViewModelChatId = viewModelChatId
-        // Only migrate if the PREVIOUS value was -1 (we were in new chat state)
-        // and the current value is a real chat ID. This prevents stale migration when
-        // the screen first composes with an old viewModelChatId from a previous chat.
-        if (prev == -1L && chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
-            // This is a migration (new chat creation), not a chat switch
-            // Use migrateChatId to avoid disconnecting WebSocket
-            viewModel.migrateChatId(chatId, viewModelChatId)
         }
     }
 
@@ -780,23 +766,22 @@ fun ChatScreen(
     }
 
     // Track whether we've already initialized voice settings for this screen instance
-    // This prevents re-initialization during chat migration (chatId changes)
     val voiceInitialized = remember { mutableStateOf(false) }
 
     // Voice app behavior: enable microphone for all chats on FIRST launch only
     // Don't override user's preference if they've manually toggled it
-    // IMPORTANT: Don't re-initialize during chat migration (when chatId changes from -1 to optimistic ID)
+    // A FORCE_NEW_CHAT (power button long-press while app is open) navigates to a new chat entry
+    // with ENABLE_VOICE_MODE set, so the new screen instance re-enables listening here.
     LaunchedEffect(enableTTSMode, effectiveHasPermission) {
         // Only initialize voice settings ONCE per screen instance
-        // Skip if already initialized (prevents override during chat migration)
         if (voiceInitialized.value) {
             return@LaunchedEffect
         }
 
         // Enable continuous listening on voice-activated entry (wake word, long-press, OS assistant)
-        // OR for new chats (optimistic negative IDs). For existing-chat re-entry without voice
+        // OR for new chats (no local row yet). For existing-chat re-entry without voice
         // activation, respect the user's current state (the MainActivity nav listener restores it).
-        if (effectiveHasPermission && (enableTTSMode || viewModelChatId < 0)) {
+        if (effectiveHasPermission && (enableTTSMode || viewModel.isNewChat(chatId))) {
             voiceManager.updateContinuousListeningEnabled(true)
             viewModel.ensureContinuousListeningEnabled()
             voiceInitialized.value = true
@@ -808,25 +793,6 @@ fun ChatScreen(
 
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
-    }
-
-    // Re-enable voice when FORCE_NEW_CHAT signal is received (power button long-press while app is open)
-    // This must be after voiceInitialized is defined
-    LaunchedEffect(forceNewChatTimestamp) {
-        if (forceNewChatTimestamp > 0L) {
-            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling voice for new chat")
-
-            // Reset voice initialization flag so voice can be re-enabled
-            voiceInitialized.value = false
-
-            // Re-enable continuous listening for the new chat (same as initial voice launch)
-            if (effectiveHasPermission) {
-                Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling continuous listening")
-                voiceManager.updateContinuousListeningEnabled(true)
-                viewModel.ensureContinuousListeningEnabled()
-                voiceInitialized.value = true
-            }
-        }
     }
 
     // Voice transcription collection is handled in ChatViewModel (single instance)
