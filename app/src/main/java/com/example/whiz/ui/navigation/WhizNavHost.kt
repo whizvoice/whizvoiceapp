@@ -97,9 +97,6 @@ fun WhizNavHost(
                 val chatId = route.substringAfter("chat/").toLong()
                 preloadManager.preloadChat(chatId)
             }
-            route == "home" -> {
-                preloadManager.preloadChatsList()
-            }
         }
         navigate(route)
     }
@@ -161,23 +158,15 @@ fun WhizNavHost(
                 )
             }
         ) {
-            // Preload any relevant data
-            LaunchedEffect(Unit) {
-                delay(50L)
-                preloadManager.preloadChatsList()
-            }
-
             ChatsListScreen(
                 onChatSelected = { chatId ->
-                    // Preload chat data before navigating
-                    preloadManager.preloadChat(chatId)
-                    navController.navigate("chat/$chatId") {
+                    navController.navigate(Screen.Chat.route(chatId)) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
                 },
                 onNewChatClick = {
-                    navController.navigate("chat/-1") {
+                    navController.navigate(Screen.Chat.newChatRoute()) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
@@ -264,8 +253,6 @@ fun WhizNavHost(
             ChatScreen(
                 chatId = chatId,
                 onChatsListClick = {
-                    // Preload chats list before navigating
-                    preloadManager.preloadChatsList()
                     navController.navigate(Screen.Home.route) {
                         popUpTo(Screen.Home.route) { inclusive = true }
                     }

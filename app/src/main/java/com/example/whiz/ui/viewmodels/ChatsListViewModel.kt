@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -32,10 +31,9 @@ class ChatsListViewModel @Inject constructor(
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
-    // Initial load state — true until first sync completes
-    private val _isInitialLoad = MutableStateFlow(true)
-    val isInitialLoad: StateFlow<Boolean> = _isInitialLoad.asStateFlow()
-    
+    // True once the first chats sync has finished (success or failure)
+    val isFirstSyncComplete: StateFlow<Boolean> = repository.isFirstSyncComplete
+
     // Connection status - true when we had to use cached data
     private val _isShowingCachedData = MutableStateFlow(false)
     val isShowingCachedData: StateFlow<Boolean> = _isShowingCachedData.asStateFlow()
@@ -61,7 +59,7 @@ class ChatsListViewModel @Inject constructor(
     }
 
     // All chats, ordered by most recent first
-    val chats: StateFlow<List<ChatEntity>> = repository.getAllChatsFlow()
+    val chats: StateFlow<List<ChatEntity>> = repository.observeChats()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -69,29 +67,14 @@ class ChatsListViewModel @Inject constructor(
         )
 
     init {
-        // Clean up stale optimistic chats on initial load
+        // Clean up stale never-synced chats on initial load
         viewModelScope.launch {
-            repository.cleanupStaleOptimisticChats()
+            repository.cleanupStaleUnsyncedChats()
         }
-        // Clear isInitialLoad once chats flow emits non-empty data
-        viewModelScope.launch {
-            chats.first { it.isNotEmpty() }
-            _isInitialLoad.value = false
-        }
-    }
-
-    // Create a new chat
-    suspend fun createNewChat(title: String = "New Chat"): Long {
-        return repository.createChat(title)
-    }
-
-    // Create a new chat with optimistic UI (for voice launches and immediate feedback)
-    suspend fun createNewChatOptimistic(title: String = "New Chat"): Long {
-        return repository.createChatOptimistic(title)
     }
 
     // Delete a specific chat
-    fun deleteChat(chatId: Long) {
+    fun deleteChat(chatId: String) {
         viewModelScope.launch {
             repository.deleteChat(chatId)
         }
@@ -117,11 +100,11 @@ class ChatsListViewModel @Inject constructor(
             _isRefreshing.value = true
             try {
                 Log.d(TAG, "refreshChats: Starting incremental sync to pick up new chats")
-                val result = repository.performIncrementalSync()
+                val result = repository.syncChats()
                 Log.d(TAG, "refreshChats: Incremental sync completed successfully")
 
-                // Clean up stale optimistic chats (empty chats older than 1 hour)
-                repository.cleanupStaleOptimisticChats()
+                // Clean up stale never-synced chats
+                repository.cleanupStaleUnsyncedChats()
 
                 // Check if we're showing cached data (result will indicate this)
                 _isShowingCachedData.value = result.isCachedData
