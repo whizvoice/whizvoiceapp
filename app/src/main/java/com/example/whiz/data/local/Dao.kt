@@ -8,6 +8,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -15,46 +16,50 @@ interface ChatDao {
     @Query("SELECT * FROM chats ORDER BY lastMessageTime DESC")
     fun getAllChatsFlow(): Flow<List<ChatEntity>>
 
-    @Query("SELECT * FROM chats WHERE id = :chatId")
-    suspend fun getChatById(chatId: Long): ChatEntity?
+    @Query("SELECT * FROM chats WHERE id = :id")
+    suspend fun getChatById(id: String): ChatEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertChat(chat: ChatEntity): Long
+    @Query("SELECT * FROM chats WHERE serverId = :serverId")
+    suspend fun getChatByServerId(serverId: Long): ChatEntity?
 
-    @Update
-    suspend fun updateChat(chat: ChatEntity): Int
+    @Upsert
+    suspend fun upsert(chat: ChatEntity)
 
-    @Query("UPDATE chats SET lastMessageTime = :timestamp WHERE id = :chatId")
-    suspend fun updateChatLastMessageTime(chatId: Long, timestamp: Long = System.currentTimeMillis()): Int
+    @Upsert
+    suspend fun upsertAll(chats: List<ChatEntity>)
+
+    @Query("UPDATE chats SET serverId = :serverId WHERE id = :id")
+    suspend fun setServerId(id: String, serverId: Long): Int
+
+    @Query("UPDATE chats SET lastMessageTime = :timestamp WHERE id = :id")
+    suspend fun updateChatLastMessageTime(id: String, timestamp: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE chats SET title = :title WHERE id = :id")
+    suspend fun updateTitle(id: String, title: String): Int
+
+    @Query("DELETE FROM chats WHERE id = :id")
+    suspend fun deleteChat(id: String): Int
+
+    @Query("DELETE FROM chats WHERE serverId IS NOT NULL AND id NOT IN (:ids)")
+    suspend fun deleteSyncedChatsNotIn(ids: List<String>): Int
 
     @Query("DELETE FROM chats")
     suspend fun deleteAllChats(): Int
 
-    @Delete
-    suspend fun deleteChat(chat: ChatEntity): Int
-
-    @Query("DELETE FROM chats WHERE id = :chatId")
-    suspend fun deleteChat(chatId: Long): Int
+    @Query("SELECT * FROM chats WHERE serverId IS NULL AND createdAt < :cutoff")
+    suspend fun getUnsyncedChatsOlderThan(cutoff: Long): List<ChatEntity>
 }
 
 @Dao
 interface MessageDao {
     @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY timestamp ASC")
-    fun getMessagesForChatFlow(chatId: Long): Flow<List<MessageEntity>>
-
-    // UI-facing flow that also follows the chats.optimisticChatId link so the messages
-    // stay stable across an optimistic→server chat ID migration: when querying the
-    // optimistic ID, rows that have already been moved to the server chat are still
-    // found via the subquery, avoiding a blank emission between the DB UPDATE and the
-    // _chatId switch. Internal callers should use the strict getMessagesForChatFlow.
-    @Query("SELECT * FROM messages WHERE chatId = :chatId OR chatId IN (SELECT id FROM chats WHERE optimisticChatId = :chatId) ORDER BY timestamp ASC")
-    fun getMessagesForChatFlowResolvingMigration(chatId: Long): Flow<List<MessageEntity>>
+    fun getMessagesForChatFlow(chatId: String): Flow<List<MessageEntity>>
 
     @Query("SELECT * FROM messages WHERE id = :messageId")
     suspend fun getMessageById(messageId: Long): MessageEntity?
 
     @Query("SELECT COUNT(*) FROM messages WHERE chatId = :chatId")
-    suspend fun getMessageCountForChat(chatId: Long): Int
+    suspend fun getMessageCountForChat(chatId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity): Long
@@ -68,17 +73,14 @@ interface MessageDao {
     @Update
     suspend fun updateMessages(messages: List<MessageEntity>): Int
 
-    @Query("UPDATE messages SET chatId = :newChatId WHERE chatId = :oldChatId")
-    suspend fun migrateChatIdForMessages(oldChatId: Long, newChatId: Long): Int
-
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteMessage(messageId: Long): Int
 
     @Query("DELETE FROM messages WHERE chatId = :chatId AND requestId = :requestId AND type = 'ASSISTANT'")
-    suspend fun deleteAssistantMessageByRequestId(chatId: Long, requestId: String): Int
+    suspend fun deleteAssistantMessageByRequestId(chatId: String, requestId: String): Int
 
     @Query("DELETE FROM messages WHERE chatId = :chatId")
-    suspend fun deleteMessagesForChat(chatId: Long): Int
+    suspend fun deleteMessagesForChat(chatId: String): Int
 
     @Query("DELETE FROM messages")
     suspend fun deleteAllMessages(): Int
@@ -87,15 +89,15 @@ interface MessageDao {
     suspend fun getAllMessages(): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE chatId = :chatId AND requestId = :requestId AND type = 'USER' LIMIT 1")
-    suspend fun getUserMessageByRequestId(chatId: Long, requestId: String): MessageEntity?
-    
+    suspend fun getUserMessageByRequestId(chatId: String, requestId: String): MessageEntity?
+
     @Query("UPDATE messages SET chatId = :newChatId WHERE id = :messageId")
-    suspend fun updateMessageChatId(messageId: Long, newChatId: Long): Int
+    suspend fun updateMessageChatId(messageId: Long, newChatId: String): Int
 }
 
 @Database(
     entities = [ChatEntity::class, MessageEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class WhizDatabase : RoomDatabase() {

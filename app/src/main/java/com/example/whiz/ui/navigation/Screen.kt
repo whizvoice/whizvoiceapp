@@ -15,5 +15,10 @@ sealed class Screen(val route: String) {
             }
         }
     }
+    object Chat : Screen("chat/{chatId}") {
+        fun route(chatId: String): String = "chat/$chatId"
+
+        fun newChatRoute(): String = route(java.util.UUID.randomUUID().toString())
+    }
     object WakeWordEnrollment : Screen("wake_word_enrollment")
 }

@@ -51,6 +51,7 @@ interface ApiService {
 
     data class ConversationResponse(
         val id: Long,
+        val client_chat_id: String,
         val user_id: String,
         val title: String,
         val created_at: String,
