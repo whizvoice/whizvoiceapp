@@ -7,12 +7,17 @@ import com.example.whiz.data.auth.AuthRepository
 import com.example.whiz.data.local.ChatDao
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.local.MessageDao
+import com.example.whiz.data.local.WhizDatabase
+import com.example.whiz.data.repository.ConversationsFetchResult
+import com.example.whiz.data.repository.TransactionRunner
 import com.example.whiz.data.repository.WhizRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -44,11 +49,38 @@ class RepositorySyncTest {
     private val prefs: SharedPreferences = mock()
     private val prefsEditor: SharedPreferences.Editor = mock()
     private val authRepository: AuthRepository = mock()
+    private val database: WhizDatabase = mock()
 
     private lateinit var repository: WhizRepository
 
+    // Stands in for RoomDatabase.withTransaction (not drivable with mocked DAOs): records how
+    // many transactions were opened and whether a DAO call happens inside one.
+    private var transactionsOpened = 0
+    private var inTransaction = false
+    private val recordingRunner = object : TransactionRunner {
+        override suspend fun <R> run(block: suspend () -> R): R {
+            transactionsOpened++
+            inTransaction = true
+            try {
+                return block()
+            } finally {
+                inTransaction = false
+            }
+        }
+    }
+
     @Before
     fun setUp() {
+        // Suspend DAO methods return Object at the bytecode level, so unstubbed ones yield null
+        // even for non-null Kotlin return types; give the ones the code consumes real defaults.
+        runBlocking {
+            whenever(chatDao.getAllChatsSnapshot()).thenReturn(emptyList())
+            whenever(chatDao.deleteSyncedChatsNotIn(any())).thenReturn(0)
+            whenever(chatDao.deleteAllSyncedChats()).thenReturn(0)
+            whenever(chatDao.deleteChat(any())).thenReturn(1)
+            whenever(chatDao.updateChatLastMessageTime(any(), any())).thenReturn(1)
+            whenever(chatDao.insertIfAbsent(any())).thenReturn(1L)
+        }
         whenever(context.getSharedPreferences(any(), any())).thenReturn(prefs)
         whenever(prefs.edit()).thenReturn(prefsEditor)
         whenever(prefsEditor.putString(any(), anyOrNull())).thenReturn(prefsEditor)
@@ -63,8 +95,10 @@ class RepositorySyncTest {
             context,
             messageDao,
             chatDao,
+            database,
             Provider { authRepository }
         )
+        repository.transactionRunner = recordingRunner
     }
 
     private fun conversation(
@@ -108,9 +142,57 @@ class RepositorySyncTest {
     }
 
     @Test
+    fun syncChats_writePhaseRunsInOneTransaction() = runTest {
+        whenever(apiService.getConversationsIncremental(anyOrNull()))
+            .thenReturn(response(listOf(conversation("a", 1L))))
+        // The local snapshot feeding the max-merge and prune guard must be read inside it.
+        whenever(chatDao.getAllChatsSnapshot()).thenAnswer {
+            assertTrue("local rows read outside the transaction", inTransaction)
+            emptyList<ChatEntity>()
+        }
+        whenever(chatDao.upsertAll(any())).thenAnswer {
+            assertTrue("upsertAll outside the transaction", inTransaction)
+            Unit
+        }
+        whenever(chatDao.deleteSyncedChatsNotIn(any())).thenAnswer {
+            assertTrue("prune outside the transaction", inTransaction)
+            0
+        }
+
+        val result = repository.syncChats(forceFull = true)
+
+        assertFalse(result.isCachedData)
+        assertEquals(1, transactionsOpened)
+        verify(chatDao).getAllChatsSnapshot()
+        verify(chatDao).upsertAll(any())
+        verify(chatDao).deleteSyncedChatsNotIn(listOf("a"))
+    }
+
+    @Test
+    fun applySyncWrites_keepsRowThatGotServerIdAfterSnapshotStarted() = runTest {
+        // "late" was created locally and got its serverId (recordServerId) after the server's
+        // full list was taken, so the response omits it. The guard must keep it.
+        val requestStartedAt = 10_000L
+        whenever(chatDao.getAllChatsSnapshot()).thenReturn(
+            listOf(ChatEntity("late", 9L, "New", createdAt = requestStartedAt + 5, lastMessageTime = requestStartedAt + 5))
+        )
+        val fetch = ConversationsFetchResult(
+            conversations = listOf(conversation("a", 1L)),
+            isIncremental = false,
+            serverTimestamp = "2026-11-01T00:00:00Z",
+            isCachedData = false,
+            requestStartedAt = requestStartedAt
+        )
+
+        repository.applySyncWrites(fetch, forceFull = true)
+
+        verify(chatDao).deleteSyncedChatsNotIn(listOf("a", "late"))
+    }
+
+    @Test
     fun syncChats_keepsLaterLocalLastMessageTime() = runTest {
-        whenever(chatDao.getAllChatsFlow()).thenReturn(
-            flowOf(listOf(ChatEntity("a", 1L, "Title", createdAt = 0L, lastMessageTime = 2000L)))
+        whenever(chatDao.getAllChatsSnapshot()).thenReturn(
+            listOf(ChatEntity("a", 1L, "Title", createdAt = 0L, lastMessageTime = 2000L))
         )
         whenever(apiService.getConversationsIncremental(anyOrNull()))
             .thenReturn(response(listOf(conversation("a", 1L, lastMessageTime = "1970-01-01T00:00:01Z"))))
@@ -124,8 +206,8 @@ class RepositorySyncTest {
 
     @Test
     fun syncChats_takesServerTitle() = runTest {
-        whenever(chatDao.getAllChatsFlow()).thenReturn(
-            flowOf(listOf(ChatEntity("a", null, "Hi...", createdAt = 0L, lastMessageTime = 500L)))
+        whenever(chatDao.getAllChatsSnapshot()).thenReturn(
+            listOf(ChatEntity("a", null, "Hi...", createdAt = 0L, lastMessageTime = 500L))
         )
         whenever(apiService.getConversationsIncremental(anyOrNull()))
             .thenReturn(response(listOf(conversation("a", 1L, title = "Hi there, how are you"))))
@@ -212,17 +294,40 @@ class RepositorySyncTest {
         val order = inOrder(apiService, chatDao)
         order.verify(apiService).getConversationsIncremental(anyOrNull())
         order.verify(chatDao, atLeastOnce()).getChatById("incoming")
-        order.verify(chatDao).upsert(argThat { id == "incoming" && serverId == null && title == "Hello there" })
+        order.verify(chatDao).insertIfAbsent(argThat { id == "incoming" && serverId == null && title == "Hello there" })
+    }
+
+    @Test
+    fun createChatLocal_existingRow_makesNoFurtherWrites() = runTest {
+        // A sync wrote the row first: INSERT OR IGNORE returns -1 and nothing overwrites it.
+        whenever(chatDao.insertIfAbsent(any())).thenReturn(-1L)
+
+        repository.createChatLocal("synced", "Hello")
+
+        verify(chatDao).insertIfAbsent(argThat { id == "synced" && serverId == null })
+        verify(chatDao, never()).upsert(any())
+        verify(chatDao, never()).upsertAll(any())
+        verify(chatDao, never()).updateTitle(any(), any())
+        verify(chatDao, never()).setServerId(any(), any())
     }
 
     @Test
     fun addUserMessageOptimistic_bumpsLastMessageTime() = runTest {
         whenever(messageDao.getMessagesForChatFlow("c")).thenReturn(flowOf(emptyList()))
-        whenever(messageDao.insertMessage(any())).thenReturn(7L)
+        whenever(messageDao.insertMessage(any())).thenAnswer {
+            assertTrue("message insert outside the transaction", inTransaction)
+            7L
+        }
+        whenever(chatDao.updateChatLastMessageTime(any(), any())).thenAnswer {
+            assertTrue("lastMessageTime bump outside the transaction", inTransaction)
+            1
+        }
 
         val id = repository.addUserMessageOptimistic("c", "hi", "req-1", 5000L)
 
         assertEquals(7L, id)
+        assertEquals(1, transactionsOpened)
+        // The DAO's UPDATE takes MAX(lastMessageTime, :timestamp), so this never lowers it.
         verify(chatDao).updateChatLastMessageTime("c", 5000L)
     }
 }

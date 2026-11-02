@@ -5,6 +5,8 @@ import android.util.Log
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.data.local.MessageEntity
 import com.example.whiz.data.local.MessageType
+import com.example.whiz.data.local.WhizDatabase
+import androidx.room.withTransaction
 import com.example.whiz.data.local.toChatEntity
 import com.example.whiz.data.local.toMessageEntity
 import com.example.whiz.data.local.parseTimestampToMillis
@@ -41,12 +43,19 @@ class WhizRepository @Inject constructor(
     private val context: Context,
     private val messageDao: com.example.whiz.data.local.MessageDao,
     private val chatDao: com.example.whiz.data.local.ChatDao,
+    private val database: WhizDatabase,
     // Provider to mirror TokenAuthenticator's pattern and avoid DI cycles via OkHttp
     private val authRepositoryProvider: javax.inject.Provider<com.example.whiz.data.auth.AuthRepository>
 ) {
     private val TAG = "WhizRepository"
 
     private val syncPrefs = context.getSharedPreferences("sync_metadata", Context.MODE_PRIVATE)
+
+    // Runs a block as one Room transaction. A seam so unit tests (which mock the DAOs and can't
+    // drive RoomDatabase.withTransaction) can observe the transaction boundary.
+    internal var transactionRunner: TransactionRunner = object : TransactionRunner {
+        override suspend fun <R> run(block: suspend () -> R): R = database.withTransaction(block)
+    }
 
     // Track ongoing API requests to prevent duplicates
     private val ongoingMessageRequests = ConcurrentHashMap<String, Deferred<List<MessageEntity>>>()
@@ -105,43 +114,7 @@ class WhizRepository @Inject constructor(
                 return SyncResult(chatDao.getAllChatsFlow().first(), isCachedData = true)
             }
 
-            val (tombstones, live) = fetch.conversations.partition { it.deleted_at != null }
-
-            tombstones.forEach { chatDao.deleteChat(it.client_chat_id) }
-            if (tombstones.isNotEmpty()) {
-                Log.d(TAG, "syncChats: deleted ${tombstones.size} tombstoned chats")
-            }
-
-            val localById = chatDao.getAllChatsFlow().first().associateBy { it.id }
-            val merged = live.map { conversation ->
-                val server = conversation.toChatEntity()
-                val local = localById[server.id]
-                if (local == null) {
-                    server
-                } else {
-                    server.copy(lastMessageTime = maxOf(local.lastMessageTime, server.lastMessageTime))
-                }
-            }
-            if (merged.isNotEmpty()) {
-                chatDao.upsertAll(merged)
-            }
-            Log.d(TAG, "syncChats: upserted ${merged.size} chats (forceFull=$forceFull, incremental=${fetch.isIncremental})")
-
-            if (forceFull && !fetch.isIncremental) {
-                // The server's list is a snapshot taken when the request started. Keep rows
-                // created or written to locally since then: their server row may postdate it.
-                val recentLocalIds = localById.values
-                    .filter { maxOf(it.createdAt, it.lastMessageTime) >= fetch.requestStartedAt }
-                    .map { it.id }
-                val keepIds = (merged.map { it.id } + recentLocalIds).distinct()
-                val pruned = if (keepIds.isEmpty()) {
-                    // NOT IN () would match every synced row; say so explicitly instead.
-                    chatDao.deleteAllSyncedChats()
-                } else {
-                    chatDao.deleteSyncedChatsNotIn(keepIds)
-                }
-                Log.d(TAG, "syncChats: full sync pruned $pruned synced chats not returned by server")
-            }
+            transactionRunner.run { applySyncWrites(fetch, forceFull) }
 
             return SyncResult(chatDao.getAllChatsFlow().first(), isCachedData = false)
         } catch (e: Exception) {
@@ -157,6 +130,51 @@ class WhizRepository @Inject constructor(
         }
     }
 
+    /**
+     * The Room write phase of [syncChats]. Callers run it inside [transactionRunner] so the local
+     * rows it reads (for the lastMessageTime max-merge and the prune guard) cannot change before
+     * its writes land.
+     */
+    internal suspend fun applySyncWrites(fetch: ConversationsFetchResult, forceFull: Boolean) {
+        val (tombstones, live) = fetch.conversations.partition { it.deleted_at != null }
+
+        tombstones.forEach { chatDao.deleteChat(it.client_chat_id) }
+        if (tombstones.isNotEmpty()) {
+            Log.d(TAG, "syncChats: deleted ${tombstones.size} tombstoned chats")
+        }
+
+        val localById = chatDao.getAllChatsSnapshot().associateBy { it.id }
+        val merged = live.map { conversation ->
+            val server = conversation.toChatEntity()
+            val local = localById[server.id]
+            if (local == null) {
+                server
+            } else {
+                server.copy(lastMessageTime = maxOf(local.lastMessageTime, server.lastMessageTime))
+            }
+        }
+        if (merged.isNotEmpty()) {
+            chatDao.upsertAll(merged)
+        }
+        Log.d(TAG, "syncChats: upserted ${merged.size} chats (forceFull=$forceFull, incremental=${fetch.isIncremental})")
+
+        if (forceFull && !fetch.isIncremental) {
+            // The server's list is a snapshot taken when the request started. Keep rows
+            // created or written to locally since then: their server row may postdate it.
+            val recentLocalIds = localById.values
+                .filter { maxOf(it.createdAt, it.lastMessageTime) >= fetch.requestStartedAt }
+                .map { it.id }
+            val keepIds = (merged.map { it.id } + recentLocalIds).distinct()
+            val pruned = if (keepIds.isEmpty()) {
+                // NOT IN () would match every synced row; say so explicitly instead.
+                chatDao.deleteAllSyncedChats()
+            } else {
+                chatDao.deleteSyncedChatsNotIn(keepIds)
+            }
+            Log.d(TAG, "syncChats: full sync pruned $pruned synced chats not returned by server")
+        }
+    }
+
     // Force a complete refresh by clearing sync timestamps
     suspend fun forceFullRefresh() {
         Log.d(TAG, "forceFullRefresh: clearing all sync timestamps")
@@ -166,12 +184,9 @@ class WhizRepository @Inject constructor(
 
     /** Create a chat row locally (no REST call); the server row is created on first send. */
     suspend fun createChatLocal(id: String, title: String) {
-        if (chatDao.getChatById(id) != null) {
-            Log.d(TAG, "createChatLocal: chat $id already exists, leaving it as is")
-            return
-        }
         val now = System.currentTimeMillis()
-        chatDao.upsert(
+        // INSERT OR IGNORE: if a sync wrote this row first, keep it (and its serverId) untouched.
+        val rowId = chatDao.insertIfAbsent(
             ChatEntity(
                 id = id,
                 serverId = null,
@@ -180,7 +195,11 @@ class WhizRepository @Inject constructor(
                 lastMessageTime = now
             )
         )
-        Log.d(TAG, "createChatLocal: created chat $id with title '$title'")
+        if (rowId == -1L) {
+            Log.d(TAG, "createChatLocal: chat $id already exists, leaving it as is")
+        } else {
+            Log.d(TAG, "createChatLocal: created chat $id with title '$title'")
+        }
     }
 
     /**
@@ -352,8 +371,7 @@ class WhizRepository @Inject constructor(
                 requestId = requestId // Store requestId for pairing with response
             )
 
-            val messageId = messageDao.insertMessage(messageEntity)
-            chatDao.updateChatLastMessageTime(chatId, messageTimestamp)
+            val messageId = insertMessageAndBumpChat(messageEntity)
             Log.d(TAG, "addUserMessageOptimistic: added optimistic message $messageId to chat $chatId with requestId: $requestId")
             messageId
         } catch (e: Exception) {
@@ -403,8 +421,7 @@ class WhizRepository @Inject constructor(
                 requestId = requestId // Store requestId for pairing with user message
             )
 
-            val messageId = messageDao.insertMessage(messageEntity)
-            chatDao.updateChatLastMessageTime(chatId, messageTimestamp)
+            val messageId = insertMessageAndBumpChat(messageEntity)
             Log.d(TAG, "addAssistantMessageOptimistic: added optimistic assistant message $messageId to chat $chatId with requestId: $requestId")
             messageId
         } catch (e: Exception) {
@@ -442,8 +459,7 @@ class WhizRepository @Inject constructor(
                     requestId = requestId // Link to the user message
                 )
 
-                val messageId = messageDao.insertMessage(assistantMessage)
-                chatDao.updateChatLastMessageTime(chatId, assistantTimestamp)
+                val messageId = insertMessageAndBumpChat(assistantMessage)
                 Log.d(TAG, "addAssistantMessageAfterRequest: added assistant message $messageId after user message ${userMessage.id}")
                 messageId
             } else {
@@ -456,6 +472,14 @@ class WhizRepository @Inject constructor(
             -1
         }
     }
+
+    // Insert a message and bump its chat's lastMessageTime (never lowered) as one transaction.
+    private suspend fun insertMessageAndBumpChat(message: MessageEntity): Long =
+        transactionRunner.run {
+            val messageId = messageDao.insertMessage(message)
+            chatDao.updateChatLastMessageTime(message.chatId, message.timestamp)
+            messageId
+        }
 
     /**
      * Delete assistant message by request ID.
@@ -988,9 +1012,13 @@ data class SyncResult(
     val isCachedData: Boolean
 )
 
+internal interface TransactionRunner {
+    suspend fun <R> run(block: suspend () -> R): R
+}
+
 // Raw server conversations from one fetch (tombstones included). requestStartedAt bounds the
 // server snapshot so a full-sync prune can spare rows created locally after it.
-private data class ConversationsFetchResult(
+internal data class ConversationsFetchResult(
     val conversations: List<ApiService.ConversationResponse>,
     val isIncremental: Boolean,
     val serverTimestamp: String?,

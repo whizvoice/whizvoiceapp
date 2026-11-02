@@ -16,8 +16,16 @@ interface ChatDao {
     @Query("SELECT * FROM chats ORDER BY lastMessageTime DESC")
     fun getAllChatsFlow(): Flow<List<ChatEntity>>
 
+    // One-shot read for use inside a transaction (a Flow query would run outside it).
+    @Query("SELECT * FROM chats")
+    suspend fun getAllChatsSnapshot(): List<ChatEntity>
+
     @Query("SELECT * FROM chats WHERE id = :id")
     suspend fun getChatById(id: String): ChatEntity?
+
+    // Returns -1 when a row with this id already exists (it is left untouched).
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(chat: ChatEntity): Long
 
     @Query("SELECT * FROM chats WHERE serverId = :serverId")
     suspend fun getChatByServerId(serverId: Long): ChatEntity?
@@ -31,7 +39,8 @@ interface ChatDao {
     @Query("UPDATE chats SET serverId = :serverId WHERE id = :id")
     suspend fun setServerId(id: String, serverId: Long): Int
 
-    @Query("UPDATE chats SET lastMessageTime = :timestamp WHERE id = :id")
+    // Never moves lastMessageTime backwards.
+    @Query("UPDATE chats SET lastMessageTime = MAX(lastMessageTime, :timestamp) WHERE id = :id")
     suspend fun updateChatLastMessageTime(id: String, timestamp: Long = System.currentTimeMillis()): Int
 
     @Query("UPDATE chats SET title = :title WHERE id = :id")

@@ -109,6 +109,7 @@ private fun sanitizeChatTitle(title: String): String {
 fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
     return ApiService.ConversationCreate(
         title = this.title,
+        client_chat_id = this.id,
         source = "app"
     )
 }
