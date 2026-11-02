@@ -280,7 +280,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val currentChats = repository.listChats()
+                            val currentChats = repository.observeChats().first()
                             val newChats = currentChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id)
                             }
@@ -1111,7 +1111,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 try {
                     withTimeout(5000) {
                         while (true) {
-                            val currentChats = repository.listChats()
+                            val currentChats = repository.observeChats().first()
                             val newChats = currentChats.filter { chat ->
                                 !initialChats.map { it.id }.contains(chat.id)
                             }

@@ -96,6 +96,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     private val createdChatIds = mutableListOf<String>()
     
     // track optimistic chat migration
+    // Chat ids present before the test created anything; used to avoid matching older chats
+    private var initialChatIdSnapshot: Set<String> = emptySet()
     private var optimisticChatId: String? = null
     private var finalServerChatId: String? = null
 
@@ -165,7 +167,8 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
             }
-            
+            initialChatIdSnapshot = initialChats.map { it.id }.toSet()
+
             if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                 // if we're already in a chat, navigate back to chats list first, then create new chat
                 Log.d(TAG, "🔄 currently in chat screen, going back to chats list first")
@@ -202,12 +205,12 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // First verify chat ID is initially -1 for new chat (before any messages)
             val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
             val initialChatId = chatViewModel.chatId.value
-            if (initialChatId.isBlank()) {
-                Log.e(TAG, "❌ FAILURE: New chat should have a client-minted ID but has: '$initialChatId'")
-                failWithScreenshot("new_chat_wrong_initial_id", "New chat should have a client-minted ID but has: '$initialChatId'")
+            if (repository.getChatById(initialChatId) != null) {
+                Log.e(TAG, "❌ FAILURE: New chat $initialChatId should have no row yet")
+                failWithScreenshot("new_chat_row_exists", "New chat $initialChatId should have no row before the first message")
                 return@runBlocking
             } else {
-                Log.d(TAG, "✅ Confirmed: New chat has client-minted ID $initialChatId")
+                Log.d(TAG, "✅ Confirmed: New chat $initialChatId has no row yet")
             }
             
             optimisticChatId = getCurrentOptimisticChatId()
@@ -649,10 +652,11 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private suspend fun getCurrentOptimisticChatId(): String? {
         return try {
-            val allChats = repository.listChats()
-            // Look for the chat (client-minted id) that contains our test identifier
+            val allChats = repository.observeChats().first()
+            // Look for a chat created by this test (not in the initial snapshot) with our test text
             val optimisticChat = allChats.find { chat ->
-                chat.title.contains("test message 1") || chat.title.contains("Hello")
+                chat.id !in initialChatIdSnapshot &&
+                    (chat.title.contains("test message 1") || chat.title.contains("Hello"))
             }
             optimisticChat?.id
         } catch (e: Exception) {
@@ -666,9 +670,11 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private suspend fun checkChatMigration(): Boolean {
         return try {
-            val allChats = repository.listChats()
+            // No sync here: serverId must come from the app's own flow, not from this check
+            val allChats = repository.observeChats().first()
             val testChat = allChats.find { chat ->
-                chat.title.contains("test message 1") || chat.title.contains("Hello")
+                chat.id !in initialChatIdSnapshot &&
+                    (chat.title.contains("test message 1") || chat.title.contains("Hello"))
             }
             
             if (testChat == null) {

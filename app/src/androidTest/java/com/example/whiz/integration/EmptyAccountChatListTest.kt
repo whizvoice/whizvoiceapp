@@ -52,6 +52,7 @@ class EmptyAccountChatListTest : BaseIntegrationTest() {
         // Make the account empty
         runBlocking {
             repository.listChats().forEach { repository.deleteChatById(it.id) }
+            assertTrue("test account must be empty", repository.listChats().isEmpty())
         }
         device.pressHome()
         Thread.sleep(1000)
