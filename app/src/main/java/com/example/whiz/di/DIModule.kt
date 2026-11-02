@@ -145,9 +145,10 @@ object AppModule {
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
         authRepository: AuthRepository,
-        connectionStateManager: ConnectionStateManager
+        connectionStateManager: ConnectionStateManager,
+        repository: WhizRepository
     ): WhizServerRepository {
-        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager)
+        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager, repository)
     }
     
     @Provides
