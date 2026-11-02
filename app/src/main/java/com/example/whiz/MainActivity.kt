@@ -574,13 +574,21 @@ class MainActivity : ComponentActivity() {
                 // passes but the keyguard stays at "swipe up to open", and injects that swipe via
                 // the accessibility service. Whichever side finishes first cancels the other.
                 faceSwipeJob?.cancel()
+                val promptStartedAt = android.os.SystemClock.elapsedRealtime()
                 val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
                     override fun onDismissSucceeded() {
+                        Log.i(TAG, "Keyguard dismiss succeeded after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (system finished the unlock)")
                         faceSwipeJob?.cancel()
                         releaseUnlockWakeLock()
                         succeedOnce()
                     }
+                    override fun onDismissError() {
+                        // Not a terminal outcome for the parked tool (a later unlock still resumes
+                        // it), but it means the dismiss request never showed a prompt at all.
+                        Log.w(TAG, "Keyguard dismiss request returned error after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked})")
+                    }
                     override fun onDismissCancelled() {
+                        Log.i(TAG, "Keyguard dismiss cancelled after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked})")
                         faceSwipeJob?.cancel()
                         releaseUnlockWakeLock()
                         // Single prompt cancelled — restore showWhenLocked so the activity stays
@@ -592,7 +600,7 @@ class MainActivity : ComponentActivity() {
                 km.requestDismissKeyguard(this, dismissCallback)
                 faceSwipeJob = lifecycleScope.launch {
                     val result = tryFaceUnlockSwipe(km)
-                    Log.i(TAG, "Face-unlock swipe watcher result: $result")
+                    Log.i(TAG, "Face-unlock swipe watcher result: $result (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked}, accessibilityConnected=${WhizAccessibilityService.isServiceConnected()})")
                     if (result == FaceUnlockSwiper.Result.DISMISSED) {
                         // Our swipe finished the unlock. The pending dismiss callback may also fire;
                         // onSuccess is idempotent on the parked tool (continuation isActive guard).
@@ -1370,11 +1378,16 @@ class MainActivity : ComponentActivity() {
             Log.i(TAG, "Accessibility service not bound - skipping face-unlock swipe")
             return FaceUnlockSwiper.Result.FACE_NOT_PASSED
         }
-        return FaceUnlockSwiper(
+        val result = FaceUnlockSwiper(
             isKeyguardLocked = { km.isKeyguardLocked },
             isDeviceLocked = { km.isDeviceLocked },
             swipeUp = { service.performUnlockSwipe() }
         ).attempt()
+        if (result == FaceUnlockSwiper.Result.SWIPE_FAILED) {
+            // Pair with the "Keyguard before unlock swipe" line to see what the swipe changed.
+            Log.w(TAG, "Keyguard after failed unlock swipe: ${service.describeKeyguardWindows()}")
+        }
+        return result
     }
 
     private fun releaseUnlockWakeLock() {

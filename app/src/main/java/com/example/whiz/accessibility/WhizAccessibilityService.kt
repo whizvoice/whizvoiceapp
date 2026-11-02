@@ -37,6 +37,13 @@ class WhizAccessibilityService : AccessibilityService() {
 
     companion object {
         const val ACTION_DUMP_UI = "com.example.whiz.DUMP_UI"
+        // View-id fragments present only while the keyguard bouncer (PIN / password / pattern
+        // entry) is showing. Used by describeKeyguardWindows().
+        private val BOUNCER_ID_MARKERS = listOf(
+            "pinEntry", "passwordEntry", "lockPatternView", "keyguard_bouncer", "bouncer",
+            "key_enter", "delete_button", "keyguard_pin_view", "keyguard_password_view",
+            "keyguard_pattern_view",
+        )
         @Volatile
         private var instance: WhizAccessibilityService? = null
 
@@ -505,8 +512,44 @@ class WhizAccessibilityService : AccessibilityService() {
         val x = bounds.width() / 2f
         val startY = bounds.height() * 0.74f
         val endY = bounds.height() * 0.30f
+        Log.i(TAG, "Keyguard before unlock swipe: ${describeKeyguardWindows()}")
         Log.i(TAG, "Dispatching keyguard unlock swipe from ($x, $startY) to ($x, $endY)")
         return performScrollGesture(x, startY, x, endY, duration = 250)
+    }
+
+    /**
+     * One-line summary of the SystemUI windows currently on screen, for diagnosing why an unlock
+     * swipe did not dismiss the keyguard (bug reports 1745/1746). The lock screen and the PIN
+     * bouncer share one SystemUI window, so the window list alone cannot tell them apart; we also
+     * scan each SystemUI root for credential-entry view ids, which only exist while the bouncer is
+     * up. Bug-report logcat is Whiz-only, so this is the only record of the keyguard's state.
+     */
+    fun describeKeyguardWindows(): String {
+        return try {
+            val all = windows ?: return "windows=null"
+            val parts = all.filter { it.root?.packageName?.toString() == "com.android.systemui" }
+                .map { w ->
+                    val root = w.root
+                    val ids = mutableSetOf<String>()
+                    if (root != null) collectBouncerIds(root, ids, 0)
+                    "{type=${w.type} layer=${w.layer} title=\"${w.title}\" bouncerIds=$ids}"
+                }
+            "systemuiWindows=${parts.size} $parts"
+        } catch (e: Exception) {
+            "error: ${e.message}"
+        }
+    }
+
+    private fun collectBouncerIds(node: AccessibilityNodeInfo, out: MutableSet<String>, depth: Int) {
+        if (depth > 25) return
+        node.viewIdResourceName?.let { id ->
+            val short = id.substringAfter(":id/")
+            if (BOUNCER_ID_MARKERS.any { short.contains(it, ignoreCase = true) }) out.add(short)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectBouncerIds(child, out, depth + 1)
+        }
     }
 
     /**
