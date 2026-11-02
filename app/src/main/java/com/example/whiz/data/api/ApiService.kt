@@ -40,6 +40,7 @@ interface ApiService {
     // ========== CONVERSATION API MODELS ==========
     data class ConversationCreate(
         val title: String,
+        val client_chat_id: String,
         val source: String = "app",
         val google_session_id: String? = null,
         val optimistic_chat_id: String? = null
@@ -58,8 +59,7 @@ interface ApiService {
         val last_message_time: String,
         val source: String,
         val google_session_id: String? = null,
-        val deleted_at: String? = null,
-        val optimistic_chat_id: String? = null
+        val deleted_at: String? = null
     )
 
     data class MessageCreate(
@@ -124,24 +124,24 @@ interface ApiService {
     suspend fun createConversation(@Body request: ConversationCreate): ConversationResponse
 
     @GET("/api/conversations/{id}")
-    suspend fun getConversation(@Path("id") id: Long): ConversationResponse
+    suspend fun getConversation(@Path("id") id: String): ConversationResponse
 
     @PUT("/api/conversations/{id}")
-    suspend fun updateConversation(@Path("id") id: Long, @Body request: ConversationUpdate): ConversationResponse
+    suspend fun updateConversation(@Path("id") id: String, @Body request: ConversationUpdate): ConversationResponse
 
     @DELETE("/api/conversations")
     suspend fun deleteAllConversations(): Map<String, String>
 
     @DELETE("/api/conversations/{id}")
-    suspend fun deleteConversation(@Path("id") id: Long): Map<String, String>
+    suspend fun deleteConversation(@Path("id") id: String): Map<String, String>
 
     @PUT("/api/conversations/{id}/last_message_time")
-    suspend fun updateConversationLastMessageTime(@Path("id") id: Long): Map<String, String>
+    suspend fun updateConversationLastMessageTime(@Path("id") id: String): Map<String, String>
 
     // ========== MESSAGE ENDPOINTS ==========
     @GET("/api/conversations/{id}/messages")
     suspend fun getMessagesIncremental(
-        @Path("id") conversationId: Long,
+        @Path("id") conversationId: String,
         @Query("since") since: String? = null,
         @Query("limit") limit: Int = 100
     ): MessagesResponse
@@ -150,7 +150,7 @@ interface ApiService {
     suspend fun createMessage(@Body request: MessageCreate): MessageResponse
 
     @GET("/api/conversations/{id}/messages/count")
-    suspend fun getMessageCount(@Path("id") conversationId: Long): MessageCountResponse
+    suspend fun getMessageCount(@Path("id") conversationId: String): MessageCountResponse
 
     // ========== USER PREFERENCE ENDPOINTS ==========
     @GET("/api/user/preference")
@@ -192,7 +192,7 @@ interface ApiService {
     )
 
     @GET("/api/conversations/{id}/pending-requests")
-    suspend fun getPendingRequests(@Path("id") conversationId: Long): PendingRequestsResponse
+    suspend fun getPendingRequests(@Path("id") conversationId: String): PendingRequestsResponse
 
     // ========== UI DUMP ENDPOINTS ==========
     data class UiDumpCreate(
