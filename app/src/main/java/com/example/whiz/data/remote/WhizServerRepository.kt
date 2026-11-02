@@ -33,10 +33,10 @@ import kotlinx.coroutines.CancellationException
 
 sealed class WebSocketEvent {
     data class Message(
-        val text: String,
-        val requestId: String? = null,
-        val conversationId: Long? = null,
-        val clientConversationId: Long? = null,
+        val content: String,
+        val requestId: String?,
+        val chatId: String,  // the reply's client_chat_id
+        val conversationId: Long? = null,  // server integer id, diagnostics only
         val serverTimestamp: String? = null  // Authoritative timestamp from server; client adopts it instead of recomputing +1ms
     ) : WebSocketEvent()
     data class ToolExecution(
