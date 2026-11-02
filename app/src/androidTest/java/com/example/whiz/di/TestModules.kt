@@ -93,11 +93,10 @@ object TestAppModule {
         @ApplicationContext context: Context,
         messageDao: MessageDao,
         chatDao: ChatDao,
-        connectionStateManager: ConnectionStateManager,
         authRepositoryProvider: Provider<AuthRepository>
     ): WhizRepository {
         Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService and database DAOs")
-        return WhizRepository(apiService, context, messageDao, chatDao, connectionStateManager, authRepositoryProvider)
+        return WhizRepository(apiService, context, messageDao, chatDao, authRepositoryProvider)
     }
 
     @Provides

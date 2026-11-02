@@ -43,6 +43,11 @@ interface ChatDao {
     @Query("DELETE FROM chats WHERE serverId IS NOT NULL AND id NOT IN (:ids)")
     suspend fun deleteSyncedChatsNotIn(ids: List<String>): Int
 
+    // For a full sync that returned zero chats: deleteSyncedChatsNotIn(emptyList()) would expand
+    // to NOT IN (), so the empty case gets its own query. Unsynced (serverId IS NULL) rows survive.
+    @Query("DELETE FROM chats WHERE serverId IS NOT NULL")
+    suspend fun deleteAllSyncedChats(): Int
+
     @Query("DELETE FROM chats")
     suspend fun deleteAllChats(): Int
 

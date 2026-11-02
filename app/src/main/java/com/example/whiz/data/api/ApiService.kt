@@ -42,8 +42,7 @@ interface ApiService {
         val title: String,
         val client_chat_id: String,
         val source: String = "app",
-        val google_session_id: String? = null,
-        val optimistic_chat_id: String? = null
+        val google_session_id: String? = null
     )
 
     data class ConversationUpdate(

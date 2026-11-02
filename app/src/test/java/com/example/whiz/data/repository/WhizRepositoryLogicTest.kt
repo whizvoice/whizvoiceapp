@@ -112,7 +112,7 @@ class WhizRepositoryLogicTest {
     fun dataValidation_rejectsCorruptedData() {
         // Test validation of data integrity
         val validChat = ChatEntity(
-            id = 1,
+            id = "chat-1",
             title = "Valid Chat",
             createdAt = System.currentTimeMillis(),
             lastMessageTime = System.currentTimeMillis()
@@ -121,7 +121,7 @@ class WhizRepositoryLogicTest {
         assertTrue("Valid chat should pass validation", isValidChatData(validChat))
         
         val invalidChats = listOf(
-            validChat.copy(id = 0), // Invalid ID
+            validChat.copy(id = ""), // Invalid ID
             validChat.copy(title = ""), // Empty title
             validChat.copy(createdAt = -1), // Invalid timestamp
             validChat.copy(lastMessageTime = 0) // Invalid last message time
@@ -138,11 +138,11 @@ class WhizRepositoryLogicTest {
         // Test business logic for handling API edge cases
         val edgeCaseResponses = listOf(
             // Empty title
-            ApiService.ConversationResponse(1, "user", "", "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app"),
-            // Very long title  
-            ApiService.ConversationResponse(2, "user", "x".repeat(500), "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app"),
+            ApiService.ConversationResponse(1, "chat-1", "user", "", "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app"),
+            // Very long title
+            ApiService.ConversationResponse(2, "chat-2", "user", "x".repeat(500), "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app"),
             // Special characters in title
-            ApiService.ConversationResponse(3, "user", "Title with émojis 🎉", "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app")
+            ApiService.ConversationResponse(3, "chat-3", "user", "Title with émojis 🎉", "2023-01-01T00:00:00Z", "2023-01-01T00:00:00Z", "app")
         )
         
         edgeCaseResponses.forEach { response ->
@@ -182,7 +182,7 @@ class WhizRepositoryLogicTest {
     }
 
     private fun isValidChatData(chat: ChatEntity): Boolean {
-        return chat.id > 0 && 
+        return chat.id.isNotBlank() &&
                chat.title.isNotBlank() && 
                chat.createdAt > 0 && 
                chat.lastMessageTime > 0  // Changed from >= 0 to > 0 for stricter validation
@@ -190,7 +190,7 @@ class WhizRepositoryLogicTest {
 
     private fun createTestMessage(
         id: Long = 1,
-        chatId: Long = 1,
+        chatId: String = "chat-1",
         content: String = "Test message",
         type: MessageType = MessageType.USER,
         timestamp: Long = System.currentTimeMillis()

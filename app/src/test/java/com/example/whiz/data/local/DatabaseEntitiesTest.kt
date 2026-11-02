@@ -12,6 +12,7 @@ class DatabaseEntitiesTest {
         // Given
         val apiConversation = ApiService.ConversationResponse(
             id = TestData.TEST_CONVERSATION_ID,
+            client_chat_id = TestData.TEST_CLIENT_CHAT_ID,
             user_id = "test_user",
             title = TestData.TEST_CONVERSATION_TITLE,
             created_at = "2023-12-15T10:30:00Z",
@@ -23,7 +24,8 @@ class DatabaseEntitiesTest {
         val chatEntity = apiConversation.toChatEntity()
 
         // Then
-        assertThat(chatEntity.id).isEqualTo(TestData.TEST_CONVERSATION_ID)
+        assertThat(chatEntity.id).isEqualTo(TestData.TEST_CLIENT_CHAT_ID)
+        assertThat(chatEntity.serverId).isEqualTo(TestData.TEST_CONVERSATION_ID)
         assertThat(chatEntity.title).isEqualTo(TestData.TEST_CONVERSATION_TITLE)
     }
 
@@ -39,11 +41,11 @@ class DatabaseEntitiesTest {
         )
 
         // When
-        val messageEntity = apiMessage.toMessageEntity()
+        val messageEntity = apiMessage.toMessageEntity(TestData.TEST_CLIENT_CHAT_ID)
 
         // Then
         assertThat(messageEntity.id).isEqualTo(0L)  // We now auto-generate IDs, not using server IDs
-        assertThat(messageEntity.chatId).isEqualTo(TestData.TEST_CONVERSATION_ID)
+        assertThat(messageEntity.chatId).isEqualTo(TestData.TEST_CLIENT_CHAT_ID)
         assertThat(messageEntity.content).isEqualTo(TestData.TEST_MESSAGE_CONTENT)
         assertThat(messageEntity.type).isEqualTo(MessageType.USER)
     }
@@ -60,7 +62,7 @@ class DatabaseEntitiesTest {
         )
 
         // When
-        val messageEntity = apiMessage.toMessageEntity()
+        val messageEntity = apiMessage.toMessageEntity(TestData.TEST_CLIENT_CHAT_ID)
 
         // Then
         assertThat(messageEntity.type).isEqualTo(MessageType.ASSISTANT)
@@ -70,7 +72,7 @@ class DatabaseEntitiesTest {
     fun `ChatEntity should convert to ConversationCreate correctly`() {
         // Given
         val chatEntity = ChatEntity(
-            id = TestData.TEST_CONVERSATION_ID,
+            id = TestData.TEST_CLIENT_CHAT_ID,
             title = TestData.TEST_CONVERSATION_TITLE,
             lastMessageTime = 123456789L
         )
@@ -81,26 +83,7 @@ class DatabaseEntitiesTest {
         // Then
         assertThat(conversationCreate.title).isEqualTo(TestData.TEST_CONVERSATION_TITLE)
         assertThat(conversationCreate.source).isEqualTo("app")
-    }
-
-    @Test
-    fun `MessageEntity should convert to MessageCreate correctly`() {
-        // Given
-        val messageEntity = MessageEntity(
-            id = 1L,
-            chatId = TestData.TEST_CONVERSATION_ID,
-            content = TestData.TEST_MESSAGE_CONTENT,
-            type = MessageType.USER,
-            timestamp = 123456789L
-        )
-
-        // When
-        val messageCreate = messageEntity.toMessageCreate()
-
-        // Then
-        assertThat(messageCreate.content).isEqualTo(TestData.TEST_MESSAGE_CONTENT)
-        assertThat(messageCreate.message_type).isEqualTo("USER")
-        assertThat(messageCreate.conversation_id).isEqualTo(TestData.TEST_CONVERSATION_ID)
+        assertThat(conversationCreate.client_chat_id).isEqualTo(TestData.TEST_CLIENT_CHAT_ID)
     }
 
 } 
