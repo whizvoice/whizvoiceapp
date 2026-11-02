@@ -133,7 +133,14 @@ class ChatViewModel @Inject constructor(
     // owner), so the Activity's SavedStateHandle normally carries no "chatId"; in that case start
     // on a freshly minted id (an empty chat with no row) until loadChat() sets the screen's chat.
     private val _chatId = MutableStateFlow<String>(
-        savedStateHandle.get<String>("chatId") ?: UUID.randomUUID().toString()
+        // Fall back to the last active conversation before minting: VoiceManager.transcriptionFlow
+        // replays (replay = 1), so after an Activity recreation mid-utterance (bubble <-> main)
+        // the replayed transcription is sent before loadChat() runs. A random id would create a
+        // ghost chat and steal the sentence. Must be evaluated before the init block that pushes
+        // _chatId into setActiveConversation, or it would read back its own fresh UUID.
+        savedStateHandle.get<String>("chatId")
+            ?: connectionStateManager.getLastActiveConversationId()
+            ?: UUID.randomUUID().toString()
     )
     val chatId: StateFlow<String> = _chatId.asStateFlow()
 

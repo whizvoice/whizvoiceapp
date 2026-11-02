@@ -275,13 +275,31 @@ class RepositorySyncTest {
     }
 
     @Test
-    fun deleteChat_withoutServerId_skipsRest() = runTest {
+    fun deleteChat_alwaysCallsRestByClientId_404IsSuccess() = runTest {
         whenever(chatDao.getChatById("local")).thenReturn(ChatEntity("local", null, "Draft"))
+        val notFound = retrofit2.HttpException(
+            retrofit2.Response.error<Any>(
+                404,
+                okhttp3.ResponseBody.create(null, "")
+            )
+        )
+        whenever(apiService.deleteConversation("local")).thenAnswer { throw notFound }
 
         repository.deleteChat("local")
 
-        verify(apiService, never()).deleteConversation(any())
+        verify(apiService).deleteConversation("local")
         verify(chatDao).deleteChat("local")
+    }
+
+    @Test
+    fun deleteChat_restFailure_keepsLocalRow() = runTest {
+        whenever(chatDao.getChatById("local")).thenReturn(ChatEntity("local", 7L, "Draft"))
+        whenever(apiService.deleteConversation("local")).thenAnswer { throw java.io.IOException("offline") }
+
+        repository.deleteChat("local")
+
+        verify(apiService).deleteConversation("local")
+        verify(chatDao, never()).deleteChat(any())
     }
 
     @Test

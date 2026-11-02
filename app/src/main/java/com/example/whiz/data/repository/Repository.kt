@@ -251,17 +251,14 @@ class WhizRepository @Inject constructor(
      */
     suspend fun deleteChat(chatId: String) {
         try {
-            val chat = chatDao.getChatById(chatId)
-            if (chat?.serverId != null) {
-                try {
-                    Log.d(TAG, "deleteChat: deleting chat $chatId (server id ${chat.serverId}) via API")
-                    apiService.deleteConversation(chatId)
-                } catch (e: retrofit2.HttpException) {
-                    if (e.code() != 404) throw e
-                    Log.d(TAG, "deleteChat: chat $chatId already gone on server (404)")
-                }
-            } else {
-                Log.d(TAG, "deleteChat: chat $chatId has no server id, deleting locally only")
+            // Always ask the server (it resolves the client UUID): a chat can exist server-side
+            // even if we never recorded a serverId, and would otherwise return on the next sync.
+            try {
+                Log.d(TAG, "deleteChat: deleting chat $chatId via API")
+                apiService.deleteConversation(chatId)
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() != 404) throw e
+                Log.d(TAG, "deleteChat: chat $chatId already gone on server (404)")
             }
             chatDao.deleteChat(chatId) // messages cascade
             ongoingMessageRequests.remove(chatId)
