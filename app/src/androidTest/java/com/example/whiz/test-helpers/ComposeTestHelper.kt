@@ -2,6 +2,7 @@ package com.example.whiz.test_helpers
 
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.ComposeTestRule
+import androidx.lifecycle.Lifecycle
 import kotlin.math.min
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
@@ -1478,12 +1479,10 @@ object ComposeTestHelper {
                     node.performClick()
                     Log.d(TAG, "✅ Compose: Back button clicked successfully")
                     // The chats list renders from Room immediately, so its rows are findable while the
-                    // chat screen is still sliding out. A tap during that transition is dropped. Wait for
-                    // the chat screen's own button to leave the tree before letting the test tap a row.
-                    composeTestRule.waitUntil(timeoutMillis = 3000) {
-                        composeTestRule.onAllNodesWithContentDescription("Open Chats List")
-                            .fetchSemanticsNodes().isEmpty()
-                    }
+                    // 300ms slide transition is still running, and a tap during the transition is
+                    // dropped. Navigation Compose keeps the destination entry at STARTED until its
+                    // enter transition completes, then moves it to RESUMED: wait for that.
+                    waitForNavTransitionToFinish(composeTestRule)
                     return true
                 } catch (e: Exception) {
                     Log.d(TAG, "⚠️ Compose: Back selector failed: ${e.message}")
@@ -1493,10 +1492,32 @@ object ComposeTestHelper {
             
             Log.e(TAG, "❌ Compose: No back button selectors worked")
             false
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Compose: Exception navigating back", e)
             false
+        }
+    }
+
+    /**
+     * Waits until the current navigation destination has finished its enter transition.
+     * Navigation Compose holds the current back-stack entry at STARTED while the transition
+     * animates and moves it to RESUMED when it completes; taps before that are dropped.
+     * Falls back to a plain idle wait when the rule is not bound to MainActivity.
+     */
+    fun waitForNavTransitionToFinish(composeTestRule: ComposeTestRule) {
+        val activity = (composeTestRule as? AndroidComposeTestRule<*, *>)?.activity as? MainActivity
+        val navController = activity?.getNavController()
+        if (navController == null) {
+            composeTestRule.waitForIdle()
+            return
+        }
+        composeTestRule.waitUntil(timeoutMillis = 3000) {
+            var resumed = false
+            composeTestRule.runOnUiThread {
+                resumed = navController.currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED
+            }
+            resumed
         }
     }
     
