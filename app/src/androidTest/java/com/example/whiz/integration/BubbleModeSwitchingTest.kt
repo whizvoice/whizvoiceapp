@@ -671,16 +671,14 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "[TEST_LONG_PRESS] Found bubble element, getting position...")
-        try {
-            val point = bubbleElement.visibleCenter
-            Log.d(TAG, "[TEST_LONG_PRESS] Bubble center at: (${point.x}, ${point.y})")
-        } catch (e: Exception) {
-            Log.e(TAG, "[TEST_LONG_PRESS] Could not get bubble position: ${e.message}")
-        }
-        
+        val point = bubbleElement.visibleCenter
+        Log.d(TAG, "[TEST_LONG_PRESS] Bubble center at: (${point.x}, ${point.y})")
+
         Log.d(TAG, "[TEST_LONG_PRESS] Performing long press gesture...")
-        // Perform actual long press
-        bubbleElement.longClick()
+        // UiObject2.longClick() holds for the device's long-press setting (400ms on the Pixel 7a),
+        // which is shorter than the bubble's own LONG_PRESS_THRESHOLD (500ms). A zero-distance
+        // swipe holds the finger for a fixed ~1s (each step is ~5ms) regardless of that setting.
+        device.swipe(point.x, point.y, point.x, point.y, 200)
         Log.d(TAG, "[TEST_LONG_PRESS] Long press completed")
         
         // Mode change detection is handled by the caller
