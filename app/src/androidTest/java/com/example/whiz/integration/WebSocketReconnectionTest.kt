@@ -36,6 +36,14 @@ import com.example.whiz.test_helpers.ComposeTestHelper
 import com.example.whiz.di.TestInterceptor
 
 /**
+ * Matches an assistant message whose text contains [word] anywhere. Queued messages that are
+ * re-sent together get one combined reply (e.g. "1. Paris\n2. 330m…"), so a prefix match on
+ * "Assistant message: Paris" is too strict.
+ */
+private fun assistantMessageContaining(word: String) =
+    ComposeTestHelper.hasContentDescriptionMatching("(?is)Assistant message:.*\\b${Regex.escape(word)}\\b.*")
+
+/**
  * Tests that messages are synced after WebSocket reconnection.
  * This test simulates connection loss and verifies bot responses appear after reconnection.
  */
@@ -1375,12 +1383,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val parisResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = {
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Paris",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("Paris"), useUnmergedTree = true)
                     },
                     timeoutMs = 25000L,  // Allow for CI Claude API latency variance
                     description = "Paris response in first chat"
@@ -1411,12 +1414,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val frenchResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: French",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("French"), useUnmergedTree = true)
                     },
                     timeoutMs = 3000L,
                     description = "French language response"
@@ -1430,12 +1428,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val romeInFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Rome",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("Rome"), useUnmergedTree = true)
                     },
                     timeoutMs = 1000L, // Short timeout - we expect NOT to find it
                     description = "Rome (should NOT be in France chat)"
@@ -1448,12 +1441,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val pizzaInFirstChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Pizza",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("Pizza"), useUnmergedTree = true)
                     },
                     timeoutMs = 1000L, // Short timeout - we expect NOT to find it
                     description = "Pizza (should NOT be in France chat)"
@@ -1598,12 +1586,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val pizzaResponseFound = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Pizza",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("Pizza"), useUnmergedTree = true)
                     },
                     timeoutMs = 3000L,
                     description = "Pizza response"
@@ -1617,12 +1600,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val parisInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: Paris",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("Paris"), useUnmergedTree = true)
                     },
                     timeoutMs = 1000L, // Short timeout - we expect NOT to find it
                     description = "Paris (should NOT be in Italy chat)"
@@ -1635,12 +1613,7 @@ class WebSocketReconnectionTest : BaseIntegrationTest() {
                 val frenchInSecondChat = ComposeTestHelper.waitForElement(
                     composeTestRule = composeTestRule,
                     selector = { 
-                        composeTestRule.onNodeWithContentDescription(
-                            "Assistant message: French",
-                            substring = true,
-                            ignoreCase = true,
-                            useUnmergedTree = true
-                        )
+                        composeTestRule.onNode(assistantMessageContaining("French"), useUnmergedTree = true)
                     },
                     timeoutMs = 1000L, // Short timeout - we expect NOT to find it
                     description = "French (should NOT be in Italy chat)"
