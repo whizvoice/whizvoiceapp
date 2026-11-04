@@ -661,7 +661,8 @@ class WhizServerRepository @Inject constructor(
                             
                             // Check if this is a tool execution request
                             if (jsonObject.has("type") && jsonObject.getString("type") == "tool_execution") {
-                                val conversationId = if (jsonObject.has("conversation_id")) {
+                                // conversation_id is null for a chat whose row the server has not created yet
+                                val conversationId = if (jsonObject.has("conversation_id") && !jsonObject.isNull("conversation_id")) {
                                     jsonObject.getLong("conversation_id")
                                 } else null
                                 

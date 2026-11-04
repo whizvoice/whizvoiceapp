@@ -1477,6 +1477,13 @@ object ComposeTestHelper {
                     node.assertIsDisplayed()
                     node.performClick()
                     Log.d(TAG, "✅ Compose: Back button clicked successfully")
+                    // The chats list renders from Room immediately, so its rows are findable while the
+                    // chat screen is still sliding out. A tap during that transition is dropped. Wait for
+                    // the chat screen's own button to leave the tree before letting the test tap a row.
+                    composeTestRule.waitUntil(timeoutMillis = 3000) {
+                        composeTestRule.onAllNodesWithContentDescription("Open Chats List")
+                            .fetchSemanticsNodes().isEmpty()
+                    }
                     return true
                 } catch (e: Exception) {
                     Log.d(TAG, "⚠️ Compose: Back selector failed: ${e.message}")
