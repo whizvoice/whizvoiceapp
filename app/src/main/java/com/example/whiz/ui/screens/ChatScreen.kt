@@ -100,8 +100,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
-import androidx.compose.ui.res.painterResource
-import com.example.whiz.R
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -416,57 +414,6 @@ fun ChatInputBar(
     }
 }
 
-@Composable
-fun ChatLoadErrorView(
-    onRetry: () -> Unit,
-    onGoBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Error icon
-        Icon(
-            painter = painterResource(id = R.drawable.robot_error),
-            contentDescription = null,
-            modifier = Modifier
-                .size(128.dp)
-                .padding(bottom = 16.dp),
-            tint = MaterialTheme.colorScheme.error
-        )
-        
-        // Error message
-        Text(
-            text = "Couldn't load this chat",
-            style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        
-        // Retry button (prominent)
-        Button(
-            onClick = onRetry,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Text("Retry")
-        }
-        
-        // Go back link (secondary)
-        TextButton(
-            onClick = onGoBack,
-            modifier = Modifier.padding(top = 4.dp)
-        ) {
-            Text("Go back", color = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ChatScreen(
@@ -535,7 +482,6 @@ fun ChatScreen(
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val showOverlayPermissionDialog by viewModel.showOverlayPermissionDialog.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
-    val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
     val isRefreshing by viewModel.isRefreshing.collectAsState() // For pull-to-refresh
     
 
@@ -859,17 +805,6 @@ fun ChatScreen(
         ) {
             key(chatId) {
                 when {
-                    // Show error state if there's a chat load error
-                    chatLoadError != null -> {
-                        ChatLoadErrorView(
-                            onRetry = {
-                                viewModel.retryChatLoad()
-                            },
-                            onGoBack = {
-                                onChatsListClick()
-                            }
-                        )
-                    }
                     // Show empty placeholder when no messages
                     messages.isEmpty() && !isResponding && !isSpeaking -> {
                         EmptyChatPlaceholder()
@@ -899,35 +834,32 @@ fun ChatScreen(
         }
         
         // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
-        // Hide input bar when there's a chat load error
-        if (chatLoadError == null) {
-            // Never disable text input - users should always be able to type
-            val isTextInputDisabled = false
-            // Only disable mic during TTS when no headphones (to prevent audio feedback)
-            val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
-            
-            ChatInputBar(
-                inputText = inputText,
-                isInputFromVoice = isInputFromVoice,
-                transcription = transcription,
-                isListening = isListening,
-                isInputDisabled = isTextInputDisabled,
-                isMicDisabled = isMicDisabled,
-                isResponding = isResponding,
-                isContinuousListeningEnabled = isContinuousListeningEnabled,
-                isSpeaking = isSpeaking,
-                shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
-                shouldShowMuteButton = shouldShowMuteButton,
-                onInputChange = viewModel::updateInputText,
-                onSendClick = { 
-                    // Always send regular messages - let server handle interruption logic
-                    viewModel.sendUserInput(inputText)
-                },
-                onMicClick = { handleMicClick() },
-                onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
-                surfaceColor = inputSurfaceColor
-            )
-        }
+        // Never disable text input - users should always be able to type
+        val isTextInputDisabled = false
+        // Only disable mic during TTS when no headphones (to prevent audio feedback)
+        val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
+
+        ChatInputBar(
+            inputText = inputText,
+            isInputFromVoice = isInputFromVoice,
+            transcription = transcription,
+            isListening = isListening,
+            isInputDisabled = isTextInputDisabled,
+            isMicDisabled = isMicDisabled,
+            isResponding = isResponding,
+            isContinuousListeningEnabled = isContinuousListeningEnabled,
+            isSpeaking = isSpeaking,
+            shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
+            shouldShowMuteButton = shouldShowMuteButton,
+            onInputChange = viewModel::updateInputText,
+            onSendClick = {
+                // Always send regular messages - let server handle interruption logic
+                viewModel.sendUserInput(inputText)
+            },
+            onMicClick = { handleMicClick() },
+            onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
+            surfaceColor = inputSurfaceColor
+        )
         
         // Snackbar host at bottom
         SnackbarHost(snackbarHostState)

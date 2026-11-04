@@ -332,10 +332,6 @@ class ChatViewModel @Inject constructor(
     private val _errorState = MutableStateFlow<String?>(null)
     val errorState = _errorState.asStateFlow()
     
-    // Chat loading error state - separate from general errors
-    private val _chatLoadError = MutableStateFlow<String?>(null)
-    val chatLoadError = _chatLoadError.asStateFlow()
-
     // Connection error state
     private val _connectionError = MutableStateFlow<String?>(null)
     val connectionError = _connectionError.asStateFlow()
@@ -1192,8 +1188,6 @@ class ChatViewModel @Inject constructor(
     fun loadChatWithVoiceMode(chatId: String, isVoiceModeActivation: Boolean = false) {
         Log.d(TAG, "🔥 loadChatWithVoiceMode STARTED for chatId: $chatId, voiceMode: $isVoiceModeActivation")
         Log.d(TAG, "🔥 STACK TRACE for loadChatWithVoiceMode:", Exception("Stack trace"))
-        // Clear any previous chat load error when starting to load a new chat
-        _chatLoadError.value = null
         viewModelScope.launch {
             try {
                 // 🔧 Enhanced cleanup when switching chats
@@ -1276,9 +1270,9 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                 } catch (e: Exception) {
+                    // Room failed on a primary-key lookup. Keep the requested chat and let the
+                    // sync/connect below run; the screen shows whatever Room can still provide.
                     Log.e(TAG, "Error loading chat from repository", e)
-                    // Set chat load error instead of starting new chat
-                    _chatLoadError.value = "Couldn't load this chat"
                     _chatId.value = chatId // Keep the requested chat ID
                     hasChatRow = true // Unknown; still attempt the sync/connect below as before
                     _chatTitle.value = "Chat"
@@ -1292,7 +1286,6 @@ class ChatViewModel @Inject constructor(
                 updateRespondingStateForCurrentChat()
                 _errorState.value = null // 🔧 Clear any error states when switching chats
                 _connectionError.value = null // 🔧 Clear connection errors too
-                // Don't clear _chatLoadError here - it may have been set in the catch block above
                 
                 // 🔧 Reset voice responses to default (off) when loading a chat, UNLESS voice mode is being activated
                 // This prevents voice responses from staying on from previous sessions
@@ -2025,11 +2018,6 @@ class ChatViewModel @Inject constructor(
 
     fun onAuthErrorDialogDismissed() {
         _showAuthErrorDialog.value = null
-    }
-    
-    fun retryChatLoad() {
-        _chatLoadError.value = null
-        loadChat(_chatId.value)
     }
     
     fun refreshMessages() {
