@@ -1506,7 +1506,12 @@ object ComposeTestHelper {
      * Falls back to a plain idle wait when the rule is not bound to MainActivity.
      */
     fun waitForNavTransitionToFinish(composeTestRule: ComposeTestRule) {
-        val activity = (composeTestRule as? AndroidComposeTestRule<*, *>)?.activity as? MainActivity
+        // createEmptyComposeRule() throws from .activity rather than returning null
+        val activity = try {
+            (composeTestRule as? AndroidComposeTestRule<*, *>)?.activity as? MainActivity
+        } catch (e: Exception) {
+            null
+        }
         val navController = activity?.getNavController()
         if (navController == null) {
             composeTestRule.waitForIdle()
