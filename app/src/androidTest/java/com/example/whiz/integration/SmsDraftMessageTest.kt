@@ -108,7 +108,7 @@ class SmsDraftMessageTest : BaseIntegrationTest() {
     private val toolResults = CopyOnWriteArrayList<ToolExecutionResult>()
     private val collectorScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var collectorJob: Job? = null
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     /** Same per-device mapping as run_screen_agent_tests.py: each phone messages the OTHER one. */
     private val smsRecipient: String
@@ -183,7 +183,7 @@ class SmsDraftMessageTest : BaseIntegrationTest() {
         waitUntil(5_000) { capturedViewModel != null }
         val chatViewModel = capturedViewModel
             ?: failWithScreenshot("sms_viewmodel_not_captured", "ChatViewModel not captured")
-        chatViewModel.chatId.value?.let { if (it > 0 && it !in createdChatIds) createdChatIds.add(it) }
+        chatViewModel.chatId.value.let { if (it.isNotBlank() && it !in createdChatIds) createdChatIds.add(it) }
 
         // ---- Step 1: ask for the SMS; expect agent_draft_message with the overlay shown ----
         val mark1 = toolResults.size
