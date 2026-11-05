@@ -19,7 +19,6 @@ import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.local.ChatEntity
 import com.example.whiz.BaseIntegrationTest
-import com.example.whiz.permissions.PermissionManager
 import org.junit.Assert.*
 import org.junit.After
 
@@ -49,26 +48,16 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
     @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
-    @Inject
-    lateinit var permissionManager: PermissionManager
-
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     // Monitor to capture launched activity for cleanup
     private var activityMonitor: android.app.Instrumentation.ActivityMonitor? = null
 
     @Before
     fun setUp() {
-        // Grant microphone permission for voice tests
-        android.util.Log.d(TAG, "🎙️ Granting microphone permission for voice tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
-
         // Set up activity monitor to capture launched activity for cleanup
         activityMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
 
@@ -139,7 +128,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             // No other extras - app should add them automatically
         }
 
-        val initialChats = runBlocking { repository.getAllChats() }
+        val initialChats = runBlocking { repository.listChats() }
         val initialChatCount = initialChats.size
 
         // Launch the activity
@@ -177,7 +166,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         
         // Track any chats created for cleanup
         try {
-            val currentChats = runBlocking { repository.getAllChats() }
+            val currentChats = runBlocking { repository.listChats() }
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 createdChatIds.add(chat.id)
@@ -212,7 +201,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
             putExtra("tracing_intent_id", 745783203297493028L) // Only what Google Assistant sends
         }
 
-        val initialChats = runBlocking { repository.getAllChats() }
+        val initialChats = runBlocking { repository.listChats() }
         val initialChatCount = initialChats.size
 
         // Launch through real Android system like Google Assistant would
@@ -302,7 +291,7 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         
         // Track any chats created for cleanup
         try {
-            val currentChats = runBlocking { repository.getAllChats() }
+            val currentChats = runBlocking { repository.listChats() }
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 createdChatIds.add(chat.id)
@@ -371,8 +360,8 @@ class VoiceLaunchDetectionIntegrationTest : BaseIntegrationTest() {
         // VERIFY: Manual launch should NOT automatically create any chats
         // Only check for optimistic chats (created by THIS app instance) to avoid flakiness
         // from other tests or background sync adding chats to the database
-        val finalChats = runBlocking { repository.getAllChats() }
-        val optimisticChats = finalChats.filter { it.id < 0 }
+        val finalChats = runBlocking { repository.listChats() }
+        val optimisticChats = finalChats.filter { it.serverId == null }
         val assistantChats = finalChats.filter { it.title == "Assistant Chat" }
 
         val hasOptimisticChat = optimisticChats.isNotEmpty()

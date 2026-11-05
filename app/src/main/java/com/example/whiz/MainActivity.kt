@@ -43,6 +43,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
+import com.example.whiz.accessibility.FaceUnlockSwiper
 import com.example.whiz.accessibility.WhizAccessibilityService
 import com.example.whiz.data.PreloadManager
 import com.example.whiz.permissions.PermissionManager
@@ -57,6 +58,7 @@ import com.example.whiz.ui.theme.WhizTheme
 import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +87,10 @@ class MainActivity : ComponentActivity() {
         @Volatile
         var finishAndRemoveTaskCallback: (() -> Unit)? = null
 
+        // How long to let Android's wake-triggered face attempt run before re-prompting a parked
+        // unlock-wait (a Pixel face attempt lasts ~3s and does not retry on its own).
+        private const val REPROMPT_HOLD_MS = 3_000L
+
         // Callback for on-demand unlock when screen agent tools need the device unlocked
         @Volatile
         var requestUnlockCallback: ((onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit)? = null
@@ -93,6 +99,11 @@ class MainActivity : ComponentActivity() {
         // restore showWhenLocked) when a parked unlock-wait is cancelled by idle-timer teardown.
         @Volatile
         var cancelUnlockPromptCallback: (() -> Unit)? = null
+
+        // Callback for a screen-agent tool parked waiting for the accessibility service: surfaces
+        // the enable / reconnect dialog and brings MainActivity to the front so it is visible.
+        @Volatile
+        var requestAccessibilityCallback: (() -> Unit)? = null
 
         // Callback for on-demand contacts permission when lookup tool needs READ_CONTACTS
         @Volatile
@@ -176,12 +187,17 @@ class MainActivity : ComponentActivity() {
     @Volatile
     private var unlockWakeLock: PowerManager.WakeLock? = null
 
+    // In-flight attempt to finish a face unlock by swiping (see FaceUnlockSwiper). Cancelled when a
+    // new prompt starts or the parked wait is torn down, so two attempts never overlap.
+    private var faceSwipeJob: Job? = null
+
     // Clears showWhenLocked after user unlocks so the app doesn't persist over subsequent lock screens.
     // Also resumes a parked unlock-wait when the user unlocks by their own route (no Whiz prompt) —
     // after USER_PRESENT the keyguard is gone so the screen-on re-prompt won't fire.
     private val userPresentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                rePromptJob?.cancel()
                 setShowWhenLocked(false)
                 Log.d(TAG, "User unlocked - cleared showWhenLocked")
                 if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
@@ -196,14 +212,37 @@ class MainActivity : ComponentActivity() {
     // waiting for unlock. Fires while still locked (ACTION_SCREEN_ON precedes USER_PRESENT).
     private val screenOnReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                // Screen went dark during the hold: don't re-prompt into a dark screen (the
+                // prompt's wake lock would light it back up). The next screen-on starts over.
+                rePromptJob?.cancel()
+                return
+            }
             if (intent?.action != Intent.ACTION_SCREEN_ON) return
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked && ::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
-                Log.d(TAG, "Screen on while locked with a parked unlock-wait - re-prompting unlock")
-                toolExecutor.retryUnlockPrompt()
+                // Android starts a face attempt on every screen wake. Re-prompting immediately
+                // hides us behind the keyguard and snaps the bouncer in, which cancels that attempt
+                // (seen in the field: attempt started and cancelled 8ms apart). Hold the re-prompt
+                // for one attempt's duration: if face passes while we sit over the lock screen the
+                // keyguard drops on its own and USER_PRESENT resumes the tool with no prompt at all.
+                Log.d(TAG, "Screen on while locked with a parked unlock-wait - holding ${REPROMPT_HOLD_MS}ms for the wake face attempt, then re-prompting")
+                rePromptJob?.cancel()
+                rePromptJob = lifecycleScope.launch {
+                    delay(REPROMPT_HOLD_MS)
+                    if (km.isKeyguardLocked && toolExecutor.isAwaitingUnlock.value) {
+                        Log.d(TAG, "Still locked after hold - re-prompting unlock")
+                        toolExecutor.retryUnlockPrompt()
+                    } else {
+                        Log.d(TAG, "Unlocked (or wait ended) during hold - no re-prompt needed")
+                    }
+                }
             }
         }
     }
+
+    // Pending held re-prompt (see screenOnReceiver). Cancelled on unlock, screen-off, and teardown.
+    private var rePromptJob: Job? = null
 
     // Expose NavController for testing
     fun getNavController(): NavHostController? = if (::navController.isInitialized) navController else null
@@ -352,6 +391,9 @@ class MainActivity : ComponentActivity() {
                 if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
                     toolExecutor.abandonUnlockWait()
                 }
+                if (::toolExecutor.isInitialized && toolExecutor.isAwaitingAccessibility.value) {
+                    toolExecutor.abandonAccessibilityWait()
+                }
                 // Defensive: under the single-owner handoff our timer is paused whenever a
                 // bubble is active, so this rarely runs with a bubble up. Stop it anyway so we
                 // never leave a zombie "listening" bubble behind. stop() is idempotent.
@@ -373,8 +415,12 @@ class MainActivity : ComponentActivity() {
         // so the screen-on re-prompt works.
         lifecycleScope.launch {
             var wasAwaiting = false
-            combine(toolExecutor.activeToolCount, toolExecutor.isAwaitingUnlock) { count, awaiting ->
-                count to awaiting
+            combine(
+                toolExecutor.activeToolCount,
+                toolExecutor.isAwaitingUnlock,
+                toolExecutor.isAwaitingAccessibility
+            ) { count, awaitingUnlock, awaitingAccessibility ->
+                count to (awaitingUnlock || awaitingAccessibility)
             }.collect { (count, awaiting) ->
                 if (count > 0 && !awaiting) {
                     inactivityTimer.pause("tool")
@@ -474,7 +520,10 @@ class MainActivity : ComponentActivity() {
 
         // Register receiver to re-show the unlock prompt when the user wakes the phone while a
         // screen-agent tool is parked waiting for unlock (fires while still locked).
-        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON))
+        registerReceiver(screenOnReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        })
 
         // Set up static callback for self-close tool (more reliable than broadcast)
         finishAndRemoveTaskCallback = {
@@ -484,6 +533,13 @@ class MainActivity : ComponentActivity() {
 
         // Set up static callback for on-demand unlock (used by screen agent tools on lock screen)
         requestUnlockCallback = { onSuccess, onCancelled ->
+            // One prompt, one outcome. The system's dismiss callback and the swipe watcher can
+            // both observe the same unlock (and a late screen-off can report "cancelled" after a
+            // success); only the first outcome reaches the caller. Each (re-)prompt gets a fresh
+            // guard, so a cancelled prompt is still retried on the next screen-on.
+            val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+            val succeedOnce: () -> Unit = { if (settled.compareAndSet(false, true)) onSuccess() }
+            val cancelOnce: () -> Unit = { if (settled.compareAndSet(false, true)) onCancelled() }
             val km = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
             if (km.isKeyguardLocked) {
                 // Hold the screen on while the keyguard prompt is up. We must use a
@@ -510,30 +566,81 @@ class MainActivity : ComponentActivity() {
                 // Must clear showWhenLocked so the keyguard PIN entry can appear
                 // (otherwise our activity occludes the keyguard, causing a deadlock)
                 setShowWhenLocked(false)
-                km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+
+                // Ask the system to dismiss the keyguard right away. This is what triggers a face
+                // attempt (face does not re-run on its own while the lock screen sits there); when
+                // face passes, the system usually finishes the unlock itself and onDismissSucceeded
+                // fires. Alongside it, FaceUnlockSwiper watches for the rarer outcome where face
+                // passes but the keyguard stays at "swipe up to open", and injects that swipe via
+                // the accessibility service. Whichever side finishes first cancels the other.
+                faceSwipeJob?.cancel()
+                val promptStartedAt = android.os.SystemClock.elapsedRealtime()
+                val dismissCallback = object : KeyguardManager.KeyguardDismissCallback() {
                     override fun onDismissSucceeded() {
+                        Log.i(TAG, "Keyguard dismiss succeeded after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (system finished the unlock)")
+                        faceSwipeJob?.cancel()
                         releaseUnlockWakeLock()
-                        onSuccess()
+                        succeedOnce()
+                    }
+                    override fun onDismissError() {
+                        // Not a terminal outcome for the parked tool (a later unlock still resumes
+                        // it), but it means the dismiss request never showed a prompt at all.
+                        Log.w(TAG, "Keyguard dismiss request returned error after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked})")
                     }
                     override fun onDismissCancelled() {
+                        Log.i(TAG, "Keyguard dismiss cancelled after ${android.os.SystemClock.elapsedRealtime() - promptStartedAt}ms (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked})")
+                        faceSwipeJob?.cancel()
                         releaseUnlockWakeLock()
                         // Single prompt cancelled — restore showWhenLocked so the activity stays
                         // visible over the keyguard and the next screen-on can re-prompt.
                         setShowWhenLocked(true)
-                        onCancelled()
+                        cancelOnce()
                     }
-                })
+                }
+                km.requestDismissKeyguard(this, dismissCallback)
+                faceSwipeJob = lifecycleScope.launch {
+                    val result = tryFaceUnlockSwipe(km)
+                    Log.i(TAG, "Face-unlock swipe watcher result: $result (keyguardLocked=${km.isKeyguardLocked}, deviceLocked=${km.isDeviceLocked}, accessibilityConnected=${WhizAccessibilityService.isServiceConnected()})")
+                    if (result == FaceUnlockSwiper.Result.DISMISSED) {
+                        // Our swipe finished the unlock. The pending dismiss callback may also fire;
+                        // onSuccess is idempotent on the parked tool (continuation isActive guard).
+                        releaseUnlockWakeLock()
+                        succeedOnce()
+                    }
+                    // ALREADY_UNLOCKED: the system/user finished it and onDismissSucceeded (or
+                    // USER_PRESENT) resumes the tool. FACE_NOT_PASSED / SWIPE_FAILED: the system
+                    // prompt is still up; nothing more for the watcher to do.
+                }
             } else {
-                onSuccess() // Already unlocked
+                succeedOnce() // Already unlocked
             }
         }
 
         // Tear down an in-progress unlock prompt when a parked unlock-wait is cancelled by
         // idle-timer teardown: release the wake lock and restore showWhenLocked.
         cancelUnlockPromptCallback = {
+            rePromptJob?.cancel()
+            faceSwipeJob?.cancel()
+            faceSwipeJob = null
             releaseUnlockWakeLock()
             setShowWhenLocked(true)
             Log.d(TAG, "Unlock prompt torn down (parked wait cancelled)")
+        }
+
+        // Set up static callback for a tool parked waiting for the accessibility service. The
+        // permission dialog is a Compose dialog inside this activity, so it is only visible while
+        // we are in front: bring the activity forward (over the bubble / a launched app) and
+        // recompute the required step so the dialog renders.
+        requestAccessibilityCallback = {
+            runOnUiThread {
+                permissionManager.checkAccessibilityPermission()
+                if (!appLifecycleService.isInForegroundFlow.value) {
+                    Log.i(TAG, "Accessibility wait - bringing MainActivity to the front to show the dialog")
+                    startActivity(Intent(this, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    })
+                }
+            }
         }
 
         // Set up static callback for on-demand contacts permission (used by lookup tool)
@@ -856,6 +963,12 @@ class MainActivity : ComponentActivity() {
                                 isSubmittingRageShake.value = false
                                 pendingSnapshot = null
                             },
+                            onDisableForever = {
+                                rageShakeDetector.setEnabled(false)
+                                showRageShakeDialog.value = false
+                                isSubmittingRageShake.value = false
+                                pendingSnapshot = null
+                            },
                             onSubmit = { description ->
                                 submitRageShakeReport(description)
                             }
@@ -1088,13 +1201,14 @@ class MainActivity : ComponentActivity() {
                 return
             }
 
-            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to chat/-1")
-            Log.d(TAG, "🚨 Note: Not pre-creating optimistic chat - ChatViewModel will create it when message is sent")
+            val newChatRoute = Screen.Chat.newChatRoute()
+            Log.d(TAG, "🚨 Voice launch navigation needed - navigating from $currentRoute to $newChatRoute")
+            Log.d(TAG, "🚨 Note: No chat row is created here - ChatViewModel creates it when the first message is sent")
 
-            // Navigate to new chat screen without pre-creating optimistic chat
+            // Navigate to a freshly minted chat id without creating a row
             // This makes voice launch consistent with manual launch (clicking "New Chat" button)
-            Log.d(TAG, "🚨 About to call navigateWhenReady for chat/-1")
-            navigateWhenReady("chat/-1") {
+            Log.d(TAG, "🚨 About to call navigateWhenReady for $newChatRoute")
+            navigateWhenReady(newChatRoute) {
                 Log.d(TAG, "🚨 Inside navigateWhenReady callback - navigation should be complete")
                 // Pass the voice mode flag and initial transcription to the ChatScreen
                 if (enableVoiceMode) {
@@ -1108,7 +1222,7 @@ class MainActivity : ComponentActivity() {
             }
         } else if (enableVoiceMode && ::navController.isInitialized) {
             // Voice launch via FROM_ASSISTANT (onCreate path) — NavHost already navigated
-            // to chat/-1 via startDestination. Just pass voice mode flag to ChatScreen.
+            // to a new chat route via startDestination. Just pass voice mode flag to ChatScreen.
             Log.d(TAG, "🎤 Voice mode without CREATE_NEW_CHAT_ON_START - setting ENABLE_VOICE_MODE in savedStateHandle")
 
             // Clear extras to prevent reprocessing from onResume / LaunchedEffect
@@ -1124,7 +1238,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         } else {
-            currentIntent?.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)?.takeIf { it > 0 }?.let { chatId ->
+            currentIntent?.getStringExtra("NAVIGATE_TO_CHAT_ID")?.takeIf { it.isNotBlank() }?.let { chatId ->
                 Log.d(TAG, "Intent to navigate to chat ID: $chatId")
                 if (::navController.isInitialized) {
                 val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false)
@@ -1136,7 +1250,7 @@ class MainActivity : ComponentActivity() {
                 
                 if (fromAssistant && forceNavigation) {
                     // If coming from assistant with force navigation, clear everything and go to chat
-                    navigateWhenReady("chat/$chatId", clearBackStack = true) {
+                    navigateWhenReady(Screen.Chat.route(chatId), clearBackStack = true) {
                         // Pass the voice mode flag and initial transcription to the ChatScreen
                         if (enableVoiceMode) {
                             Log.d(TAG, "Setting ENABLE_VOICE_MODE to true in savedStateHandle")
@@ -1157,7 +1271,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     // Normal navigation
                     Log.d(TAG, "Executing normal navigation to chat/$chatId")
-                    navController.navigate("chat/$chatId") {
+                    navController.navigate(Screen.Chat.route(chatId)) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
@@ -1255,6 +1369,28 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Release the unlock-prompt wake lock if held. Safe to call repeatedly. */
+    /**
+     * Runs [FaceUnlockSwiper] against the live keyguard. Returns FACE_NOT_PASSED immediately when
+     * the accessibility service isn't bound, since there is no way to send the swipe.
+     */
+    private suspend fun tryFaceUnlockSwipe(km: KeyguardManager): FaceUnlockSwiper.Result {
+        val service = WhizAccessibilityService.getInstance()
+        if (service == null) {
+            Log.i(TAG, "Accessibility service not bound - skipping face-unlock swipe")
+            return FaceUnlockSwiper.Result.FACE_NOT_PASSED
+        }
+        val result = FaceUnlockSwiper(
+            isKeyguardLocked = { km.isKeyguardLocked },
+            isDeviceLocked = { km.isDeviceLocked },
+            swipeUp = { service.performUnlockSwipe() }
+        ).attempt()
+        if (result == FaceUnlockSwiper.Result.SWIPE_FAILED) {
+            // Pair with the "Keyguard before unlock swipe" line to see what the swipe changed.
+            Log.w(TAG, "Keyguard after failed unlock swipe: ${service.describeKeyguardWindows()}")
+        }
+        return result
+    }
+
     private fun releaseUnlockWakeLock() {
         val wl = unlockWakeLock ?: return
         if (wl.isHeld) {
@@ -1321,7 +1457,7 @@ class MainActivity : ComponentActivity() {
             val createNewChat = currentIntent.getBooleanExtra("CREATE_NEW_CHAT_ON_START", false)
             val fromAssistant = currentIntent.getBooleanExtra("FROM_ASSISTANT", false) 
             val enableVoice = currentIntent.getBooleanExtra("ENABLE_VOICE_MODE", false)
-            val navToChatId = currentIntent.getLongExtra("NAVIGATE_TO_CHAT_ID", -1L)
+            val navToChatId = currentIntent.getStringExtra("NAVIGATE_TO_CHAT_ID")
             Log.d(TAG, "🔍 RESUME DEBUG: CREATE_NEW_CHAT_ON_START = $createNewChat")
             Log.d(TAG, "🔍 RESUME DEBUG: FROM_ASSISTANT = $fromAssistant")
             Log.d(TAG, "🔍 RESUME DEBUG: ENABLE_VOICE_MODE = $enableVoice")
@@ -1412,7 +1548,8 @@ class MainActivity : ComponentActivity() {
         // Don't leave a parked unlock-wait (and its server keep-alive) pointing at a dead
         // activity that can no longer show the keyguard prompt. The ToolExecutor scope is a
         // singleton that outlives this activity.
-        if (::toolExecutor.isInitialized && toolExecutor.isAwaitingUnlock.value) {
+        if (::toolExecutor.isInitialized &&
+            (toolExecutor.isAwaitingUnlock.value || toolExecutor.isAwaitingAccessibility.value)) {
             toolExecutor.cancelAllInFlight()
         }
         releaseUnlockWakeLock()
@@ -1424,6 +1561,7 @@ class MainActivity : ComponentActivity() {
         finishAndRemoveTaskCallback = null
         requestUnlockCallback = null
         cancelUnlockPromptCallback = null
+        requestAccessibilityCallback = null
         requestContactsPermissionCallback = null
         requestCalendarPermissionCallback = null
         requestGoogleContactsConsentCallback = null

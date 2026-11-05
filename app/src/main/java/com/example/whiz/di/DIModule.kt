@@ -31,8 +31,6 @@ import retrofit2.converter.gson.GsonConverterFactory
 import com.google.gson.GsonBuilder
 import java.util.concurrent.TimeUnit
 import okhttp3.Interceptor
-import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.whiz.accessibility.AccessibilityChecker
 import com.example.whiz.accessibility.AccessibilityCheckerImpl
 import kotlinx.coroutines.CoroutineScope
@@ -43,13 +41,6 @@ import kotlinx.coroutines.SupervisorJob
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
-    private val MIGRATION_2_3 = object : Migration(2, 3) {
-        override fun migrate(database: SupportSQLiteDatabase) {
-            // Add optimisticChatId column to chats table
-            database.execSQL("ALTER TABLE chats ADD COLUMN optimisticChatId INTEGER DEFAULT NULL")
-        }
-    }
-
     @Provides
     @Singleton
     fun provideWhizDatabase(@ApplicationContext context: Context): WhizDatabase {
@@ -58,8 +49,7 @@ object AppModule {
             WhizDatabase::class.java,
             "whiz_database"
         )
-        .addMigrations(MIGRATION_2_3)
-        .fallbackToDestructiveMigration() // Fallback for any other migrations
+        .fallbackToDestructiveMigration()
         .build()
     }
 
@@ -82,10 +72,10 @@ object AppModule {
         @ApplicationContext context: Context,
         messageDao: MessageDao,
         chatDao: ChatDao,
-        connectionStateManager: ConnectionStateManager,
+        database: WhizDatabase,
         authRepositoryProvider: Provider<AuthRepository>
     ): WhizRepository {
-        return WhizRepository(apiService, context, messageDao, chatDao, connectionStateManager, authRepositoryProvider)
+        return WhizRepository(apiService, context, messageDao, chatDao, database, authRepositoryProvider)
     }
 
     @Provides
@@ -155,9 +145,10 @@ object AppModule {
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
         authRepository: AuthRepository,
-        connectionStateManager: ConnectionStateManager
+        connectionStateManager: ConnectionStateManager,
+        repository: WhizRepository
     ): WhizServerRepository {
-        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager)
+        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager, repository)
     }
     
     @Provides

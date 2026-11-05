@@ -18,7 +18,8 @@ class ApiServiceTest {
         // Arrange - real API response object
         val apiResponse = ApiService.ConversationResponse(
             id = 123L,
-            user_id = "test_user_456", 
+            client_chat_id = "chat-uuid-123",
+            user_id = "test_user_456",
             title = "Important Business Meeting",
             created_at = "2023-12-15T10:30:00Z",
             last_message_time = "2023-12-15T10:35:00Z",
@@ -29,7 +30,8 @@ class ApiServiceTest {
         val chatEntity = apiResponse.toChatEntity()
         
         // Assert - verify all fields mapped correctly
-        assertEquals("ID should be mapped", 123L, chatEntity.id)
+        assertEquals("Local ID should be the client chat id", "chat-uuid-123", chatEntity.id)
+        assertEquals("Server ID should be mapped", 123L, chatEntity.serverId)
         assertEquals("Title should be mapped", "Important Business Meeting", chatEntity.title)
         assertTrue("Created time should be parsed and recent", chatEntity.createdAt > 0)
         assertTrue("Last message time should be parsed and recent", chatEntity.lastMessageTime > 0)
@@ -46,10 +48,10 @@ class ApiServiceTest {
             timestamp = "2023-12-15T10:30:00Z"
         )
         
-        val messageEntity = apiMessage.toMessageEntity()
-        
+        val messageEntity = apiMessage.toMessageEntity(chatId = "chat-uuid-789")
+
         assertEquals(0L, messageEntity.id)  // We now auto-generate IDs, not using server IDs
-        assertEquals(789L, messageEntity.chatId)
+        assertEquals("chat-uuid-789", messageEntity.chatId)
         assertEquals("Hello, can you help me with the quarterly report?", messageEntity.content)
         assertEquals(MessageType.USER, messageEntity.type)
         assertTrue("Timestamp should be parsed", messageEntity.timestamp > 0)
@@ -66,7 +68,7 @@ class ApiServiceTest {
             timestamp = "2023-12-15T10:31:00Z"
         )
         
-        val messageEntity = apiMessage.toMessageEntity()
+        val messageEntity = apiMessage.toMessageEntity(chatId = "chat-uuid-123")
         
         assertEquals(MessageType.ASSISTANT, messageEntity.type)
         assertEquals("I'd be happy to help you with the quarterly report. Let me break this down into sections...", 
@@ -84,7 +86,7 @@ class ApiServiceTest {
             timestamp = "2023-12-15T10:32:00Z"
         )
         
-        val messageEntity = apiMessage.toMessageEntity()
+        val messageEntity = apiMessage.toMessageEntity(chatId = "chat-uuid-123")
         
         // Should default to USER type for unknown types
         assertEquals(MessageType.USER, messageEntity.type)
@@ -102,7 +104,7 @@ class ApiServiceTest {
             timestamp = testTimestamp
         )
         
-        val messageEntity = apiMessage.toMessageEntity()
+        val messageEntity = apiMessage.toMessageEntity(chatId = "chat-uuid-123")
         
         // Should be converted to Unix timestamp
         assertTrue("Timestamp should be positive Unix timestamp", messageEntity.timestamp > 0)
@@ -118,10 +120,12 @@ class ApiServiceTest {
         
         val request = ApiService.ConversationCreate(
             title = title,
+            client_chat_id = "chat-uuid-weekly",
             source = source
         )
-        
+
         assertEquals(title, request.title)
+        assertEquals("chat-uuid-weekly", request.client_chat_id)
         assertEquals(source, request.source)
     }
 
@@ -147,6 +151,7 @@ class ApiServiceTest {
         // Test that we can convert API -> Entity -> API without data loss
         val originalResponse = ApiService.ConversationResponse(
             id = 100L,
+            client_chat_id = "chat-uuid-100",
             user_id = "user123",
             title = "Round Trip Test",
             created_at = "2023-12-15T10:30:00Z",
@@ -159,6 +164,8 @@ class ApiServiceTest {
         
         // Title should be preserved
         assertEquals(originalResponse.title, createRequest.title)
+        // Client chat id should be preserved
+        assertEquals(originalResponse.client_chat_id, createRequest.client_chat_id)
         // Source should default to "app" for created conversations
         assertEquals("app", createRequest.source)
     }
