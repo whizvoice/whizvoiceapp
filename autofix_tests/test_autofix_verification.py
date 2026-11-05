@@ -2,49 +2,50 @@
 """Autofix verification tests."""
 
 import time
+import subprocess
+import os
 from helpers import (
-    save_failed_screenshot,
-    navigate_to_my_chats, send_voice_command,
+    check_element_exists_in_ui, save_failed_screenshot,
+    navigate_to_my_chats, send_voice_command, EMULATOR_SERIAL,
 )
 
 
-def test_autofix_ytmusic_app_not_ready(tester):
-    """Verify fix for ytmusic_app_not_ready.
+def test_autofix_ytmusic_no_action_menu(tester):
+    """Verify fix for ytmusic_no_action_menu.
 
-    Tests that the screen agent can detect YouTube Music as ready even when
-    the Whiz bubble overlay or another window has the active-window slot.
-    The fix adds a windows-list fallback to waitForAppReady so the target
-    app is detected as soon as its window appears anywhere in the window list.
+    Reproduces the failing sequence: play a song on YouTube Music (which leaves
+    the expanded Now Playing page open), then queue another song. Newer YT Music
+    versions keep the expanded player on top of the search deep link, hiding the
+    result rows; the fix minimizes the player before looking for the action menu.
     """
-    success, error = navigate_to_my_chats(tester, "autofix_ytmusic_app_not_ready")
+    test_name = "autofix_ytmusic_no_action_menu"
+    success, error = navigate_to_my_chats(tester, test_name)
     assert success, f"Could not reach My Chats: {error}"
 
     tester.tap(950, 2225)
     time.sleep(2)
 
-    send_voice_command("play Clean Bandit on YouTube Music")
-    time.sleep(40)
+    # Step 1: play a song, leaving the expanded Now Playing page up
+    send_voice_command("Play Golden from Kpop Demon Hunters on YouTube Music.")
+    time.sleep(35)
 
-    tester.screenshot("/tmp/whiz_ytmusic_play.png")
+    # Step 2: queue another song — this is the action that failed
+    send_voice_command("Queue How its Done by HUNTRIX on YouTube Music")
+    time.sleep(35)
+
+    # Validate the queue result in the Whiz chat
+    tester.open_app("com.example.whiz.debug")
+    time.sleep(3)
+    tester.screenshot("/tmp/whiz_ytmusic_queue_result.png")
     result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_play.png",
-        "YouTube Music is open and showing search results, an artist/song page, "
-        "a now-playing screen with playback controls, or a sign-in / onboarding "
-        "screen with options to sign in or browse device files"
+        "/tmp/whiz_ytmusic_queue_result.png",
+        "The Whiz chat shows an assistant reply confirming that a song (e.g. "
+        "'How It's Done') was added to the queue on YouTube Music. It should NOT "
+        "say it couldn't find the song, couldn't open the menu, or couldn't queue it."
     )
     if not result:
-        tester.open_app("com.example.whiz.debug")
-        time.sleep(3)
-        tester.screenshot("/tmp/whiz_ytmusic_chat_result.png")
-        result = tester.validate_screenshot(
-            "/tmp/whiz_ytmusic_chat_result.png",
-            "The Whiz chat shows an assistant message about playing music or about "
-            "YouTube Music. It should NOT show an error about YouTube Music not "
-            "becoming ready in time."
-        )
-        if not result:
-            save_failed_screenshot(tester, "autofix_ytmusic_app_not_ready", "validation_failed")
+        save_failed_screenshot(tester, test_name, "validation_failed")
     assert result, (
-        "YouTube Music did not reach a ready state after deep link launch — "
-        "ytmusic_app_not_ready may still be triggering"
+        "Queueing on YouTube Music after playing a song did not succeed — "
+        "ytmusic_no_action_menu may still be triggering"
     )
