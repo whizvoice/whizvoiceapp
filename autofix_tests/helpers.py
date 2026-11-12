@@ -100,8 +100,8 @@ def enable_accessibility_service_adb():
 
 def enable_accessibility_service_ui(tester):
     """Enable accessibility service via UI taps (physical devices)."""
-    dialog_showing = check_element_exists_in_ui(
-        tester, content_desc="Enable accessibility service title"
+    dialog_showing = tester.check(
+        "the Enable Accessibility Service dialog is showing"
     )
 
     if not dialog_showing:
@@ -158,21 +158,11 @@ def enable_accessibility_service(tester=None):
             enable_accessibility_service_ui(tester)
 
 
-def check_element_exists_in_ui(tester, content_desc=None, text=None, wait_after_dump=0.5):
-    """Check if an element exists in the UI hierarchy.
-
-    Thin wrapper around tester.check_element_exists() for backwards compatibility.
-    """
-    return tester.check_element_exists(
-        content_desc=content_desc, text=text, wait_after_dump=wait_after_dump
-    )
-
-
 def check_screen_shows(tester, description):
     """Check if the current screen matches a description using screenshot + Claude vision.
 
-    Unlike check_element_exists_in_ui, this does NOT use uiautomator dump,
-    so it won't disrupt the accessibility service.
+    Uses tester.check(), which takes its own screenshot and does NOT run a
+    uiautomator dump, so it won't disrupt the accessibility service.
 
     Args:
         tester: AndroidAccessibilityTester instance
@@ -182,12 +172,10 @@ def check_screen_shows(tester, description):
         True if the screenshot matches the description, False otherwise
     """
     try:
-        screenshot_path = "/tmp/screen_check.png"
-        tester.screenshot(screenshot_path)
-        result = tester.validate_screenshot(screenshot_path, description)
-        if not result.result:
+        result = tester.check(description)
+        if not result:
             print(f"Screen check failed for '{description}': {result.error}")
-        return result.result
+        return bool(result)
     except Exception as e:
         print(f"Error checking screen: {e}")
         return False
