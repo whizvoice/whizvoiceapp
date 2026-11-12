@@ -16,6 +16,8 @@ object TestData {
     const val TEST_USER_NAME = "Test User"
     const val TEST_CHAT_ID = 1L
     const val TEST_CONVERSATION_ID = 123L
+    // Client-minted chat id (Room primary key); TEST_CHAT_ID / TEST_CONVERSATION_ID are server ids
+    const val TEST_CLIENT_CHAT_ID = "00000000-0000-4000-8000-000000000001"
     const val TEST_MESSAGE_ID = 1L
     
     // Test timestamps
@@ -33,9 +35,11 @@ object TestData {
     fun createConversationResponse(
         id: Long = TEST_CHAT_ID,
         title: String = TEST_CHAT_TITLE,
-        userId: String = TEST_USER_ID
+        userId: String = TEST_USER_ID,
+        clientChatId: String = TEST_CLIENT_CHAT_ID
     ) = ApiService.ConversationResponse(
         id = id,
+        client_chat_id = clientChatId,
         user_id = userId,
         title = title,
         created_at = TEST_TIMESTAMP,
@@ -82,10 +86,12 @@ object TestData {
     
     // Factory methods for local entities
     fun createChatEntity(
-        id: Long = TEST_CHAT_ID,
-        title: String = TEST_CHAT_TITLE
+        id: String = TEST_CLIENT_CHAT_ID,
+        title: String = TEST_CHAT_TITLE,
+        serverId: Long? = TEST_CHAT_ID
     ) = ChatEntity(
         id = id,
+        serverId = serverId,
         title = title,
         createdAt = TEST_TIMESTAMP_MILLIS,
         lastMessageTime = TEST_TIMESTAMP_MILLIS
@@ -93,7 +99,7 @@ object TestData {
     
     fun createMessageEntity(
         id: Long = TEST_MESSAGE_ID,
-        chatId: Long = TEST_CHAT_ID,
+        chatId: String = TEST_CLIENT_CHAT_ID,
         content: String = TEST_USER_MESSAGE,
         type: MessageType = MessageType.USER
     ) = MessageEntity(
@@ -106,9 +112,11 @@ object TestData {
     
     // Factory methods for API requests
     fun createConversationCreate(
-        title: String = TEST_CHAT_TITLE
+        title: String = TEST_CHAT_TITLE,
+        clientChatId: String = TEST_CLIENT_CHAT_ID
     ) = ApiService.ConversationCreate(
         title = title,
+        client_chat_id = clientChatId,
         source = "app"
     )
     

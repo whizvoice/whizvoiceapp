@@ -190,14 +190,7 @@ class AuthApi @Inject constructor(
                 }
 
                 Log.d(TAG, "Refresh token successful, processing response")
-                val jsonResponse = JSONObject(responseBody)
-                val newAccessToken = jsonResponse.getString("access_token")
-                val tokenType = jsonResponse.optString("token_type", "bearer") // Default to bearer if not present
-
-                NewAccessTokenResponse(
-                    access_token = newAccessToken,
-                    token_type = tokenType
-                )
+                NewAccessTokenResponse.fromJson(responseBody)
             }
         } catch (e: JSONException) {
             Log.e(TAG, "JSONException during refreshAccessToken", e)

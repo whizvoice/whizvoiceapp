@@ -32,6 +32,7 @@ class SettingsViewModel @Inject constructor(
     private val ttsManager: TTSManager,
     private val wakeWordPreferences: WakeWordPreferences,
     private val devPreferences: DevPreferences,
+    private val rageShakeDetector: com.example.whiz.services.RageShakeDetector,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) : ViewModel() {
     private val TAG = "SettingsViewModel"
@@ -121,6 +122,12 @@ class SettingsViewModel @Inject constructor(
     }
 
     val isDeveloperMode: StateFlow<Boolean> = devPreferences.isDeveloperMode
+
+    val isRageShakeEnabled: StateFlow<Boolean> = rageShakeDetector.isEnabled
+
+    fun setRageShakeEnabled(enabled: Boolean) {
+        rageShakeDetector.setEnabled(enabled)
+    }
 
     val isDeveloperModeVisible: Boolean
         get() {

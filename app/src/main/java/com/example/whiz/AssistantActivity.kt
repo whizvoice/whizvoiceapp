@@ -6,9 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
-import com.example.whiz.ui.viewmodels.ChatsListViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -22,7 +20,6 @@ import com.example.whiz.ui.viewmodels.ChatViewModel
 class AssistantActivity : AppCompatActivity() {
 
     private val TAG = "AssistantActivity"
-    private val chatsListViewModel: ChatsListViewModel by viewModels()
     private var isHandlingLaunch = false
     private var isFinishing = false
 
@@ -105,34 +102,20 @@ class AssistantActivity : AppCompatActivity() {
                                 startMainActivityAndFinish(intent)
                             } else {
                                 // App not in foreground - create fresh MainActivity with new chat
-                                Log.d(TAG, "App not in foreground - creating new optimistic chat")
-                                val newChatId = chatsListViewModel.createNewChatOptimistic("Assistant Chat")
-                                Log.d(TAG, "New optimistic chat created with ID: $newChatId")
-                                if (newChatId != -1L) {
-                                    val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                        putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
-                                        putExtra("FROM_ASSISTANT", true)
-                                        putExtra("FORCE_NAVIGATION", true)
-                                        putExtra("ENABLE_VOICE_MODE", true)
-                                        if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
-                                        transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
-                                    }
-                                    Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
-                                    startMainActivityAndFinish(intent)
-                                } else {
-                                    Log.e(TAG, "Failed to create new chat from assistant. Starting MainActivity with voice mode enabled instead.")
-                                    val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                        putExtra("FROM_ASSISTANT", true)
-                                        putExtra("ENABLE_VOICE_MODE", true)
-                                        putExtra("CREATE_NEW_CHAT_ON_START", true)
-                                        if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
-                                        transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
-                                    }
-                                    Log.d(TAG, "Starting MainActivity with voice mode and create_new_chat flag")
-                                    startMainActivityAndFinish(intent)
+                                // Mint the chat id here; no row is created until the first send.
+                                val newChatId = java.util.UUID.randomUUID().toString()
+                                Log.d(TAG, "App not in foreground - opening new chat $newChatId")
+                                val intent = Intent(this@AssistantActivity, MainActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    putExtra("NAVIGATE_TO_CHAT_ID", newChatId)
+                                    putExtra("FROM_ASSISTANT", true)
+                                    putExtra("FORCE_NAVIGATION", true)
+                                    putExtra("ENABLE_VOICE_MODE", true)
+                                    if (isLockScreenLaunch) putExtra("FROM_WAKE_WORD", true)
+                                    transcription?.let { putExtra("INITIAL_TRANSCRIPTION", it) }
                                 }
+                                Log.d(TAG, "Starting MainActivity with chat ID: $newChatId")
+                                startMainActivityAndFinish(intent)
                             }
                         } else {
                             Log.d(TAG, "User not authenticated, starting MainActivity without creating chat")

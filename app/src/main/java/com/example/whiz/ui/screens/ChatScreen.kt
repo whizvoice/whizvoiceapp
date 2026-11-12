@@ -100,8 +100,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.unit.round
-import androidx.compose.ui.res.painterResource
-import com.example.whiz.R
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -416,61 +414,10 @@ fun ChatInputBar(
     }
 }
 
-@Composable
-fun ChatLoadErrorView(
-    onRetry: () -> Unit,
-    onGoBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Error icon
-        Icon(
-            painter = painterResource(id = R.drawable.robot_error),
-            contentDescription = null,
-            modifier = Modifier
-                .size(128.dp)
-                .padding(bottom = 16.dp),
-            tint = MaterialTheme.colorScheme.error
-        )
-        
-        // Error message
-        Text(
-            text = "Couldn't load this chat",
-            style = MaterialTheme.typography.headlineSmall,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        
-        // Retry button (prominent)
-        Button(
-            onClick = onRetry,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Text("Retry")
-        }
-        
-        // Go back link (secondary)
-        TextButton(
-            onClick = onGoBack,
-            modifier = Modifier.padding(top = 4.dp)
-        ) {
-            Text("Go back", color = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class, kotlinx.coroutines.FlowPreview::class)
 @Composable
 fun ChatScreen(
-    chatId: Long,
+    chatId: String,
     onChatsListClick: () -> Unit,
     permissionManager: com.example.whiz.permissions.PermissionManager,
     voiceManager: VoiceManager,
@@ -535,7 +482,6 @@ fun ChatScreen(
     val showAsanaSetupDialog by viewModel.showAsanaSetupDialog.collectAsState() // Collect new state
     val showOverlayPermissionDialog by viewModel.showOverlayPermissionDialog.collectAsState()
     val isVoiceResponseEnabled by viewModel.isVoiceResponseEnabled.collectAsState()
-    val chatLoadError by viewModel.chatLoadError.collectAsState() // Collect chat load error state
     val isRefreshing by viewModel.isRefreshing.collectAsState() // For pull-to-refresh
     
 
@@ -691,10 +637,18 @@ fun ChatScreen(
     // React to force new chat signal from power button long-press while app is open
     LaunchedEffect(forceNewChatTimestamp) {
         if (forceNewChatTimestamp > 0L) {
-            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), resetting to new chat")
-            viewModel.loadChatWithVoiceMode(-1L, true)
-            // Clear the signal after handling
+            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT signal received (timestamp=$forceNewChatTimestamp), navigating to a new chat")
+            // Clear the signal on this entry before leaving it
             navController.currentBackStackEntry?.savedStateHandle?.remove<Long>("FORCE_NEW_CHAT")
+            // Replace the current chat entry (Home, if present, stays below). Popping by the
+            // current destination also covers the assistant cold-start stack, which has no Home.
+            val currentId = navController.currentBackStackEntry?.destination?.id
+            navController.navigate(Screen.Chat.newChatRoute()) {
+                if (currentId != null) popUpTo(currentId) { inclusive = true }
+                launchSingleTop = true
+            }
+            // The new ChatScreen reads ENABLE_VOICE_MODE on its own entry and re-enables listening
+            navController.currentBackStackEntry?.savedStateHandle?.set("ENABLE_VOICE_MODE", true)
         }
     }
 
@@ -705,7 +659,7 @@ fun ChatScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, chatId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && chatId != -1L && chatId != 0L) {
+            if (event == Lifecycle.Event.ON_RESUME) {
                 // Only sync on resume if this is NOT the initial load
                 // Initial load already syncs via loadChat
                 if (!isInitialLoad) {
@@ -720,24 +674,6 @@ fun ChatScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-    
-    // Handle when ViewModel's chat ID changes (e.g., after new chat creation)
-    // Track previous viewModelChatId to distinguish real migrations (new chat → server ID)
-    // from stale state (screen re-composed while ViewModel still has old chat ID)
-    var previousViewModelChatId by remember { mutableStateOf<Long?>(null) }
-    LaunchedEffect(viewModelChatId) {
-        val prev = previousViewModelChatId
-        previousViewModelChatId = viewModelChatId
-        // Only migrate if the PREVIOUS value was -1 (we were in new chat state)
-        // and the current value is a real chat ID. This prevents stale migration when
-        // the screen first composes with an old viewModelChatId from a previous chat.
-        if (prev == -1L && chatId == -1L && viewModelChatId != -1L && viewModelChatId != chatId) {
-            Log.d("ChatScreen", "🔥 UI_DEBUG: Chat ID migrated in ViewModel. Old: $chatId, New: $viewModelChatId")
-            // This is a migration (new chat creation), not a chat switch
-            // Use migrateChatId to avoid disconnecting WebSocket
-            viewModel.migrateChatId(chatId, viewModelChatId)
         }
     }
 
@@ -780,23 +716,22 @@ fun ChatScreen(
     }
 
     // Track whether we've already initialized voice settings for this screen instance
-    // This prevents re-initialization during chat migration (chatId changes)
     val voiceInitialized = remember { mutableStateOf(false) }
 
     // Voice app behavior: enable microphone for all chats on FIRST launch only
     // Don't override user's preference if they've manually toggled it
-    // IMPORTANT: Don't re-initialize during chat migration (when chatId changes from -1 to optimistic ID)
+    // A FORCE_NEW_CHAT (power button long-press while app is open) navigates to a new chat entry
+    // with ENABLE_VOICE_MODE set, so the new screen instance re-enables listening here.
     LaunchedEffect(enableTTSMode, effectiveHasPermission) {
         // Only initialize voice settings ONCE per screen instance
-        // Skip if already initialized (prevents override during chat migration)
         if (voiceInitialized.value) {
             return@LaunchedEffect
         }
 
         // Enable continuous listening on voice-activated entry (wake word, long-press, OS assistant)
-        // OR for new chats (optimistic negative IDs). For existing-chat re-entry without voice
+        // OR for new chats (no local row yet). For existing-chat re-entry without voice
         // activation, respect the user's current state (the MainActivity nav listener restores it).
-        if (effectiveHasPermission && (enableTTSMode || viewModelChatId < 0)) {
+        if (effectiveHasPermission && (enableTTSMode || viewModel.isNewChat(chatId))) {
             voiceManager.updateContinuousListeningEnabled(true)
             viewModel.ensureContinuousListeningEnabled()
             voiceInitialized.value = true
@@ -808,25 +743,6 @@ fun ChatScreen(
 
         // Note: TTS enabling is now handled by the separate LaunchedEffect above
         // using computed state to avoid coroutine cancellation issues
-    }
-
-    // Re-enable voice when FORCE_NEW_CHAT signal is received (power button long-press while app is open)
-    // This must be after voiceInitialized is defined
-    LaunchedEffect(forceNewChatTimestamp) {
-        if (forceNewChatTimestamp > 0L) {
-            Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling voice for new chat")
-
-            // Reset voice initialization flag so voice can be re-enabled
-            voiceInitialized.value = false
-
-            // Re-enable continuous listening for the new chat (same as initial voice launch)
-            if (effectiveHasPermission) {
-                Log.d("ChatScreen", "🔄 FORCE_NEW_CHAT: Re-enabling continuous listening")
-                voiceManager.updateContinuousListeningEnabled(true)
-                viewModel.ensureContinuousListeningEnabled()
-                voiceInitialized.value = true
-            }
-        }
     }
 
     // Voice transcription collection is handled in ChatViewModel (single instance)
@@ -889,17 +805,6 @@ fun ChatScreen(
         ) {
             key(chatId) {
                 when {
-                    // Show error state if there's a chat load error
-                    chatLoadError != null -> {
-                        ChatLoadErrorView(
-                            onRetry = {
-                                viewModel.retryChatLoad()
-                            },
-                            onGoBack = {
-                                onChatsListClick()
-                            }
-                        )
-                    }
                     // Show empty placeholder when no messages
                     messages.isEmpty() && !isResponding && !isSpeaking -> {
                         EmptyChatPlaceholder()
@@ -929,35 +834,32 @@ fun ChatScreen(
         }
         
         // Input bar - directly placed at bottom, no Scaffold bottomBar wrapper
-        // Hide input bar when there's a chat load error
-        if (chatLoadError == null) {
-            // Never disable text input - users should always be able to type
-            val isTextInputDisabled = false
-            // Only disable mic during TTS when no headphones (to prevent audio feedback)
-            val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
-            
-            ChatInputBar(
-                inputText = inputText,
-                isInputFromVoice = isInputFromVoice,
-                transcription = transcription,
-                isListening = isListening,
-                isInputDisabled = isTextInputDisabled,
-                isMicDisabled = isMicDisabled,
-                isResponding = isResponding,
-                isContinuousListeningEnabled = isContinuousListeningEnabled,
-                isSpeaking = isSpeaking,
-                shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
-                shouldShowMuteButton = shouldShowMuteButton,
-                onInputChange = viewModel::updateInputText,
-                onSendClick = { 
-                    // Always send regular messages - let server handle interruption logic
-                    viewModel.sendUserInput(inputText)
-                },
-                onMicClick = { handleMicClick() },
-                onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
-                surfaceColor = inputSurfaceColor
-            )
-        }
+        // Never disable text input - users should always be able to type
+        val isTextInputDisabled = false
+        // Only disable mic during TTS when no headphones (to prevent audio feedback)
+        val isMicDisabled = voiceManager.shouldShowMicButtonDuringTTS()
+
+        ChatInputBar(
+            inputText = inputText,
+            isInputFromVoice = isInputFromVoice,
+            transcription = transcription,
+            isListening = isListening,
+            isInputDisabled = isTextInputDisabled,
+            isMicDisabled = isMicDisabled,
+            isResponding = isResponding,
+            isContinuousListeningEnabled = isContinuousListeningEnabled,
+            isSpeaking = isSpeaking,
+            shouldShowMicDuringTTS = voiceManager.shouldShowMicButtonDuringTTS(),
+            shouldShowMuteButton = shouldShowMuteButton,
+            onInputChange = viewModel::updateInputText,
+            onSendClick = {
+                // Always send regular messages - let server handle interruption logic
+                viewModel.sendUserInput(inputText)
+            },
+            onMicClick = { handleMicClick() },
+            onMicClickDuringTTS = { voiceManager.handleMicClickDuringTTS() },
+            surfaceColor = inputSurfaceColor
+        )
         
         // Snackbar host at bottom
         SnackbarHost(snackbarHostState)

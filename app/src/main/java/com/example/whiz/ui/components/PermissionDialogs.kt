@@ -510,3 +510,60 @@ fun AccessibilityPermissionDialog(
         dismissButton = null // Remove the dismiss button entirely
     )
 }
+
+/**
+ * Shown when the accessibility service is still enabled in Settings but the OS has not
+ * bound it (e.g. after repeated process kills). Same shape as AccessibilityPermissionDialog,
+ * but the fix is toggling the service OFF and back ON — just re-enabling does nothing
+ * because Android already considers it enabled. Dismisses automatically once the service
+ * reconnects (WhizAccessibilityService.onServiceConnected clears the reconnectNeeded flag).
+ */
+@Composable
+fun AccessibilityReconnectDialog(
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    InlineDialog(
+        onDismissRequest = {}, // Make dialog non-dismissible
+        modifier = Modifier.semantics {
+            contentDescription = "Accessibility reconnect dialog"
+        },
+        title = {
+            Text(
+                "Reconnect Accessibility Service",
+                modifier = Modifier.semantics {
+                    contentDescription = "Reconnect accessibility service title"
+                }
+            )
+        },
+        text = {
+            Text(
+                text = "WhizVoice's accessibility service got disconnected. Android still shows it " +
+                      "as enabled, but it isn't running, so voice actions in other apps will fail.\n\n" +
+                      "To reconnect it, in Settings:\n" +
+                      "1. Look for 'Downloaded apps' or 'Installed services'\n" +
+                      "2. Find 'WhizVoice' in the list\n" +
+                      "3. Toggle it OFF, then back ON and confirm\n\n" +
+                      "This dialog will close on its own once the service reconnects.",
+                textAlign = TextAlign.Start,
+                modifier = Modifier.semantics {
+                    contentDescription = "Accessibility reconnect explanation"
+                }
+            )
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onOpenSettings()
+                    // Don't dismiss here - the dialog clears itself when the service reconnects
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = "Open accessibility settings button"
+                }
+            ) {
+                Text("Open Settings")
+            }
+        },
+        dismissButton = null // Remove the dismiss button entirely
+    )
+}

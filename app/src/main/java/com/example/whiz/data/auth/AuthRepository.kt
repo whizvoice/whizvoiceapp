@@ -32,8 +32,21 @@ import javax.inject.Singleton
 data class RefreshTokenRequest(val refresh_token: String)
 data class NewAccessTokenResponse(
     val access_token: String,
-    val token_type: String = "bearer" // Defaulted, server might not send it
-)
+    val token_type: String = "bearer", // Defaulted, server might not send it
+    /** Rotated refresh token. Null when talking to a server that does not rotate. */
+    val refresh_token: String? = null
+) {
+    companion object {
+        fun fromJson(body: String): NewAccessTokenResponse {
+            val json = org.json.JSONObject(body)
+            return NewAccessTokenResponse(
+                access_token = json.getString("access_token"),
+                token_type = json.optString("token_type", "bearer"),
+                refresh_token = if (json.isNull("refresh_token")) null else json.getString("refresh_token")
+            )
+        }
+    }
+}
 
 // Preference keys
 private object PreferenceKeys {
@@ -241,9 +254,10 @@ open class AuthRepository @Inject constructor(
             // Assuming successful response (2xx), Retrofit would have populated this.
             // If server returns non-2xx, Retrofit throws HttpException, caught below.
             
-            Log.i(TAG, "🔄 Access token refreshed successfully")
-            // Save the new access token. The refresh token remains the same in this iteration.
-            saveAuthTokensFromServer(response.access_token, currentRefreshToken)
+            Log.i(TAG, "🔄 Access token refreshed successfully (refresh token rotated: ${response.refresh_token != null})")
+            // The server rotates the refresh token (sliding 7-day window, 30-day cap).
+            // Fall back to the current one if an older server omits it.
+            saveAuthTokensFromServer(response.access_token, response.refresh_token ?: currentRefreshToken)
             Log.d(TAG, "🔄 New access token saved to preferences")
             true
         } catch (e: retrofit2.HttpException) { // Catch specific HttpException from Retrofit

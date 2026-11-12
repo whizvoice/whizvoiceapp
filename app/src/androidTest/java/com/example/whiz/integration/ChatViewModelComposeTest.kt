@@ -56,11 +56,8 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private var createdNewChatThisTest = false
     private var testUniqueId: Long = 0
 
@@ -78,13 +75,6 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
-        // Grant microphone permission for rapid message testing
-        Log.d(TAG, "🎙️ Granting microphone permission for rapid message tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
 
         // This might be set automatically by test framework
         val animationScale = Settings.Global.getFloat(
@@ -190,7 +180,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             createdNewChatThisTest = true
             
             // Capture initial chats before creating new ones
-            val initialChats = repository.getAllChats()
+            val initialChats = repository.listChats()
             
             // Step 1: Verify app is ready (already launched by createAndroidComposeRule)
             Log.d(TAG, "📱 Step 1: Verifying app is ready (already launched by createAndroidComposeRule)")
@@ -309,7 +299,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
             
             // Track the newly created chat for cleanup (after sending message when chat definitely exists)
             try {
-                val currentChats = repository.getAllChats()
+                val currentChats = repository.listChats()
                 val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
                 newChats.forEach { chat ->
                     createdChatIds.add(chat.id)
@@ -402,7 +392,7 @@ class ChatViewModelComposeTest : BaseIntegrationTest() {
                         // Create a mock MessageEntity with the content we found
                         found = MessageEntity(
                             id = 0,
-                            chatId = 0,
+                            chatId = "",
                             content = "Barista",
                             type = MessageType.ASSISTANT
                         )
