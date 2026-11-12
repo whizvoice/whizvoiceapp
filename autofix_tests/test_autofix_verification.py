@@ -37,24 +37,22 @@ def test_autofix_sms_stuck_in_search_screen(tester):
 
     # Validate the agent is NOT stuck on the SMS search screen and actually
     # opened the conversation / drafted the message.
-    tester.screenshot("/tmp/whiz_sms_search.png")
-    result = tester.validate_screenshot(
-        "/tmp/whiz_sms_search.png",
+    result = tester.check(
         "Google Messages has an open SMS conversation with Ruth Grace Wong "
         "(a message thread / text input field is visible), or a Whiz draft "
         "overlay showing the drafted message is visible. It must NOT be the "
-        "Messages search screen showing 'No results found'."
+        "Messages search screen showing 'No results found'.",
+        screenshot_path="/tmp/whiz_sms_search.png",
     )
     if not result:
         # Fall back to checking the Whiz chat for a successful draft message
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_sms_chat_result.png")
-        result = tester.validate_screenshot(
-            "/tmp/whiz_sms_chat_result.png",
+        result = tester.check(
             "The Whiz chat shows an assistant message about drafting or sending a "
             "text message to Ruth Grace Wong. It must NOT show an error about "
-            "being stuck in the search screen or being unable to find the contact."
+            "being stuck in the search screen or being unable to find the contact.",
+            screenshot_path="/tmp/whiz_sms_chat_result.png",
         )
         if not result:
             save_failed_screenshot(
