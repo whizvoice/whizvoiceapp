@@ -36,12 +36,11 @@ def test_autofix_ytmusic_no_action_menu(tester):
     # Validate the queue result in the Whiz chat
     tester.open_app("com.example.whiz.debug")
     time.sleep(3)
-    tester.screenshot("/tmp/whiz_ytmusic_queue_result.png")
-    result = tester.validate_screenshot(
-        "/tmp/whiz_ytmusic_queue_result.png",
+    result = tester.check(
         "The Whiz chat shows an assistant reply confirming that a song (e.g. "
         "'How It's Done') was added to the queue on YouTube Music. It should NOT "
-        "say it couldn't find the song, couldn't open the menu, or couldn't queue it."
+        "say it couldn't find the song, couldn't open the menu, or couldn't queue it.",
+        screenshot_path="/tmp/whiz_ytmusic_queue_result.png",
     )
     if not result:
         save_failed_screenshot(tester, test_name, "validation_failed")
