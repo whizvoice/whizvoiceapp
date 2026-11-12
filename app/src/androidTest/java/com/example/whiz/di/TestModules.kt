@@ -93,11 +93,11 @@ object TestAppModule {
         @ApplicationContext context: Context,
         messageDao: MessageDao,
         chatDao: ChatDao,
-        connectionStateManager: ConnectionStateManager,
+        database: WhizDatabase,
         authRepositoryProvider: Provider<AuthRepository>
     ): WhizRepository {
         Log.d(TAG, "🔧 Creating WhizRepository with REAL ApiService and database DAOs")
-        return WhizRepository(apiService, context, messageDao, chatDao, connectionStateManager, authRepositoryProvider)
+        return WhizRepository(apiService, context, messageDao, chatDao, database, authRepositoryProvider)
     }
 
     @Provides
@@ -158,10 +158,11 @@ object TestAppModule {
     fun provideWhizServerRepository(
         okHttpClient: OkHttpClient,
         authRepository: AuthRepository,
-        connectionStateManager: ConnectionStateManager
+        connectionStateManager: ConnectionStateManager,
+        repository: WhizRepository
     ): WhizServerRepository {
         Log.d(TAG, "🔧 Creating REAL WhizServerRepository...")
-        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager)
+        return WhizServerRepository(okHttpClient, authRepository, connectionStateManager, repository)
     }
     
     @Provides

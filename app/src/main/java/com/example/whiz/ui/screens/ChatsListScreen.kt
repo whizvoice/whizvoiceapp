@@ -71,7 +71,7 @@ import com.google.accompanist.swiperefresh.rememberSwipeRefreshState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatsListScreen(
-    onChatSelected: (Long) -> Unit,
+    onChatSelected: (String) -> Unit,
     onNewChatClick: () -> Unit,
     onSettingsClick: () -> Unit,
     hasPermission: Boolean = false,
@@ -82,7 +82,7 @@ fun ChatsListScreen(
 ) {
     val chats by viewModel.chats.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val isInitialLoad by viewModel.isInitialLoad.collectAsState()
+    val isFirstSyncComplete by viewModel.isFirstSyncComplete.collectAsState()
     val isShowingCachedData by viewModel.isShowingCachedData.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
     
@@ -193,7 +193,7 @@ fun ChatsListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            if (chats.isEmpty() && isInitialLoad) {
+            if (chats.isEmpty() && !isFirstSyncComplete) {
                 // Show loading text while initial sync is in progress
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -223,8 +223,8 @@ fun ChatsListScreen(
 @Composable
 fun ChatsList(
     chats: List<ChatEntity>,
-    onChatClick: (Long) -> Unit,
-    onChatLongPress: (Long) -> Unit
+    onChatClick: (String) -> Unit,
+    onChatLongPress: (String) -> Unit
 ) {
     var chatToDelete by remember { mutableStateOf<ChatEntity?>(null) }
 

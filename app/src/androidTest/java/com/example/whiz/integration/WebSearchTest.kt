@@ -44,7 +44,7 @@ class WebSearchTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     private val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     private val uniqueTestId = System.currentTimeMillis()
 
     // Track the navigation-scoped ViewModel
@@ -125,7 +125,7 @@ class WebSearchTest : BaseIntegrationTest() {
             // Step 2: Navigate to new chat
             Log.d(TAG, "➕ step 2: navigating to new chat...")
             val initialChats = try {
-                repository.getAllChats()
+                repository.listChats()
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
@@ -146,7 +146,7 @@ class WebSearchTest : BaseIntegrationTest() {
             }
 
             // Track the new chat
-            val currentChats = repository.getAllChats()
+            val currentChats = repository.listChats()
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 if (!createdChatIds.contains(chat.id)) {
@@ -272,7 +272,7 @@ class WebSearchTest : BaseIntegrationTest() {
             // Track final chat ID for cleanup
             try {
                 val finalChatId = chatViewModel.chatId.value
-                if (finalChatId != null && finalChatId != -1L && finalChatId != 0L && !createdChatIds.contains(finalChatId)) {
+                if (finalChatId != null && !createdChatIds.contains(finalChatId)) {
                     createdChatIds.add(finalChatId)
                     Log.d(TAG, "📝 Tracked final chat ID: $finalChatId")
                 }

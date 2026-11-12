@@ -25,7 +25,6 @@ import com.example.whiz.services.AppLifecycleService
 import com.example.whiz.services.SpeechRecognitionService
 import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.ui.viewmodels.ChatViewModel
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.data.local.MessageType
 import com.example.whiz.integration.GoogleSignInAutomator
 import com.example.whiz.MainActivity
@@ -54,9 +53,6 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     override lateinit var speechRecognitionService: SpeechRecognitionService  // ← Direct access to speech service
     
     @Inject
-    lateinit var permissionManager: PermissionManager  // ← Permission coordinator
-    
-    @Inject
     lateinit var appLifecycleService: AppLifecycleService
 
     @Inject
@@ -69,7 +65,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
     private val uniqueTestId = "LIFECYCLE_TEST_${System.currentTimeMillis()}"
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     // Track the navigation-scoped ViewModel for thinking indicator tests
     private var navigationScopedViewModel: ChatViewModel? = null
@@ -84,13 +80,6 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             navigationScopedViewModel = viewModel
         }
 
-        // Grant microphone permission for testing continuous listening
-        Log.d(TAG, "🔐 Granting microphone permission for testing...")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
-        
         // Clean up any existing test chats proactively
         runBlocking {
             cleanupTestChats()
@@ -227,7 +216,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 
                 // Capture initial chat count before creating new chat
-                val initialChats = runBlocking { repository.getAllChats() }
+                val initialChats = runBlocking { repository.listChats() }
                 
                 Log.d(TAG, "🔍 Looking for New Chat FAB to create a chat...")
                 if (!clickNewChatButtonAndWaitForChatScreen()) {
@@ -237,7 +226,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
                 
                 // Track the newly created chat for cleanup
                 try {
-                    val currentChats = runBlocking { repository.getAllChats() }
+                    val currentChats = runBlocking { repository.listChats() }
                     val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
                     newChats.forEach { chat ->
                         createdChatIds.add(chat.id)
@@ -543,7 +532,11 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
             // a LazyColumn scrollable when its content actually overflows, so short chat
             // lists (e.g. after cleanup runs) yield null. Chat rows are long-clickable;
             // the header buttons and the New Chat FAB aren't, so that distinguishes them.
-            val firstRow = device.findObjects(By.clickable(true).longClickable(true).pkg(packageName))
+            // The "My Chats" header renders before the list has loaded ("Loading chats..."),
+            // so wait for a row to appear rather than scanning immediately.
+            val rowSelector = By.clickable(true).longClickable(true).pkg(packageName)
+            device.wait(Until.hasObject(rowSelector), 10000)
+            val firstRow = device.findObjects(rowSelector)
                 .firstOrNull { it.findObject(By.clazz("android.widget.TextView")) != null }
             if (firstRow == null) {
                 failWithScreenshot("Could not find any chat row to tap in chats list")
@@ -598,7 +591,7 @@ class AppLifecycleIntegrationTest : BaseIntegrationTest() {
 
             // Track any chat created by the voice launch so cleanup picks it up
             try {
-                val currentChats = runBlocking { repository.getAllChats() }
+                val currentChats = runBlocking { repository.listChats() }
                 currentChats.filter { it.id !in createdChatIds }.forEach { chat ->
                     createdChatIds.add(chat.id)
                     Log.d(TAG, "📝 Tracked voice-launch chat for cleanup: ${chat.id} ('${chat.title}')")

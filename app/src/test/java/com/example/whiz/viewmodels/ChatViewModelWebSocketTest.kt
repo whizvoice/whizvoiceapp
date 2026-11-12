@@ -14,12 +14,12 @@ class ChatViewModelWebSocketTest {
     @Test
     fun pendingRequests_tracking_maintainsCorrectState() {
         // Test business logic for pendingRequests lifecycle
-        val pendingRequests = mutableMapOf<String, Long>()
+        val pendingRequests = mutableMapOf<String, String>()
         
         // Add requests
         val request1 = "req-1"
         val request2 = "req-2"
-        val chatId = 123L
+        val chatId = "chat-uuid-123"
         
         pendingRequests[request1] = chatId
         pendingRequests[request2] = chatId
@@ -42,8 +42,8 @@ class ChatViewModelWebSocketTest {
     @Test
     fun requestIdValidation_handlesOrphanedResponses() {
         // Test business logic for handling orphaned responses
-        val pendingRequests = mutableMapOf<String, Long>()
-        val currentChatId = 123L
+        val pendingRequests = mutableMapOf<String, String>()
+        val currentChatId = "chat-uuid-123"
         
         // Setup: no pending requests (simulates disconnect scenario)
         pendingRequests.clear()
@@ -66,8 +66,8 @@ class ChatViewModelWebSocketTest {
     @Test
     fun webSocketEventProcessing_messageWithRequestId_processesCorrectly() {
         // Test the logic for processing WebSocket messages with request IDs
-        val pendingRequests = mutableMapOf<String, Long>()
-        val currentChatId = 123L
+        val pendingRequests = mutableMapOf<String, String>()
+        val currentChatId = "chat-uuid-123"
         
         // Setup pending request
         val requestId = "test-request-id"
@@ -75,8 +75,9 @@ class ChatViewModelWebSocketTest {
         
         // Create message event
         val messageEvent = WebSocketEvent.Message(
-            text = "Test response",
-            requestId = requestId
+            content = "Test response",
+            requestId = requestId,
+            chatId = currentChatId
         )
         
         // Process message
@@ -84,7 +85,7 @@ class ChatViewModelWebSocketTest {
             is WebSocketEvent.Message -> {
                 val eventRequestId = messageEvent.requestId
                 if (eventRequestId != null) {
-                    pendingRequests.containsKey(eventRequestId) || currentChatId > 0
+                    pendingRequests.containsKey(eventRequestId) || messageEvent.chatId == currentChatId
                 } else {
                     true // No request ID means it's a valid general message
                 }
@@ -104,8 +105,9 @@ class ChatViewModelWebSocketTest {
     fun webSocketEventProcessing_messageWithoutRequestId_processesCorrectly() {
         // Test processing messages without request IDs (legacy/server-initiated)
         val messageEvent = WebSocketEvent.Message(
-            text = "Server initiated message",
-            requestId = null
+            content = "Server initiated message",
+            requestId = null,
+            chatId = "chat-uuid-123"
         )
         
         // Should be processed as valid regardless of pendingRequests state
@@ -122,8 +124,8 @@ class ChatViewModelWebSocketTest {
     @Test
     fun pendingRequestsClearing_onDisconnect_preservesResponseCapability() {
         // Test that clearing pendingRequests doesn't break response processing
-        val pendingRequests = mutableMapOf<String, Long>()
-        val currentChatId = 123L
+        val pendingRequests = mutableMapOf<String, String>()
+        val currentChatId = "chat-uuid-123"
         val requestId = "test-request"
         
         // Setup: message sent and tracked
@@ -138,7 +140,7 @@ class ChatViewModelWebSocketTest {
         val canProcess = if (pendingRequests.containsKey(requestId)) {
             true // Found in pending
         } else {
-            currentChatId > 0 // Fallback to current chat
+            currentChatId.isNotBlank() // Fallback to current chat
         }
         
         assertTrue("Should be able to process response even after disconnect", canProcess)
@@ -190,8 +192,11 @@ class ChatViewModelWebSocketTest {
     @Test
     fun chatIdValidation_rejectsInvalidValues() {
         // Test validation logic for chat IDs
-        val validChatIds = listOf(1L, 123L, 999999L)
-        val invalidChatIds = listOf(0L, -1L, -999L)
+        val validChatIds = listOf(
+            "123e4567-e89b-12d3-a456-426614174000",
+            java.util.UUID.randomUUID().toString()
+        )
+        val invalidChatIds = listOf("", "   ")
         
         validChatIds.forEach { chatId ->
             assertTrue("Valid chat ID should pass validation: $chatId", 
@@ -232,8 +237,8 @@ class ChatViewModelWebSocketTest {
     }
 
     // Helper functions that would be in the actual ChatViewModel
-    private fun isValidChatId(chatId: Long): Boolean {
-        return chatId > 0
+    private fun isValidChatId(chatId: String): Boolean {
+        return chatId.isNotBlank()
     }
     
     private fun isValidMessageContent(content: String): Boolean {

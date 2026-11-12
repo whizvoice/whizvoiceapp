@@ -1358,14 +1358,22 @@ class DeviceControlTools @Inject constructor(
 
         return try {
             val contactsList = JSONArray()
-            val contactIds = mutableListOf<Pair<String, String>>() // (contact_id, display_name)
+            val maxContacts = 5
+            // contact_id -> (display_name, matched_on). Insertion-ordered so name
+            // matches come first, then nickname matches; a contact that matches
+            // both is only recorded once (as a name match).
+            // lookup_key is ContactsContract's stable per-contact handle (survives
+            // re-syncs, unlike _ID); the server uses it as the import candidate id.
+            data class PhoneContactHit(val displayName: String?, val matchedOn: String, val lookupKey: String?)
+            val contactIds = LinkedHashMap<String, PhoneContactHit>()
 
             // Query contacts by display name
             val contactsCursor: Cursor? = context.contentResolver.query(
                 ContactsContract.Contacts.CONTENT_URI,
                 arrayOf(
                     ContactsContract.Contacts._ID,
-                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+                    ContactsContract.Contacts.LOOKUP_KEY
                 ),
                 "${ContactsContract.Contacts.DISPLAY_NAME_PRIMARY} LIKE ?",
                 arrayOf("%$name%"),
@@ -1373,23 +1381,63 @@ class DeviceControlTools @Inject constructor(
             )
 
             contactsCursor?.use { cursor ->
-                var count = 0
-                while (cursor.moveToNext() && count < 5) {
+                while (cursor.moveToNext() && contactIds.size < maxContacts) {
                     val contactId = cursor.getString(
                         cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
                     )
                     val displayName = cursor.getString(
                         cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY)
                     )
-                    contactIds.add(Pair(contactId, displayName))
-                    count++
+                    val lookupKey = cursor.getString(
+                        cursor.getColumnIndexOrThrow(ContactsContract.Contacts.LOOKUP_KEY)
+                    )
+                    contactIds[contactId] = PhoneContactHit(displayName, "name", lookupKey)
+                }
+            }
+
+            // Query contacts by nickname (ContactsContract.CommonDataKinds.Nickname is a
+            // standard data row; DISPLAY_NAME_PRIMARY is built from the structured name
+            // and never includes it, so "Jonny" wouldn't otherwise find "Jonathan Smith").
+            if (contactIds.size < maxContacts) {
+                val nicknameCursor: Cursor? = context.contentResolver.query(
+                    ContactsContract.Data.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.Data.CONTACT_ID,
+                        ContactsContract.Data.DISPLAY_NAME_PRIMARY,
+                        ContactsContract.Data.LOOKUP_KEY,
+                        ContactsContract.CommonDataKinds.Nickname.NAME
+                    ),
+                    "${ContactsContract.Data.MIMETYPE} = ? AND ${ContactsContract.CommonDataKinds.Nickname.NAME} LIKE ?",
+                    arrayOf(ContactsContract.CommonDataKinds.Nickname.CONTENT_ITEM_TYPE, "%$name%"),
+                    "${ContactsContract.Data.DISPLAY_NAME_PRIMARY} ASC"
+                )
+                nicknameCursor?.use { cursor ->
+                    while (cursor.moveToNext() && contactIds.size < maxContacts) {
+                        val contactId = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.Data.CONTACT_ID)
+                        )
+                        if (contactIds.containsKey(contactId)) continue
+                        val displayName = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.Data.DISPLAY_NAME_PRIMARY)
+                        )
+                        val nickname = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Nickname.NAME)
+                        )
+                        val lookupKey = cursor.getString(
+                            cursor.getColumnIndexOrThrow(ContactsContract.Data.LOOKUP_KEY)
+                        )
+                        Log.i(TAG, "Nickname match for '$name': '$nickname' -> $displayName")
+                        contactIds[contactId] = PhoneContactHit(displayName, "nickname", lookupKey)
+                    }
                 }
             }
 
             // For each contact, get phone numbers, emails, and addresses
-            for ((contactId, displayName) in contactIds) {
+            for ((contactId, hit) in contactIds) {
                 val contactJson = JSONObject().apply {
-                    put("display_name", displayName)
+                    put("display_name", hit.displayName)
+                    put("matched_on", hit.matchedOn)
+                    if (hit.lookupKey != null) put("lookup_key", hit.lookupKey)
                 }
 
                 // Phone numbers
@@ -1398,7 +1446,8 @@ class DeviceControlTools @Inject constructor(
                     ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                     arrayOf(
                         ContactsContract.CommonDataKinds.Phone.NUMBER,
-                        ContactsContract.CommonDataKinds.Phone.TYPE
+                        ContactsContract.CommonDataKinds.Phone.TYPE,
+                        ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY
                     ),
                     "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
                     arrayOf(contactId),
@@ -1425,6 +1474,12 @@ class DeviceControlTools @Inject constructor(
                             "${label}_$i"
                         } else label
                         phoneNumbers.put(finalLabel, number)
+                        // IS_SUPER_PRIMARY = the user's chosen default across all
+                        // linked raw contacts (set via "Set default" in Contacts).
+                        if (cursor.getInt(cursor.getColumnIndexOrThrow(
+                                ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY)) != 0) {
+                            contactJson.put("primary_phone", finalLabel)
+                        }
                     }
                 }
                 if (phoneNumbers.length() > 0) {
@@ -1437,7 +1492,8 @@ class DeviceControlTools @Inject constructor(
                     ContactsContract.CommonDataKinds.Email.CONTENT_URI,
                     arrayOf(
                         ContactsContract.CommonDataKinds.Email.ADDRESS,
-                        ContactsContract.CommonDataKinds.Email.TYPE
+                        ContactsContract.CommonDataKinds.Email.TYPE,
+                        ContactsContract.CommonDataKinds.Email.IS_SUPER_PRIMARY
                     ),
                     "${ContactsContract.CommonDataKinds.Email.CONTACT_ID} = ?",
                     arrayOf(contactId),
@@ -1462,6 +1518,10 @@ class DeviceControlTools @Inject constructor(
                             "${label}_$i"
                         } else label
                         emails.put(finalLabel, address)
+                        if (cursor.getInt(cursor.getColumnIndexOrThrow(
+                                ContactsContract.CommonDataKinds.Email.IS_SUPER_PRIMARY)) != 0) {
+                            contactJson.put("primary_email", finalLabel)
+                        }
                     }
                 }
                 if (emails.length() > 0) {

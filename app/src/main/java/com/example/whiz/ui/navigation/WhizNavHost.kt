@@ -57,7 +57,7 @@ fun WhizNavHost(
     val currentVoiceMode = currentBackStackEntry?.savedStateHandle?.get<Boolean>("ENABLE_VOICE_MODE") == true
     val currentFromAssistant = currentBackStackEntry?.arguments?.getBoolean("FROM_ASSISTANT") == true
     val fromAssistant = isVoiceLaunch || previousFromAssistant || currentVoiceMode || currentFromAssistant
-    val chatId = navController.previousBackStackEntry?.arguments?.getLong("NAVIGATE_TO_CHAT_ID") ?: -1L
+    val chatId = navController.previousBackStackEntry?.arguments?.getString("NAVIGATE_TO_CHAT_ID")
     
     // Debug logging for voice launch detection
     Log.d("WhizNavHost", "🔍 Voice launch detection:")
@@ -94,11 +94,8 @@ fun WhizNavHost(
     fun NavHostController.preloadAndNavigate(route: String) {
         when {
             route.startsWith("chat/") && route != "chat/new" -> {
-                val chatId = route.substringAfter("chat/").toLong()
+                val chatId = route.substringAfter("chat/")
                 preloadManager.preloadChat(chatId)
-            }
-            route == "home" -> {
-                preloadManager.preloadChatsList()
             }
         }
         navigate(route)
@@ -110,8 +107,8 @@ fun WhizNavHost(
     // on recomposition, which would create duplicate ChatScreen/ViewModel instances
     val startDestination = remember {
         if (isAuthenticated) {
-            if (fromAssistant && chatId > 0) "chat/$chatId"
-            else if (fromAssistant) "chat/-1"
+            if (fromAssistant && chatId != null) Screen.Chat.route(chatId)
+            else if (fromAssistant) Screen.Chat.newChatRoute()
             else Screen.Home.route
         } else {
             Screen.Login.route
@@ -161,23 +158,17 @@ fun WhizNavHost(
                 )
             }
         ) {
-            // Preload any relevant data
-            LaunchedEffect(Unit) {
-                delay(50L)
-                preloadManager.preloadChatsList()
-            }
-
             ChatsListScreen(
                 onChatSelected = { chatId ->
                     // Preload chat data before navigating
                     preloadManager.preloadChat(chatId)
-                    navController.navigate("chat/$chatId") {
+                    navController.navigate(Screen.Chat.route(chatId)) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
                 },
                 onNewChatClick = {
-                    navController.navigate("chat/-1") {
+                    navController.navigate(Screen.Chat.newChatRoute()) {
                         popUpTo(Screen.Home.route) { inclusive = false }
                         launchSingleTop = true
                     }
@@ -222,7 +213,7 @@ fun WhizNavHost(
 
         composable(
             route = "chat/{chatId}",
-            arguments = listOf(navArgument("chatId") { type = NavType.LongType }),
+            arguments = listOf(navArgument("chatId") { type = NavType.StringType }),
             enterTransition = {
                 when (initialState.destination.route) {
                     Screen.Home.route -> {
@@ -248,7 +239,7 @@ fun WhizNavHost(
             popEnterTransition = { null },
             popExitTransition = { null }
         ) { backStackEntry ->
-            val chatId = backStackEntry.arguments?.getLong("chatId") ?: -1L
+            val chatId = checkNotNull(backStackEntry.arguments?.getString("chatId")) { "chat route requires chatId" }
 
             // For voice launch, enable voice mode
             if (isVoiceLaunch) {
@@ -264,8 +255,6 @@ fun WhizNavHost(
             ChatScreen(
                 chatId = chatId,
                 onChatsListClick = {
-                    // Preload chats list before navigating
-                    preloadManager.preloadChatsList()
                     navController.navigate(Screen.Home.route) {
                         popUpTo(Screen.Home.route) { inclusive = true }
                     }
