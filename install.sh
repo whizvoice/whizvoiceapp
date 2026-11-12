@@ -202,11 +202,8 @@ if adb shell pm list packages 2>/dev/null | grep -q "^package:${PACKAGE_NAME}$";
         adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
         log_with_time "✅ Permissions granted"
 
-        # Launch and stop the app to verify it works
-        log_with_time "⏳ Verifying app installation..."
-        adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" >/dev/null 2>&1 || true
-        sleep 2
-        adb shell am force-stop "$PACKAGE_NAME" >/dev/null 2>&1 || true
+        # NOTE: never force-stop the app here. On Android 16 a force-stop removes the app's
+        # accessibility service from enabled_accessibility_services.
         
         if [[ "$ACCESSIBILITY_WAS_ENABLED" == "false" ]]; then
             log_with_time ""
@@ -237,9 +234,8 @@ else
     ACCESSIBILITY_WAS_ENABLED="false"
 fi
 
-# Force stop the app first to ensure fresh start
-log_with_time "🛑 Force stopping app to ensure fresh installation..."
-adb shell am force-stop "$PACKAGE_NAME" 2>/dev/null || true
+# No explicit force-stop before install: the package manager stops the app itself during
+# the update, and an extra force-stop only disables the accessibility service again.
 
 # Install the APK
 log_with_time "📱 Installing APK..."
@@ -274,11 +270,12 @@ adb shell pm grant "$PACKAGE_NAME" android.permission.QUERY_ALL_PACKAGES 2>/dev/
 adb shell pm grant "$PACKAGE_NAME" android.permission.READ_CONTACTS 2>/dev/null || true
 log_with_time "✅ Permissions granted"
 
-# Launch and stop the app to verify installation
-log_with_time "⏳ Verifying installation..."
-adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" >/dev/null 2>&1 || true
-sleep 2
-adb shell am force-stop "$PACKAGE_NAME" >/dev/null 2>&1 || true
+# Verify the package is installed without launching or force-stopping it (a force-stop
+# on Android 16 disables the accessibility service).
+if ! adb shell pm path "$PACKAGE_NAME" 2>/dev/null | grep -q "^package:"; then
+    log_with_time "❌ $PACKAGE_NAME not found after install"
+    exit 1
+fi
 
 # Check accessibility service status after installation
 if [[ "$IS_INSTALLED" == "true" ]]; then

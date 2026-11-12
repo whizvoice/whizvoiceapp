@@ -78,6 +78,29 @@ class SpeechRecognitionService @Inject constructor(
 
     // --- Late segment result deduplication ---
     private var lastCallbackText: String = ""
+    // How long a bubble stuck-partial auto-send suppresses a matching real final. Bounds the
+    // dedup by time (using BubbleOverlayService.lastAutoSentTimestamp) instead of relying on the
+    // guard surviving onBeginningOfSpeech, so a late real final after the watchdog can't double-send,
+    // while a genuinely-repeated utterance later than this window still goes through.
+    private val AUTO_SENT_DEDUP_WINDOW_MS = 3_000L
+
+    /**
+     * True if [text] matches the bubble's stuck-partial auto-send (BubbleOverlayService.lastAutoSentText)
+     * within [AUTO_SENT_DEDUP_WINDOW_MS]. When the bubble watchdog promotes a stuck partial to a real
+     * send, the recognizer can still later deliver the same utterance as a final (via onSegmentResults
+     * OR the onResults fallback); both must suppress it here to avoid double-sending. Time-bounded so a
+     * genuinely-repeated word after the window still goes through. Prefix-aware because a final and a
+     * partial of the same utterance often differ only by a trailing fragment.
+     */
+    private fun isDuplicateOfAutoSent(text: String): Boolean {
+        val autoSentText = BubbleOverlayService.lastAutoSentText
+        if (autoSentText.isBlank()) return false
+        val age = System.currentTimeMillis() - BubbleOverlayService.lastAutoSentTimestamp
+        if (age !in 0..AUTO_SENT_DEDUP_WINDOW_MS) return false
+        val t = text.trim()
+        val a = autoSentText.trim()
+        return t == a || t.startsWith(a) || a.startsWith(t)
+    }
 
     // --- First partial timing ---
     private var beginningOfSpeechTimestamp: Long = 0L
@@ -441,9 +464,11 @@ class SpeechRecognitionService @Inject constructor(
                 // Reset peak-partial tracking so each new utterance starts clean
                 peakPartialLength = 0
                 peakPartialText = ""
-                // Reset late segment dedup so repeated utterances aren't suppressed
+                // Reset late segment dedup so repeated utterances aren't suppressed.
+                // Note: the bubble auto-sent guard is intentionally NOT cleared here — it is
+                // time-bounded (AUTO_SENT_DEDUP_WINDOW_MS) so it can dedup a real final that lands
+                // a segment or two after the watchdog fired, then expires on its own.
                 lastCallbackText = ""
-                BubbleOverlayService.clearLastAutoSent()
                 onBeginningOfSpeechCallback?.invoke()
             }
 
@@ -731,10 +756,16 @@ class SpeechRecognitionService @Inject constructor(
                 }
 
                 if (recognitionCallback != null && finalText.isNotBlank()) {
-                    Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
-                    // Deliver final transcription even if manually stopped
-                    // This ensures the user gets their speech text in the input field
-                    recognitionCallback?.invoke(finalText)
+                    if (isDuplicateOfAutoSent(finalText)) {
+                        // The bubble watchdog already promoted this same utterance to a send; a
+                        // segmented session that fell through to onResults must not deliver it again.
+                        Log.w(TAG, "[DEBUG] Suppressing final '$finalText' (already auto-sent '${BubbleOverlayService.lastAutoSentText}')")
+                    } else {
+                        Log.d(TAG, "[DEBUG] Delivering final transcription: '$finalText'")
+                        // Deliver final transcription even if manually stopped
+                        // This ensures the user gets their speech text in the input field
+                        recognitionCallback?.invoke(finalText)
+                    }
                 }
 
                 // Check if we're in continuous listening mode
@@ -881,19 +912,18 @@ class SpeechRecognitionService @Inject constructor(
 
                 if (effectiveText.isNotBlank()) {
                     // Guard against late segment results that duplicate already-sent text.
-                    // Dedup state is reset in onBeginningOfSpeech, so this only catches
-                    // duplicates within the same speech segment (not repeated utterances).
-                    val autoSentText = BubbleOverlayService.lastAutoSentText
+                    // lastCallbackText is reset in onBeginningOfSpeech, so it only catches
+                    // duplicates within the same speech segment. The auto-sent guard
+                    // (isDuplicateOfAutoSent) is time-bounded instead, so it survives the per-segment
+                    // onBeginningOfSpeech churn and a real final arriving a segment or two after the
+                    // bubble watchdog fired still gets deduped — preventing a double-send.
                     val isDupOfCallback = lastCallbackText.isNotBlank()
                         && (effectiveText.trim() == lastCallbackText.trim()
                             || effectiveText.trim().startsWith(lastCallbackText.trim())
                             || lastCallbackText.trim().startsWith(effectiveText.trim()))
-                    val isDupOfAutoSent = autoSentText.isNotBlank()
-                        && (effectiveText.trim() == autoSentText.trim()
-                            || effectiveText.trim().startsWith(autoSentText.trim())
-                            || autoSentText.trim().startsWith(effectiveText.trim()))
+                    val isDupOfAutoSent = isDuplicateOfAutoSent(effectiveText)
                     if (isDupOfCallback || isDupOfAutoSent) {
-                        val dupSource = if (isDupOfAutoSent) "auto-sent '$autoSentText'"
+                        val dupSource = if (isDupOfAutoSent) "auto-sent '${BubbleOverlayService.lastAutoSentText}'"
                             else "callback '$lastCallbackText'"
                         Log.w(TAG, "🔄 SEGMENTED: Suppressing late segment result '$effectiveText' " +
                                 "(already $dupSource)")

@@ -194,6 +194,27 @@ class VoiceManager @Inject constructor(
             }
         }
 
+    // True only while ToolExecutor has parked a screen-agent tool waiting for the user to unlock the
+    // phone — i.e. Whiz itself surfaced the keyguard (setShowWhenLocked(false) +
+    // requestDismissKeyguard) because a tool needs an unlocked screen. That call backgrounds the
+    // activity, which would normally tear the mic down (MainActivity.onPause + onAppBackgrounded).
+    // While this is set, those teardown paths are skipped so the user can keep talking through the
+    // unlock prompt without dropping speech. Android permits mic capture behind the secure keyguard
+    // in this case (verified on-device via AudioPipeRecorder AEC_LEVEL while backgrounded + locked).
+    @Volatile
+    var isAwaitingUnlockForTool = false
+        set(value) {
+            field = value
+            Log.i(TAG, "isAwaitingUnlockForTool set to $value")
+            if (value && continuousListeningEnabled) {
+                coroutineScope.launch {
+                    if (shouldBeListening() && !speechRecognitionService.isListening.value) {
+                        startContinuousListening()
+                    }
+                }
+            }
+        }
+
     private var continuousListeningEnabled: Boolean
         get() = _isContinuousListeningEnabled.value
         set(value) {
@@ -309,14 +330,17 @@ class VoiceManager @Inject constructor(
         // Note: Audio focus is NOT required here - it's cooperative, not enforced.
         // We request focus to notify other apps, but don't block listening if not granted.
         // The onFocusLostTransient callback will pause listening when another app takes focus.
-        val should = continuousListeningEnabled && (isInForeground || isBubbleActive) &&
+        // isAwaitingUnlockForTool lets listening continue while the app is backgrounded behind the
+        // keyguard during a Whiz-initiated unlock prompt (both the foreground/bubble term and the
+        // lock-screen exception below would otherwise fail).
+        val should = continuousListeningEnabled && (isInForeground || isBubbleActive || isAwaitingUnlockForTool) &&
                     hasPermission && notSpeaking && bubbleAllowsListening &&
-                    (screenNotLocked || isWakeWordActiveSession || isInForeground)
+                    (screenNotLocked || isWakeWordActiveSession || isInForeground || isAwaitingUnlockForTool)
 
         Log.d(TAG, "shouldBeListening check: continuousEnabled=$continuousListeningEnabled, " +
                 "foreground=$isInForeground, bubble=$isBubbleActive, bubbleMode=$bubbleMode, " +
                 "permission=$hasPermission, notSpeaking=$notSpeaking, screenNotLocked=$screenNotLocked, " +
-                "isWakeWordActiveSession=$isWakeWordActiveSession, result=$should")
+                "isWakeWordActiveSession=$isWakeWordActiveSession, isAwaitingUnlockForTool=$isAwaitingUnlockForTool, result=$should")
 
         return should
     }
@@ -656,6 +680,14 @@ class VoiceManager @Inject constructor(
             return
         }
 
+        // A screen-agent tool is parked waiting for the user to unlock, and Whiz surfaced the
+        // keyguard itself (which backgrounds us). Keep the mic running so the user can keep talking
+        // through the unlock prompt without dropping speech. See isAwaitingUnlockForTool.
+        if (isAwaitingUnlockForTool) {
+            Log.i(TAG, "Awaiting unlock for parked tool - keeping voice recognition running")
+            return
+        }
+
         // No bubble — stop ducking along with stopping the mic
         audioFocusManager.abandonDuckingFocus()
 
@@ -844,6 +876,29 @@ class VoiceManager @Inject constructor(
                 // Removing redundant restart logic here to avoid duplicate startListening calls
             }
         }
+    }
+
+    /**
+     * Promote an arbitrary string into the real final-transcription pipeline, exactly as if the
+     * speech recognizer had returned it via onResults: emits on [transcriptionFlow] (which
+     * ChatViewModel collects to actually SEND) with a fresh seq, and invokes the legacy callback.
+     *
+     * Used by BubbleOverlayService's stuck-partial watchdog. When a partial is displayed but the
+     * recognizer never produces a final (common for short confirmations like "yes"/"no"), the
+     * watchdog needs that text to be SENT, not just shown. Routing it here makes it indistinguishable
+     * from a normal final, so the SpeechRecognitionService dedup (BubbleOverlayService.lastAutoSentText)
+     * correctly suppresses any late real final instead of double-sending.
+     */
+    fun emitFinalTranscription(text: String) {
+        if (text.isBlank()) return
+        val emission = TranscriptionEmission(
+            text = text,
+            seq = transcriptionSeqCounter.incrementAndGet()
+        )
+        coroutineScope.launch {
+            _transcriptionFlow.emit(emission)
+        }
+        transcriptionCallback?.invoke(text)
     }
 
     fun toggleContinuousListening() {

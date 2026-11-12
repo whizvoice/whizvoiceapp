@@ -15,12 +15,12 @@ import com.example.whiz.data.api.ApiService
 
 @Entity(tableName = "chats")
 data class ChatEntity(
-    @PrimaryKey(autoGenerate = true)
-    val id: Long = 0,
+    @PrimaryKey
+    val id: String,  // Client-minted UUID
+    val serverId: Long? = null,  // Server's integer id, kept for diagnostics only
     val title: String,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastMessageTime: Long = System.currentTimeMillis(),
-    val optimisticChatId: Long? = null  // Stores the original optimistic ID when chat was created offline
+    val lastMessageTime: Long = System.currentTimeMillis()
 )
 
 enum class MessageType {
@@ -44,7 +44,7 @@ enum class MessageType {
 data class MessageEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val chatId: Long,
+    val chatId: String,
     val content: String,
     val type: MessageType,
     val timestamp: Long = System.currentTimeMillis(),
@@ -88,11 +88,11 @@ object DateFormatter {
 // Convert API ConversationResponse to local ChatEntity
 fun ApiService.ConversationResponse.toChatEntity(): ChatEntity {
     return ChatEntity(
-        id = this.id,
+        id = this.client_chat_id,
+        serverId = this.id,
         title = sanitizeChatTitle(this.title),
         createdAt = parseTimestampToMillis(this.created_at),
-        lastMessageTime = parseTimestampToMillis(this.last_message_time),
-        optimisticChatId = this.optimistic_chat_id?.toLongOrNull()
+        lastMessageTime = parseTimestampToMillis(this.last_message_time)
     )
 }
 
@@ -109,17 +109,19 @@ private fun sanitizeChatTitle(title: String): String {
 fun ChatEntity.toConversationCreate(): ApiService.ConversationCreate {
     return ApiService.ConversationCreate(
         title = this.title,
+        client_chat_id = this.id,
         source = "app"
     )
 }
 
 // Convert API MessageResponse to local MessageEntity
-fun ApiService.MessageResponse.toMessageEntity(): MessageEntity {
+// chatId is the local (client UUID) chat id; the response only carries the server's integer id.
+fun ApiService.MessageResponse.toMessageEntity(chatId: String): MessageEntity {
     val parsedTimestamp = parseTimestampToMillis(this.timestamp)
 
     return MessageEntity(
         id = 0,  // Let Room auto-generate the ID - don't use server ID!
-        chatId = this.conversation_id,
+        chatId = chatId,
         content = this.content,
         type = parseMessageType(this.message_type),  // Parse message_type from API response
         timestamp = parsedTimestamp,
@@ -135,15 +137,6 @@ private fun parseMessageType(messageType: String): MessageType {
         // Default to USER for unknown message types
         MessageType.USER
     }
-}
-
-// Convert local MessageEntity to API MessageCreate
-fun MessageEntity.toMessageCreate(): ApiService.MessageCreate {
-    return ApiService.MessageCreate(
-        conversation_id = this.chatId,
-        content = this.content,
-        message_type = this.type.name
-    )
 }
 
 // Helper function to parse ISO timestamp to millis

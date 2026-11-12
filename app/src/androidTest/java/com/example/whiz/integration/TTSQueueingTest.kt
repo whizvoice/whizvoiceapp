@@ -70,15 +70,11 @@ class TTSQueueingTest : BaseIntegrationTest() {
     @Inject
     override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
-
-        // Grant microphone permission for voice tests
-        Log.d(TAG, "🎙️ Granting microphone permission for TTS queueing test")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
 
         // Clean up any existing test chats
         runBlocking {
@@ -187,7 +183,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             // Track chat for cleanup
             val currentChatId = capturedViewModel?.chatId?.value
-            if (currentChatId != null && currentChatId != 0L) {
+            if (currentChatId != null) {
                 createdChatIds.add(currentChatId)
             }
 
@@ -471,7 +467,7 @@ class TTSQueueingTest : BaseIntegrationTest() {
 
             // Track chat for cleanup
             val currentChatId = capturedViewModel?.chatId?.value
-            if (currentChatId != null && currentChatId != 0L) {
+            if (currentChatId != null) {
                 createdChatIds.add(currentChatId)
             }
 
