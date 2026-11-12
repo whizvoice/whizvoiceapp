@@ -139,6 +139,7 @@ fun EnrollmentScreen(navController: NavController) {
                                 dim = 192,
                                 cap = 50,
                                 protectedCap = 5,
+                                mirrorDir = wakeWordExportDir(context),
                             ).seedProtected(emptyList())
                         }
                     },
@@ -384,6 +385,10 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
 private fun wakeWordDir(context: Context): File =
     File(context.filesDir, "wake_word").apply { mkdirs() }
 
+/** External-storage mirror dir for the enrollment, pullable via plain `adb pull`. */
+private fun wakeWordExportDir(context: Context): File =
+    File(context.getExternalFilesDir(null), "wake_word")
+
 private fun buildRepository(context: Context): EnrollmentRepository =
     EnrollmentRepository(context, File(wakeWordDir(context), "enrollment"))
 
@@ -393,5 +398,6 @@ private fun buildStore(context: Context): EnrolledEmbeddingStore =
         dim = CamPlusOrtEmbedder.EMBEDDING_DIM,
         cap = 50,
         protectedCap = 5,
+        mirrorDir = wakeWordExportDir(context),
     )
 

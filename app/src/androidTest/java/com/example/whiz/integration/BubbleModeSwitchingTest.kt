@@ -10,7 +10,6 @@ import androidx.test.uiautomator.Until
 import com.example.whiz.BaseIntegrationTest
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.ListeningMode
 import com.example.whiz.services.SpeechRecognitionService
@@ -65,9 +64,6 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     override lateinit var ttsManager: TTSManager
 
     @Inject
-    lateinit var permissionManager: PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
     
     @Inject
@@ -76,23 +72,16 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-        
-        // Grant microphone permission for voice tests
-        Log.d(TAG, "🎙️ Granting microphone permission for bubble mode test")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
+
         // Grant overlay permission for bubble using appops (SYSTEM_ALERT_WINDOW can't be granted via pm grant)
         Log.d(TAG, "🔵 Granting overlay permission for bubble")
         device.executeShellCommand("appops set com.example.whiz.debug SYSTEM_ALERT_WINDOW allow")
-        
-        // Update permission manager state
-        permissionManager.updateMicrophonePermission(true)
-        
+
         // Clean up any existing test chats
         runBlocking {
             cleanupTestChats(
@@ -682,16 +671,14 @@ class BubbleModeSwitchingTest : BaseIntegrationTest() {
         }
         
         Log.d(TAG, "[TEST_LONG_PRESS] Found bubble element, getting position...")
-        try {
-            val point = bubbleElement.visibleCenter
-            Log.d(TAG, "[TEST_LONG_PRESS] Bubble center at: (${point.x}, ${point.y})")
-        } catch (e: Exception) {
-            Log.e(TAG, "[TEST_LONG_PRESS] Could not get bubble position: ${e.message}")
-        }
-        
+        val point = bubbleElement.visibleCenter
+        Log.d(TAG, "[TEST_LONG_PRESS] Bubble center at: (${point.x}, ${point.y})")
+
         Log.d(TAG, "[TEST_LONG_PRESS] Performing long press gesture...")
-        // Perform actual long press
-        bubbleElement.longClick()
+        // UiObject2.longClick() holds for the device's long-press setting (400ms on the Pixel 7a),
+        // which is shorter than the bubble's own LONG_PRESS_THRESHOLD (500ms). A zero-distance
+        // swipe holds the finger for a fixed ~1s (each step is ~5ms) regardless of that setting.
+        device.swipe(point.x, point.y, point.x, point.y, 200)
         Log.d(TAG, "[TEST_LONG_PRESS] Long press completed")
         
         // Mode change detection is handled by the caller

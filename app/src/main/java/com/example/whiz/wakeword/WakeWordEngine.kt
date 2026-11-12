@@ -5,7 +5,6 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.util.Log
-import com.example.whiz.wakeword.detection.AdaptiveThresholdController
 import com.example.whiz.wakeword.detection.EnergyGate
 import com.example.whiz.wakeword.detection.ScoreSmoother
 import com.example.whiz.wakeword.detection.SpeakerVerifier
@@ -60,7 +59,6 @@ class WakeWordEngine(
     private val smoother: ScoreSmoother? = null,
     private val verifier: SpeakerVerifier? = null,
     private val baseStage1Threshold: Float = 0f,
-    private val adaptiveThreshold: AdaptiveThresholdController? = null,
 ) : WakeWordEngineApi, MetricsSource {
 
     override val name: String = "wakeword.engine"
@@ -212,13 +210,12 @@ class WakeWordEngine(
         val score = runInference(ordered)
         recordInferenceLatency((System.nanoTime() - t0) / 1_000_000)
         _rawScores.tryEmit(score)
-        adaptiveThreshold?.onNonFireScore(score)
 
         // Log every interesting score, plus a periodic heartbeat
         gateFunnel.recordInference()
         inferenceCount++
         if (score >= 0.10f || inferenceCount % 30L == 0L) {
-            val thr = smoother?.let { adaptiveThreshold?.effectiveThreshold(baseStage1Threshold) ?: baseStage1Threshold } ?: debouncer.threshold
+            val thr = if (smoother != null) baseStage1Threshold else debouncer.threshold
             Log.d(TAG, "inf #$inferenceCount score=${"%.3f".format(score)} thr=${"%.3f".format(thr)}")
         }
 
@@ -233,9 +230,6 @@ class WakeWordEngine(
         }
 
         if (smoother != null) {
-            adaptiveThreshold?.let { ctrl ->
-                smoother.setEnterThreshold(ctrl.effectiveThreshold(baseStage1Threshold))
-            }
             if (smoother.onScore(score, atMs = nowMs)) {
                 gateFunnel.recordFire()
                 Log.d(TAG, "smoother fired @ score=${"%.3f".format(score)} — running verifier")

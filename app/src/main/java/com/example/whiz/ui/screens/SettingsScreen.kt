@@ -199,6 +199,17 @@ fun SettingsScreen(
 
             WakeWordSection(viewModel = viewModel, navController = navController)
 
+            // Bug Reporting Section
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Bug Reporting",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "Bug Reporting header" }
+            )
+            HorizontalDivider(thickness = Dp.Hairline)
+
+            RageShakeSection(viewModel = viewModel)
+
             // Subscription Section
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -1090,6 +1101,38 @@ fun WakeWordSection(viewModel: SettingsViewModel, navController: NavController) 
                 }
             )
         }
+    }
+}
+
+@Composable
+fun RageShakeSection(viewModel: SettingsViewModel) {
+    val isEnabled by viewModel.isRageShakeEnabled.collectAsState()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Rage shake content" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Shake to report a bug",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+                text = "Shake the phone to open the bug report dialog. \"Not now\" in that dialog pauses it for 10 minutes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = isEnabled,
+            onCheckedChange = { enabled -> viewModel.setRageShakeEnabled(enabled) },
+            modifier = Modifier.semantics {
+                contentDescription = "Shake to report a bug switch"
+            }
+        )
     }
 }
 

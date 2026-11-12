@@ -11,18 +11,22 @@ import com.example.whiz.services.BubbleOverlayService
 import com.example.whiz.services.MessageDraftOverlayService
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.example.whiz.accessibility.WhizAccessibilityService
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -64,31 +68,86 @@ class ToolExecutor @Inject constructor(
     private val rageShakeDetector: RageShakeDetector,
     private val bugReportSubmitter: BugReportSubmitter,
     private val healthConnectManager: com.example.whiz.health.HealthConnectManager,
+    private val accessibilityChecker: com.example.whiz.accessibility.AccessibilityChecker,
 ) {
+
+    companion object {
+        /**
+         * Tools to advertise in an agent_launch_app result: the app-specific shortcuts
+         * for the launched package followed by the generic screen tools that work in
+         * any app. (name, description) pairs; JSON is built at the call site.
+         */
+        internal fun toolsForLaunchResult(
+            appSpecific: List<Pair<String, String>>
+        ): List<Pair<String, String>> {
+            val seen = appSpecific.map { it.first }.toSet()
+            return appSpecific + GENERIC_SCREEN_TOOLS.filter { it.first !in seen }
+        }
+
+        /** Screen tools that work in any app, advertised on every launch result. */
+        internal val GENERIC_SCREEN_TOOLS: List<Pair<String, String>> = listOf(
+            "agent_get_ui" to "Works in any app: dump the current on-screen UI to get element_ids. Use this (then agent_click / agent_insert_text) to operate apps that have no dedicated tools, e.g. adding an item to a list in Keep Notes.",
+            "agent_click" to "Works in any app: click an element by element_id from agent_get_ui.",
+            "agent_insert_text" to "Works in any app: type into a text field by element_id from agent_get_ui.",
+            "agent_press_back" to "Works in any app: press the system back button."
+        )
+    }
+
     private val TAG = "ToolExecutor"
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(supervisorJob + Dispatchers.Main)
 
-    private val toolsRequiringUnlock = setOf(
-        "agent_launch_app",
-        "agent_whatsapp_select_chat", "agent_whatsapp_send_message", "agent_whatsapp_draft_message",
-        "agent_sms_select_chat", "agent_sms_draft_message", "agent_sms_send_message",
-        "agent_draft_message", "agent_send_message",
-        "agent_play_youtube_music", "agent_queue_youtube_music", "agent_pause_youtube_music",
-        "agent_search_google_maps_location", "agent_search_google_maps_phrase",
-        "agent_get_google_maps_directions", "agent_recenter_google_maps",
-        "agent_fullscreen_google_maps", "agent_select_location_from_list",
-        "agent_dial_phone_number",
-        "agent_press_call_button",
-        "agent_save_calendar_event", "agent_draft_calendar_event",
-        "agent_log_health_data",
-        "agent_open_health_app_settings",
-        "agent_delete_alarm",
-        "agent_close_other_app",
-        "agent_click",
-        "agent_insert_text",
-        "agent_peek_app"
+    /** What a tool needs from the device before it can run. Checked in declaration order. */
+    enum class Requirement {
+        /** Drives another app's UI through WhizAccessibilityService; useless without it bound. */
+        ACCESSIBILITY,
+        /** Needs the keyguard gone (launches/controls other apps, starts calls, writes to apps). */
+        UNLOCK,
+    }
+
+    private val A = Requirement.ACCESSIBILITY
+    private val U = Requirement.UNLOCK
+
+    // Single source of truth for pre-execution gates. ACCESSIBILITY is always checked before
+    // UNLOCK: enabling the service means going into Settings (which unlocks the phone anyway),
+    // and prompting for unlock first buries the accessibility dialog behind the keyguard and
+    // then behind the launched app. Tools absent from this map run with no gate.
+    private val toolRequirements: Map<String, Set<Requirement>> = mapOf(
+        // Screen-agent tools: drive another app, so need both.
+        "agent_launch_app" to setOf(A, U),
+        "agent_whatsapp_select_chat" to setOf(A, U),
+        "agent_whatsapp_send_message" to setOf(A, U),
+        "agent_whatsapp_draft_message" to setOf(A, U),
+        "agent_sms_select_chat" to setOf(A, U),
+        "agent_sms_draft_message" to setOf(A, U),
+        "agent_sms_send_message" to setOf(A, U),
+        "agent_draft_message" to setOf(A, U),
+        "agent_send_message" to setOf(A, U),
+        "agent_play_youtube_music" to setOf(A, U),
+        "agent_queue_youtube_music" to setOf(A, U),
+        "agent_pause_youtube_music" to setOf(A, U),
+        "agent_search_google_maps_location" to setOf(A, U),
+        "agent_search_google_maps_phrase" to setOf(A, U),
+        "agent_get_google_maps_directions" to setOf(A, U),
+        "agent_recenter_google_maps" to setOf(A, U),
+        "agent_fullscreen_google_maps" to setOf(A, U),
+        "agent_select_location_from_list" to setOf(A, U),
+        "agent_press_call_button" to setOf(A, U),
+        "agent_close_other_app" to setOf(A, U),
+        "agent_click" to setOf(A, U),
+        "agent_insert_text" to setOf(A, U),
+        "agent_peek_app" to setOf(A, U),
+        // Unlock only: intent/API based, work without the accessibility service.
+        "agent_dial_phone_number" to setOf(U),
+        "agent_save_calendar_event" to setOf(U),
+        "agent_draft_calendar_event" to setOf(U),
+        "agent_log_health_data" to setOf(U),
+        "agent_open_health_app_settings" to setOf(U),
+        "agent_delete_alarm" to setOf(U),
     )
+
+    private fun requires(toolName: String, requirement: Requirement): Boolean =
+        toolRequirements[toolName]?.contains(requirement) == true
     
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
@@ -99,6 +158,110 @@ class ToolExecutor @Inject constructor(
     private val _activeToolCount = MutableStateFlow(0)
     val activeToolCount: StateFlow<Int> = _activeToolCount.asStateFlow()
 
+    // ===== Lock-screen "waiting for unlock" state =====
+    // When a keyguard-gated tool is dispatched while the phone is locked, we park its coroutine
+    // (instead of failing at 60s) until the user unlocks. While parked, isAwaitingUnlock is true so
+    // MainActivity (a) lets the inactivity timer run as the deadline and (b) re-shows the keyguard
+    // prompt on screen-on. Single-slot: only one parked unlock-wait is tracked at a time.
+    @Volatile private var pendingUnlockCont: CancellableContinuation<Boolean>? = null
+    @Volatile private var awaitingToolName: String? = null
+    private val _isAwaitingUnlock = MutableStateFlow(false)
+    val isAwaitingUnlock: StateFlow<Boolean> = _isAwaitingUnlock.asStateFlow()
+
+    // Re-send waiting_for_unlock at this interval so the server keeps extending its deadline
+    // (server extends by 65s per status — see app.py; stay comfortably under that).
+    private val UNLOCK_KEEPALIVE_INTERVAL_MS = 50_000L
+    // Backstop ceiling on the parked wait, for the case where the inactivity timer is paused
+    // (e.g. a bubble owns idle). Comfortably longer than the 3-min idle window so the idle timer
+    // is normally what ends the wait; this only fires if it can't.
+    private val UNLOCK_WAIT_CEILING_MS = 210_000L
+
+    // ===== "waiting for accessibility service" state =====
+    // Same shape as the unlock wait: a screen-agent tool dispatched while the accessibility
+    // service is unbound parks until the OS binds it (user enables it in Settings) or the wait is
+    // abandoned by the idle timer / hard ceiling. Single-slot, like the unlock wait.
+    @Volatile private var pendingAccessibilityCont: CancellableContinuation<Boolean>? = null
+    @Volatile private var awaitingAccessibilityToolName: String? = null
+    private val _isAwaitingAccessibility = MutableStateFlow(false)
+    val isAwaitingAccessibility: StateFlow<Boolean> = _isAwaitingAccessibility.asStateFlow()
+
+    /**
+     * Give up the current accessibility wait (idle-timer teardown or the hard ceiling). The parked
+     * tool resumes with `false` and emits an error result for the ORIGINAL request_id.
+     */
+    fun abandonAccessibilityWait() {
+        val cont = pendingAccessibilityCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "♿ Abandoning accessibility wait for $awaitingAccessibilityToolName")
+        cont.resume(false)
+    }
+
+    /**
+     * Park the current tool coroutine until the accessibility service binds (returns true → run
+     * the tool) or the wait is abandoned (returns false → caller emits an error result). While
+     * parked, re-emits waiting_for_accessibility every ~50s so the server extends its deadline,
+     * and exposes isAwaitingAccessibility for MainActivity (idle timer runs as the deadline).
+     */
+    private suspend fun awaitAccessibility(toolName: String, requestId: String): Boolean = coroutineScope {
+        val keepAlive = launch {
+            var elapsed = 0L
+            while (isActive) {
+                delay(UNLOCK_KEEPALIVE_INTERVAL_MS)
+                elapsed += UNLOCK_KEEPALIVE_INTERVAL_MS
+                if (elapsed >= UNLOCK_WAIT_CEILING_MS) {
+                    Log.w(TAG, "♿ Accessibility wait hit hard ceiling for $toolName — abandoning")
+                    abandonAccessibilityWait()
+                    break
+                }
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_accessibility",
+                    message = accessibilityWaitingMessage()
+                ))
+            }
+        }
+        // Resume as soon as the OS binds the service.
+        val connected = launch {
+            WhizAccessibilityService.serviceState
+                .first { it == WhizAccessibilityService.ServiceState.CONNECTED }
+            val cont = pendingAccessibilityCont
+            if (cont != null && cont.isActive) {
+                Log.i(TAG, "♿ Accessibility service connected — resuming parked tool $toolName")
+                cont.resume(true)
+            }
+        }
+        try {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                pendingAccessibilityCont = cont
+                awaitingAccessibilityToolName = toolName
+                _isAwaitingAccessibility.value = true
+                cont.invokeOnCancellation {
+                    pendingAccessibilityCont = null
+                    awaitingAccessibilityToolName = null
+                    _isAwaitingAccessibility.value = false
+                }
+                // Surface the enable / reconnect dialog in MainActivity and bring it to the front.
+                MainActivity.requestAccessibilityCallback?.invoke()
+            }
+        } finally {
+            keepAlive.cancel()
+            connected.cancel()
+            pendingAccessibilityCont = null
+            awaitingAccessibilityToolName = null
+            _isAwaitingAccessibility.value = false
+        }
+    }
+
+    /** Human/LLM-facing explanation of why the tool is waiting; distinguishes the zombie state. */
+    private fun accessibilityWaitingMessage(): String {
+        return if (accessibilityChecker.isServiceEnabled()) {
+            "Whiz accessibility service is enabled in Settings but not running. Waiting for the user to toggle it off and on in Accessibility settings."
+        } else {
+            "Whiz accessibility service is not enabled. Waiting for the user to enable it in Accessibility settings."
+        }
+    }
+
     /**
      * Cancel all in-flight tool executions. Called when user dismisses the bubble.
      * Uses cancelChildren() instead of cancel() to keep the scope alive for future use.
@@ -106,10 +269,124 @@ class ToolExecutor @Inject constructor(
     fun cancelAllInFlight() {
         val count = inFlightRequestIds.size
         Log.d(TAG, "Cancelling all in-flight tool executions (count: $count)")
+        // Clear any parked unlock-wait first so screen-on/retry no-op and the flag resets
+        // deterministically. The cancelled coroutine's invokeOnCancellation also restores the
+        // keyguard/wake-lock state; the server's deadline backstops the tool_result here.
+        pendingUnlockCont = null
+        awaitingToolName = null
+        _isAwaitingUnlock.value = false
+        com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
+        pendingAccessibilityCont = null
+        awaitingAccessibilityToolName = null
+        _isAwaitingAccessibility.value = false
         supervisorJob.cancelChildren()
         inFlightRequestIds.clear()
         _activeToolCount.value = 0
         Log.d(TAG, "Cancelled $count in-flight tool execution(s)")
+    }
+
+    /**
+     * Re-show the keyguard dismiss prompt for a parked tool. Called by MainActivity on
+     * ACTION_SCREEN_ON while the device is still locked. No-op unless a tool is parked.
+     * Must be called from a context where the activity is visible (MainActivity) so
+     * requestDismissKeyguard can actually show.
+     */
+    fun retryUnlockPrompt() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        val unlockCallback = MainActivity.requestUnlockCallback ?: return
+        Log.i(TAG, "🔒 Re-prompting unlock for parked tool $awaitingToolName")
+        unlockCallback(
+            { if (cont.isActive) cont.resume(true) },
+            { Log.i(TAG, "🔒 Re-prompt cancelled — staying parked for next wake") }
+        )
+    }
+
+    /**
+     * The user unlocked the device by their own route (ACTION_USER_PRESENT) without going through
+     * our prompt. Resume the parked tool so the original action completes. After USER_PRESENT the
+     * keyguard is gone, so the screen-on-while-locked re-prompt won't fire — this is required to
+     * complete the task on a self-unlock.
+     */
+    fun onExternalUnlock() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "🔓 External unlock detected — resuming parked tool $awaitingToolName")
+        cont.resume(true)
+    }
+
+    /**
+     * Give up the current unlock wait (idle-timer teardown or the hard ceiling). The parked tool
+     * coroutine resumes with `false` and emits a timeout result for the ORIGINAL request_id, so the
+     * server's pending tool_result is completed cleanly (the server's deadline is the backstop).
+     */
+    fun abandonUnlockWait() {
+        val cont = pendingUnlockCont ?: return
+        if (!cont.isActive) return
+        Log.i(TAG, "🔒 Abandoning unlock wait for $awaitingToolName")
+        cont.resume(false)
+    }
+
+    /**
+     * Park the current tool coroutine until the user unlocks (returns true → run the tool) or the
+     * wait is abandoned (returns false → caller emits a timeout result). While parked, re-emits
+     * waiting_for_unlock every ~50s and exposes isAwaitingUnlock for MainActivity.
+     */
+    private suspend fun awaitUnlock(
+        toolName: String,
+        requestId: String,
+        unlockCallback: (onSuccess: () -> Unit, onCancelled: () -> Unit) -> Unit
+    ): Boolean = coroutineScope {
+        val keepAlive = launch {
+            var elapsed = 0L
+            while (isActive) {
+                delay(UNLOCK_KEEPALIVE_INTERVAL_MS)
+                elapsed += UNLOCK_KEEPALIVE_INTERVAL_MS
+                if (elapsed >= UNLOCK_WAIT_CEILING_MS) {
+                    Log.w(TAG, "🔒 Unlock wait hit hard ceiling for $toolName — abandoning")
+                    abandonUnlockWait()
+                    break
+                }
+                _toolResults.emit(ToolExecutionResult.Status(
+                    toolName = toolName,
+                    requestId = requestId,
+                    status = "waiting_for_unlock",
+                    message = "Phone is locked. Waiting for user to unlock."
+                ))
+            }
+        }
+        try {
+            suspendCancellableCoroutine<Boolean> { cont ->
+                pendingUnlockCont = cont
+                awaitingToolName = toolName
+                _isAwaitingUnlock.value = true
+                // Tell VoiceManager we're parked so it keeps the mic running through the
+                // setShowWhenLocked(false) background transition (user can keep talking while unlocking).
+                com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = true
+                cont.invokeOnCancellation {
+                    pendingUnlockCont = null
+                    awaitingToolName = null
+                    _isAwaitingUnlock.value = false
+                    com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
+                    // Release any held unlock wake lock and restore showWhenLocked on teardown.
+                    MainActivity.cancelUnlockPromptCallback?.invoke()
+                }
+                // First prompt. A single cancelled prompt does NOT resume — we stay parked and
+                // re-prompt on the next screen-on (see retryUnlockPrompt).
+                unlockCallback(
+                    { if (cont.isActive) cont.resume(true) },
+                    { Log.i(TAG, "🔒 Unlock prompt cancelled — staying parked for $toolName") }
+                )
+            }
+        } finally {
+            keepAlive.cancel()
+            pendingUnlockCont = null
+            awaitingToolName = null
+            _isAwaitingUnlock.value = false
+            // Clear the keepalive flag once the wait resolves (unlocked -> tool runs, or abandoned).
+            // After this, normal foreground/lock rules apply again.
+            com.example.whiz.ui.viewmodels.VoiceManager.instance?.isAwaitingUnlockForTool = false
+        }
     }
 
     fun executeToolFromJson(
@@ -142,10 +419,44 @@ class ToolExecutor @Inject constructor(
                 Log.i(TAG, "🎯 Executing tool: $toolName with requestId: $requestId")
                 Log.i(TAG, "🎯 Tool params: ${params.toString(2)}")
 
+                // Accessibility gate (runs BEFORE the keyguard gate — see toolRequirements).
+                if (requires(toolName, Requirement.ACCESSIBILITY) && WhizAccessibilityService.getInstance() == null) {
+                    val waitingMessage = accessibilityWaitingMessage()
+                    Log.i(TAG, "♿ Tool $toolName needs the accessibility service but it is not bound - showing dialog and parking until it connects")
+                    if (accessibilityChecker.isServiceEnabled()) {
+                        WhizAccessibilityService.reportReconnectNeeded()
+                    }
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "waiting_for_accessibility",
+                        message = waitingMessage
+                    ))
+                    val connected = awaitAccessibility(toolName, requestId)
+                    if (!connected) {
+                        Log.i(TAG, "♿ Accessibility wait abandoned for tool $toolName — emitting error result")
+                        _toolResults.emit(ToolExecutionResult.Error(
+                            toolName = toolName,
+                            requestId = requestId,
+                            error = "Accessibility service was not enabled in time. " + waitingMessage.replace("Waiting for the user to", "The user needs to")
+                        ))
+                        return@launch
+                    }
+                    // State changed: parked → running (see the unlock gate for why).
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "running",
+                        message = "Accessibility service connected. Running the tool now."
+                    ))
+                    // Let the freshly bound service settle before the tool uses it.
+                    delay(300)
+                }
+
                 // Check if device is locked and tool requires unlock
                 val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-                if (km.isKeyguardLocked && toolName in toolsRequiringUnlock) {
-                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and waiting")
+                if (km.isKeyguardLocked && requires(toolName, Requirement.UNLOCK)) {
+                    Log.i(TAG, "🔒 Device is locked and tool $toolName requires unlock - showing unlock prompt and parking until unlock")
                     val unlockCallback = MainActivity.requestUnlockCallback
                     if (unlockCallback == null) {
                         Log.e(TAG, "🔒 No unlock callback available - MainActivity may not be active")
@@ -157,7 +468,8 @@ class ToolExecutor @Inject constructor(
                         return@launch
                     }
 
-                    // Notify server that we're waiting for unlock so it can extend its timeout
+                    // Notify the server immediately so it extends its (short) tool deadline before
+                    // it lapses. awaitUnlock re-sends this every ~50s while parked.
                     _toolResults.emit(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
@@ -165,40 +477,29 @@ class ToolExecutor @Inject constructor(
                         message = "Phone is locked. Waiting for user to unlock."
                     ))
 
-                    // Suspend and wait for user to unlock (or cancel), with 60s timeout.
-                    // If the user unlocks AFTER the timeout, the dismiss callback still fires;
-                    // in that case, send a hidden user message so the server can decide whether
-                    // to retry. (No effect on the visible chat — see ChatViewModel.sendHiddenSystemMessage.)
-                    val unlocked = withTimeoutOrNull(60_000L) {
-                        suspendCancellableCoroutine<Boolean> { cont ->
-                            unlockCallback(
-                                { // onSuccess
-                                    Log.i(TAG, "🔓 User unlocked device - continuing with tool $toolName")
-                                    if (cont.isActive) {
-                                        cont.resume(true)
-                                    } else {
-                                        Log.i(TAG, "🔓 Late unlock for $toolName (after 60s timeout) — sending hidden screen-unlocked notification to server")
-                                        chatViewModel?.sendHiddenSystemMessage("The user just unlocked their phone screen.")
-                                    }
-                                },
-                                { // onCancelled
-                                    Log.i(TAG, "🔒 User cancelled unlock - aborting tool $toolName")
-                                    if (cont.isActive) cont.resume(false)
-                                }
-                            )
-                        }
-                    }
-
-                    if (unlocked != true) {
-                        val reason = if (unlocked == null) "Unlock timed out" else "User cancelled unlock"
-                        Log.i(TAG, "🔒 $reason for tool $toolName")
+                    // Park this coroutine until the user unlocks (re-prompted on each screen-on)
+                    // or the wait is abandoned (idle-timer teardown / hard ceiling). On abandon we
+                    // emit a timeout result for the ORIGINAL request_id so history stays valid.
+                    val unlocked = awaitUnlock(toolName, requestId, unlockCallback)
+                    if (!unlocked) {
+                        Log.i(TAG, "🔒 Unlock wait abandoned for tool $toolName — emitting timeout result")
                         _toolResults.emit(ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
-                            error = "Phone is locked. Please unlock your phone to use this feature."
+                            error = "Phone stayed locked — timed out. Please unlock your phone and try again."
                         ))
                         return@launch
                     }
+
+                    // State changed: parked → running. Tell the server so the placeholder the model
+                    // sees stops saying "waiting for unlock" (it answers mid-tool interjections from
+                    // that text), and so the tool gets a fresh deadline for its own work.
+                    _toolResults.emit(ToolExecutionResult.Status(
+                        toolName = toolName,
+                        requestId = requestId,
+                        status = "running",
+                        message = "Phone unlocked. Running the tool now."
+                    ))
 
                     // Small delay after unlock to let the system settle
                     delay(500)
@@ -296,7 +597,7 @@ class ToolExecutor @Inject constructor(
                         executeStopRinging(requestId)
                     }
                     "agent_snooze_rage_shake" -> {
-                        executeSnoozeRageShake(requestId)
+                        executeSnoozeRageShake(requestId, params)
                     }
                     "agent_submit_bug_report" -> {
                         executeSubmitBugReport(requestId, params)
@@ -434,61 +735,25 @@ class ToolExecutor @Inject constructor(
         }
     }
     
-    private fun getToolsForPackage(packageName: String): List<JSONObject> {
+    private fun getToolsForPackage(packageName: String): List<Pair<String, String>> {
         return when (packageName) {
             "com.google.android.apps.maps" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_search_google_maps_location")
-                    put("description", "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_search_google_maps_phrase")
-                    put("description", "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps")
-                },
-                JSONObject().apply {
-                    put("name", "agent_get_google_maps_directions")
-                    put("description", "Get directions to the currently selected location. Must call search first.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_select_location_from_list")
-                    put("description", "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.")
-                },
-                JSONObject().apply {
-                    put("name", "agent_recenter_google_maps")
-                    put("description", "Re-center the map to your current location")
-                },
-                JSONObject().apply {
-                    put("name", "agent_fullscreen_google_maps")
-                    put("description", "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay")
-                }
+                "agent_search_google_maps_location" to "Search for a specific address or place name in Google Maps and show results. After successfully searching, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was found.",
+                "agent_search_google_maps_phrase" to "Search for places by category/phrase (e.g., 'coffee shops nearby', 'gas stations') in Google Maps",
+                "agent_get_google_maps_directions" to "Get directions to the currently selected location. Must call search first.",
+                "agent_select_location_from_list" to "Select a specific location from search results by position or name fragment. After successfully selecting, the tool returns the exact address of the selected location - ALWAYS read this address back to the user to confirm the correct place was selected.",
+                "agent_recenter_google_maps" to "Re-center the map to your current location",
+                "agent_fullscreen_google_maps" to "Bring Google Maps to fullscreen/foreground when it's running in the background or shown as a small overlay"
             )
             "com.google.android.apps.youtube.music" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_play_youtube_music")
-                    put("description", "Play a song or artist in YouTube Music")
-                },
-                JSONObject().apply {
-                    put("name", "agent_queue_youtube_music")
-                    put("description", "Add a song or artist to the YouTube Music queue")
-                },
-                JSONObject().apply {
-                    put("name", "agent_pause_youtube_music")
-                    put("description", "Pause or resume YouTube Music playback")
-                }
+                "agent_play_youtube_music" to "Play a song or artist in YouTube Music",
+                "agent_queue_youtube_music" to "Add a song or artist to the YouTube Music queue",
+                "agent_pause_youtube_music" to "Pause or resume YouTube Music playback"
             )
             "com.whatsapp" -> listOf(
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_select_chat")
-                    put("description", "Select a specific chat in WhatsApp by contact/group name")
-                },
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_draft_message")
-                    put("description", "Draft a message for user review before sending")
-                },
-                JSONObject().apply {
-                    put("name", "agent_whatsapp_send_message")
-                    put("description", "Send the drafted message (must draft first)")
-                }
+                "agent_whatsapp_select_chat" to "Select a specific chat in WhatsApp by contact/group name",
+                "agent_whatsapp_draft_message" to "Draft a message for user review before sending",
+                "agent_whatsapp_send_message" to "Send the drafted message (must draft first)"
             )
             else -> {
                 // Check if this is the default SMS app
@@ -499,18 +764,9 @@ class ToolExecutor @Inject constructor(
                     authRepository.saveDefaultSmsAppPackage(packageName)
 
                     listOf(
-                        JSONObject().apply {
-                            put("name", "agent_sms_select_chat")
-                            put("description", "Select a specific SMS conversation by contact name")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_sms_draft_message")
-                            put("description", "Draft an SMS message for user review before sending")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_sms_send_message")
-                            put("description", "Send the drafted SMS message (must draft first)")
-                        }
+                        "agent_sms_select_chat" to "Select a specific SMS conversation by contact name",
+                        "agent_sms_draft_message" to "Draft an SMS message for user review before sending",
+                        "agent_sms_send_message" to "Send the drafted SMS message (must draft first)"
                     )
                 } else {
                     // Generic draft/send for any other foreground app. The tool
@@ -521,14 +777,8 @@ class ToolExecutor @Inject constructor(
                     // Telegram, Instagram, Discord, Slack, Twitter/X compose,
                     // GitHub comments, email compose, Reddit DMs, etc.).
                     listOf(
-                        JSONObject().apply {
-                            put("name", "agent_draft_message")
-                            put("description", "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.")
-                        },
-                        JSONObject().apply {
-                            put("name", "agent_send_message")
-                            put("description", "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually.")
-                        }
+                        "agent_draft_message" to "Draft a message in the current app's text input for user review before sending. Use when the user wants to send a message in any messaging app (Signal, Facebook Messenger, Telegram, Instagram, Discord, Slack, etc.) or any other app with a text input.",
+                        "agent_send_message" to "Send the drafted message by tapping the send button in the current app (must draft first). Best-effort; if no send button is found, the drafted text is left in the input for the user to send manually."
                     )
                 }
             }
@@ -550,12 +800,18 @@ class ToolExecutor @Inject constructor(
                 result.packageName?.let {
                     put("package_name", it)
                     // Add available tools for this app
-                    val availableTools = getToolsForPackage(it)
-                    if (availableTools.isNotEmpty()) {
-                        put("available_tools", org.json.JSONArray(availableTools))
+                    val availableTools = toolsForLaunchResult(getToolsForPackage(it)).map { (name, desc) ->
+                        JSONObject().apply {
+                            put("name", name)
+                            put("description", desc)
+                        }
                     }
+                    put("available_tools", org.json.JSONArray(availableTools))
                 }
                 result.error?.let { put("error", it) }
+                if (result.candidates.isNotEmpty()) {
+                    put("candidates", org.json.JSONArray(result.candidates))
+                }
                 put("overlay_started", result.overlayStarted)
                 put("overlayPermissionRequired", result.overlayPermissionRequired)
             }
@@ -641,7 +897,7 @@ class ToolExecutor @Inject constructor(
                 result.displayedText?.let { put("displayed_text", it) }
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
-                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_whatsapp_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
                 } else {
                     "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_whatsapp_send_message; tell the user the draft could not be displayed."
                 })
@@ -763,7 +1019,7 @@ class ToolExecutor @Inject constructor(
                 result.displayedText?.let { put("displayed_text", it) }
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
-                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_sms_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
                 } else {
                     "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_sms_send_message; tell the user the draft could not be displayed."
                 })
@@ -844,7 +1100,7 @@ class ToolExecutor @Inject constructor(
                 result.displayedText?.let { put("displayed_text", it) }
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
-                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message until the user explicitly confirms they want to send the message. The draft is now displayed to the user for review."
+                    "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
                 } else {
                     "The draft overlay is NOT visible on screen (overlay_shown=false). Do NOT tell the user the draft is shown and do NOT call agent_send_message; tell the user the draft could not be displayed."
                 })
@@ -1433,6 +1689,7 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.mode?.let { put("mode", it) }
+                result.navStarted?.let { put("nav_started", it) }
                 result.error?.let { put("error", it) }
             }
 
@@ -1977,13 +2234,28 @@ class ToolExecutor @Inject constructor(
         }
     }
 
-    private suspend fun executeSnoozeRageShake(requestId: String) {
+    private suspend fun executeSnoozeRageShake(requestId: String, params: JSONObject) {
         try {
-            Log.i(TAG, "Executing agent_snooze_rage_shake")
-            rageShakeDetector.snooze()
+            val mode = params.optString("mode", "snooze").ifBlank { "snooze" }
+            Log.i(TAG, "Executing agent_snooze_rage_shake mode=$mode")
+            val message = when (mode) {
+                "off" -> {
+                    rageShakeDetector.setEnabled(false)
+                    "Shake-to-report is now off until you turn it back on."
+                }
+                "on" -> {
+                    rageShakeDetector.setEnabled(true)
+                    "Shake-to-report is back on."
+                }
+                else -> {
+                    rageShakeDetector.snooze()
+                    "Shake detection paused for 10 minutes."
+                }
+            }
             val resultJson = JSONObject().apply {
                 put("success", true)
-                put("message", "Shake detection paused for 10 minutes.")
+                put("mode", mode)
+                put("message", message)
             }
             Log.i(TAG, "[TOOL_RESULT] agent_snooze_rage_shake result for requestId=$requestId: ${resultJson.toString(2)}")
             _toolResults.emit(
@@ -2190,12 +2462,26 @@ class ToolExecutor @Inject constructor(
         try {
             val dataType = params.getString("data_type")
             val value = params.getDouble("value")
-            Log.i(TAG, "Logging health data: type=$dataType value=$value")
+            // Optional backdating: an ISO date (YYYY-MM-DD). Absent → log to now (default).
+            val dateStr = if (params.has("date") && !params.isNull("date")) params.optString("date", null) else null
+            val logDate: java.time.LocalDate? = dateStr?.let {
+                try {
+                    java.time.LocalDate.parse(it)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Invalid date '$it' for agent_log_health_data; ignoring")
+                    null
+                }
+            }
+            // Backdating is only honored by Health Connect; the Fitbit UI fallback can't
+            // target a past day, so we must not silently log a backdated entry to today.
+            val isBackdated = logDate != null && logDate.isBefore(java.time.LocalDate.now(java.time.ZoneId.systemDefault()))
+            Log.i(TAG, "Logging health data: type=$dataType value=$value date=${logDate ?: "today"}")
 
-            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (dataType) {
-                "calories" -> healthConnectManager.logCalories(value.toInt())
-                "weight" -> healthConnectManager.logWeight(value)
-                else -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
+            val hcType = com.example.whiz.health.HealthConnectManager.DataType.fromToolName(dataType)
+            suspend fun attemptHcWrite(): com.example.whiz.health.HealthConnectManager.Result = when (hcType) {
+                com.example.whiz.health.HealthConnectManager.DataType.CALORIES -> healthConnectManager.logCalories(value.toInt(), logDate)
+                com.example.whiz.health.HealthConnectManager.DataType.WEIGHT -> healthConnectManager.logWeight(value, logDate)
+                null -> com.example.whiz.health.HealthConnectManager.Result.Failed("Unknown data_type: $dataType")
             }
 
             // Upfront permission top-up: if we're missing ANY HC permission Whiz uses
@@ -2279,12 +2565,25 @@ class ToolExecutor @Inject constructor(
                     action = "logged_via_health_connect",
                     dataType = dataType,
                     value = value,
+                    date = dateStr,
                     source = "health_connect",
                 )
 
                 is com.example.whiz.health.HealthConnectManager.Result.Unavailable,
                 is com.example.whiz.health.HealthConnectManager.Result.PermissionMissing -> {
-                    if (dataType == "calories") {
+                    if (dataType == "calories" && isBackdated) {
+                        // The Fitbit UI fallback can only log to today, so it would silently
+                        // put a backdated entry on the wrong day. Fail clearly instead.
+                        Log.i(TAG, "Health Connect not usable and date is backdated ($logDate); refusing Fitbit UI fallback")
+                        ScreenAgentTools.HealthDataResult(
+                            success = false,
+                            dataType = dataType,
+                            value = value,
+                            date = dateStr,
+                            source = "health_connect",
+                            error = "Backdating calories to $logDate requires Health Connect, which is unavailable or lacks write permission. Only today's calories can be logged via the Fitbit fallback.",
+                        )
+                    } else if (dataType == "calories") {
                         Log.i(TAG, "Health Connect not usable (${hcResult.javaClass.simpleName}); falling back to Fitbit UI for calories")
                         screenAgentTools.addFitbitQuickCalories(value.toInt())
                     } else {
@@ -2315,6 +2614,7 @@ class ToolExecutor @Inject constructor(
                 result.action?.let { put("action", it) }
                 result.dataType?.let { put("data_type", it) }
                 result.value?.let { put("value", it) }
+                result.date?.let { put("date", it) }
                 result.source?.let { put("source", it) }
                 result.error?.let { put("error", it) }
             }
@@ -2324,8 +2624,8 @@ class ToolExecutor @Inject constructor(
             // Flip success to false with reason=requires_connection so the assistant
             // cannot silently move on; include the unconnected apps' names so it can
             // mention them when offering to open agent_open_health_app_settings.
-            if (result.success && result.source == "health_connect") {
-                val unconnected = healthConnectManager.unconnectedHealthApps()
+            if (result.success && result.source == "health_connect" && hcType != null) {
+                val unconnected = healthConnectManager.unconnectedHealthApps(hcType)
                 if (unconnected.isNotEmpty()) {
                     val arr = org.json.JSONArray()
                     unconnected.forEach { app ->
@@ -2616,7 +2916,7 @@ class ToolExecutor @Inject constructor(
             "agent_launch_app" -> {
                 JSONObject().apply {
                     put("name", "agent_launch_app")
-                    put("description", "Launch an application by its name. The return value includes an 'available_tools' array listing specialized tools that can control the launched app (e.g., for Maps, YouTube Music, WhatsApp). Check the return value and use those tools to complete the user's request.")
+                    put("description", "Launch an application by its name. The return value includes an 'available_tools' array: app-specific shortcuts for the launched app (e.g., for Maps, YouTube Music, WhatsApp) followed by the generic screen tools (agent_get_ui, agent_click, agent_insert_text, agent_press_back) that work in any app. Use the shortcuts when they fit; otherwise drive the app with the generic tools.")
                     put("parameters", JSONObject().apply {
                         put("app_name", JSONObject().apply {
                             put("type", "string")

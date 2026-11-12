@@ -1040,7 +1040,7 @@ class SettingsIntegrationTest : BaseIntegrationTest() {
                     selector = { 
                         composeTestRule.onNodeWithText("Enter Asana Access Token")
                     },
-                    timeoutMs = 1000,
+                    timeoutMs = 3000, // Clear is a server round-trip; the field only reappears once it completes
                     description = "Input field after clearing"
                 )
                 
