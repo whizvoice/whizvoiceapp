@@ -105,8 +105,10 @@ class AuthViewModel @Inject constructor(
                     Log.d(TAG, "Got ID token of length ${idToken.length}, authenticating with server")
                     Log.d(TAG, "Calling authApi.authenticateWithGoogle...")
                     
-                    val result = authApi.authenticateWithGoogle(idToken)
-                    Log.d(TAG, "Server /auth/google result: $result")
+                    // Pass the one-time server auth code (present when contacts scopes were
+                    // granted) so the server can fetch Google Contacts as a fallback source.
+                    val result = authApi.authenticateWithGoogle(idToken, account.serverAuthCode)
+                    Log.d(TAG, "Server /auth/google result: $result (serverAuthCode present: ${account.serverAuthCode != null})")
                     
                     if (result.isSuccess) {
                         val authResponse = result.getOrThrow()

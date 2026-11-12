@@ -18,7 +18,6 @@ import javax.inject.Inject
 import com.example.whiz.MainActivity
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.BaseIntegrationTest
-import com.example.whiz.permissions.PermissionManager
 import com.example.whiz.ui.viewmodels.VoiceManager
 import com.example.whiz.services.TTSManager
 import org.junit.Assert.*
@@ -62,9 +61,6 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     override lateinit var ttsManager: TTSManager
 
     @Inject
-    lateinit var permissionManager: PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
     // Note: ChatViewModel will be obtained via ViewModelProvider instead of direct injection
@@ -73,7 +69,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     // Monitor to capture launched activity for cleanup
     private var activityMonitor: android.app.Instrumentation.ActivityMonitor? = null
@@ -81,13 +77,6 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication() // This handles device setup, screenshot dir, authentication, and app launch
-        
-        // Grant microphone permission for voice tests
-        Log.d(TAG, "🎙️ Granting microphone permission for TTS backgrounding test")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        
-        // Also update PermissionManager state to match
-        permissionManager.updateMicrophonePermission(true)
 
         // Set up activity monitor to capture launched activity for cleanup
         activityMonitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
@@ -152,7 +141,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
             putExtra("tracing_intent_id", System.currentTimeMillis()) // Dynamic trace ID for voice launch
         }
 
-        val initialChats = runBlocking { repository.getAllChats() }
+        val initialChats = runBlocking { repository.listChats() }
         
         // Set up callback to capture ChatViewModel when it's created
         MainActivity.testViewModelCallback = { vm ->
@@ -178,7 +167,7 @@ class TTSBackgroundingTest : BaseIntegrationTest() {
         
         // Track the newly created chat immediately after voice launch
         try {
-            val currentChats = runBlocking { repository.getAllChats() }
+            val currentChats = runBlocking { repository.listChats() }
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 createdChatIds.add(chat.id)

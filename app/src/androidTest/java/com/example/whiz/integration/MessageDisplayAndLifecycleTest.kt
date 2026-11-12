@@ -1,7 +1,6 @@
 package com.example.whiz.integration
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.rule.GrantPermissionRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -49,11 +48,6 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
     @get:Rule
     val composeTestRule = createEmptyComposeRule()
     
-    @get:Rule
-    val grantPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
-        android.Manifest.permission.RECORD_AUDIO
-    )
-
     @Inject
     override lateinit var speechRecognitionService: SpeechRecognitionService
 
@@ -71,12 +65,9 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
 
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
 
-    private var testChatId = 0L
-    private var createdServerChatId = 0L // Track the server chat ID created during test
+    private var testChatId = ""
+    private var createdServerChatId = "" // Track the chat ID created during test via the UI
     private val TAG = "MessageDisplayTest"
     private val uniqueTestId = "MSG_DISPLAY_TEST_${System.currentTimeMillis()}"
 
@@ -95,16 +86,17 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
             try {
                 Log.d(TAG, "🔧 Creating test chat via direct database access...")
                 val testChatEntity = ChatEntity(
-                    id = 0, // Auto-generated
+                    id = java.util.UUID.randomUUID().toString(), // Client-minted id
                     title = "Integration Test Chat",
                     createdAt = System.currentTimeMillis(),
                     lastMessageTime = System.currentTimeMillis()
                 )
-                
-                testChatId = database.chatDao().insertChat(testChatEntity)
+
+                database.chatDao().upsert(testChatEntity)
+                testChatId = testChatEntity.id
                 Log.d(TAG, "✅ Created test chat with ID: $testChatId")
 
-                if (testChatId <= 0) {
+                if (testChatId.isEmpty()) {
                     Log.e(TAG, "❌ Failed to create test chat - chat ID: $testChatId")
                     // Skip test gracefully instead of crashing the process
                     org.junit.Assume.assumeTrue(
@@ -176,13 +168,13 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                 // 4. Clean up test chats to prevent accumulation
                 try {
                     // Direct database cleanup for this test's specific chats
-                    if (testChatId > 0) {
+                    if (testChatId.isNotEmpty()) {
                         val deletedMessages = database.messageDao().deleteMessagesForChat(testChatId)
                         val deletedChat = database.chatDao().deleteChat(testChatId)
                         Log.d(TAG, "✅ Deleted initial test chat $testChatId ($deletedMessages messages, $deletedChat chat)")
                     }
                     
-                    if (createdServerChatId > 0) {
+                    if (createdServerChatId.isNotEmpty()) {
                         val deletedMessages = database.messageDao().deleteMessagesForChat(createdServerChatId)
                         val deletedChat = database.chatDao().deleteChat(createdServerChatId)
                         Log.d(TAG, "✅ Deleted server test chat $createdServerChatId ($deletedMessages messages, $deletedChat chat)")
@@ -191,7 +183,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
                     // Use simplified cleanup for any other test chats
                     cleanupTestChats(
                         repository = repository,
-                        trackedChatIds = listOf(testChatId, createdServerChatId).filter { it > 0 },
+                        trackedChatIds = listOf(testChatId, createdServerChatId).filter { it.isNotEmpty() },
                         additionalPatterns = listOf("INTEGRATION_TEST_MSG_", "message display", "lifecycle", uniqueTestId, "MSG_DISPLAY_TEST_"),
                         enablePatternFallback = true // Enable to catch any chats with unique identifier
                     )
@@ -248,7 +240,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         Log.d(TAG, "📱 App loaded successfully, navigating to new chat...")
         
         // Capture initial chats before UI navigation
-        val initialUIChats = repository.getAllChats()
+        val initialUIChats = repository.listChats()
         
         // Check if already on chat screen using ComposeTestHelper
         if (!ComposeTestHelper.isOnChatScreen(composeTestRule)) {
@@ -274,7 +266,7 @@ class MessageDisplayAndLifecycleTest : BaseIntegrationTest() {
         
         // Track any UI-created chat for cleanup
         try {
-            val currentUIChats = repository.getAllChats()
+            val currentUIChats = repository.listChats()
             val newUIChats = currentUIChats.filter { !initialUIChats.map { it.id }.contains(it.id) }
             newUIChats.forEach { chat ->
                 if (chat.id != testChatId) { // Don't double-track the pre-created test chat

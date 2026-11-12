@@ -62,6 +62,18 @@ class MessageDraftOverlayService : Service() {
         var currentDraftMessage: String? = null
             private set
 
+        /** True once the overlay view is confirmed attached + visible on screen
+         *  (set after addView in a post{} pass). NOT the same as "startService
+         *  succeeded" — addView creating a ViewRoot does not guarantee visibility. */
+        @Volatile
+        var overlayVisible: Boolean = false
+            private set
+
+        /** The text actually present in the overlay's TextView when last shown. */
+        @Volatile
+        var displayedDraftText: String? = null
+            private set
+
         /**
          * Show the draft overlay over the given bounds.
          *
@@ -133,7 +145,11 @@ class MessageDraftOverlayService : Service() {
         
         // Store the draft message for later use by confirm_send
         currentDraftMessage = message
-        
+
+        // Reset the confirmed-visible flag; it's set true only after addView +
+        // a post{} pass confirms the window is actually attached and visible.
+        overlayVisible = false
+
         // Remove any existing overlay and dismiss button
         overlayView?.let {
             try {
@@ -221,8 +237,11 @@ class MessageDraftOverlayService : Service() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
+            // NOTE: intentionally touchable (no FLAG_NOT_TOUCHABLE) so the draft ScrollView
+            // can be scrolled. FLAG_NOT_FOCUSABLE keeps the overlay from stealing IME/input
+            // focus (touch scrolling does not need focus). While shown, the overlay is modal
+            // over the input/keyboard region — capturing those touches is intended.
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -252,6 +271,17 @@ class MessageDraftOverlayService : Service() {
                         Log.e(TAG, "Failed to correct overlay position", e)
                     }
                 }
+
+                // Confirm the overlay is actually on screen (attached + visible) and
+                // capture the text that's really rendered, so the draft tool can report
+                // the truth instead of "startService didn't throw".
+                val view = overlayView
+                overlayVisible = view?.isAttachedToWindow == true &&
+                        view.windowVisibility == View.VISIBLE
+                displayedDraftText = view
+                    ?.findViewById<TextView>(R.id.draft_message_text)
+                    ?.text?.toString()
+                Log.d(TAG, "Overlay visibility confirmed: overlayVisible=$overlayVisible, displayedDraftText='${displayedDraftText}'")
             }
 
             // Add dismiss button overlay
@@ -351,6 +381,13 @@ class MessageDraftOverlayService : Service() {
         // Build the spannable string from the diffs
         for (diff in diffs) {
             Log.d(TAG, "Diff part: operation=${diff.operation}, text='${diff.text}'")
+            // Whitespace-only deletions (e.g. removed newlines) would still render their line
+            // breaks even when struck through, visually splitting an otherwise single-line draft
+            // across multiple lines (bug #1404). Drop them entirely — don't append, don't style.
+            if (diff.operation == DiffMatchPatch.Operation.DELETE && diff.text.isBlank()) {
+                Log.d(TAG, "Skipping whitespace-only deletion: '${diff.text}'")
+                continue
+            }
             val start = result.length
             result.append(diff.text)
             val end = result.length
@@ -398,6 +435,9 @@ class MessageDraftOverlayService : Service() {
         super.onDestroy()
         Log.d(TAG, "MessageDraftOverlayService onDestroy")
         isActive = false
+        // The overlay window is gone — it's no longer visible.
+        overlayVisible = false
+        displayedDraftText = null
         // Don't clear the draft message on destroy - keep it for confirm_send
         
         // Cancel auto-dismiss

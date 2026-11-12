@@ -41,15 +41,12 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     lateinit var repository: WhizRepository
 
     @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
-    @Inject
     override lateinit var voiceManager: com.example.whiz.ui.viewmodels.VoiceManager
 
     @Inject
     override lateinit var ttsManager: com.example.whiz.services.TTSManager
 
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
 
     companion object {
         private const val TAG = "MicrophoneButtonStateTest"
@@ -59,11 +56,6 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
     @Before
     override fun setUpAuthentication() {
         super.setUpAuthentication()
-
-        // Grant microphone permission for these tests
-        Log.d(TAG, "Granting microphone permission for tests")
-        device.executeShellCommand("pm grant com.example.whiz.debug android.permission.RECORD_AUDIO")
-        permissionManager.updateMicrophonePermission(true)
 
         Log.d(TAG, "Microphone button state test setup complete")
     }
@@ -304,7 +296,7 @@ class MicrophoneButtonStateTest : BaseIntegrationTest() {
 
             // Track the newly created chat for cleanup (chat is created when first message is sent)
             try {
-                val currentChats = repository.getAllChats()
+                val currentChats = repository.listChats()
                 val latestChat = currentChats.maxByOrNull { it.createdAt }
                 if (latestChat != null) {
                     createdChatIds.add(latestChat.id)

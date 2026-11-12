@@ -15,7 +15,7 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical"
         android:background="?attr/colorSecondaryContainer"
         android:paddingHorizontal="16dp"
@@ -26,20 +26,27 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="WhizVoice Draft"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:textColor="?attr/colorOnSecondaryContainer"
             android:textStyle="bold"
             android:layout_marginBottom="4dp"/>
 
-        <TextView
-            android:id="@+id/draft_message_text"
+        <ScrollView
+            android:id="@+id/draft_scroll"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:textColor="?attr/colorOnSecondaryContainer"
-            android:textSize="16sp"
-            android:lineSpacingMultiplier="1.2"
-            android:maxLines="5"
-            android:ellipsize="end"/>
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/draft_message_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="?attr/colorOnSecondaryContainer"
+                android:textSize="20sp"
+                android:lineSpacingMultiplier="1.2"/>
+
+        </ScrollView>
 
     </LinearLayout>
 

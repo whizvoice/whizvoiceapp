@@ -87,22 +87,19 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     
     @Inject
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
-    
-    @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-    
-
 
     // device is inherited from BaseIntegrationTest
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val uniqueTestId = System.currentTimeMillis()
     
     // track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     
     // track optimistic chat migration
-    private var optimisticChatId: Long? = null
-    private var finalServerChatId: Long? = null
+    // Chat ids present before the test created anything; used to avoid matching older chats
+    private var initialChatIdSnapshot: Set<String> = emptySet()
+    private var optimisticChatId: String? = null
+    private var finalServerChatId: String? = null
 
     @Before
     override fun setUpAuthentication() {
@@ -165,12 +162,13 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             
             // Capture initial chats before creating new ones
             val initialChats = try {
-                repository.getAllChats()
+                repository.listChats()
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
             }
-            
+            initialChatIdSnapshot = initialChats.map { it.id }.toSet()
+
             if (ComposeTestHelper.isOnChatScreen(composeTestRule)) {
                 // if we're already in a chat, navigate back to chats list first, then create new chat
                 Log.d(TAG, "🔄 currently in chat screen, going back to chats list first")
@@ -207,12 +205,12 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             // First verify chat ID is initially -1 for new chat (before any messages)
             val chatViewModel = androidx.lifecycle.ViewModelProvider(composeTestRule.activity)[com.example.whiz.ui.viewmodels.ChatViewModel::class.java]
             val initialChatId = chatViewModel.chatId.value
-            if (initialChatId != -1L) {
-                Log.e(TAG, "❌ FAILURE: New chat should have ID -1 but has ID: $initialChatId")
-                failWithScreenshot("new_chat_wrong_initial_id", "New chat should have ID -1 but has ID: $initialChatId")
+            if (repository.getChatById(initialChatId) != null) {
+                Log.e(TAG, "❌ FAILURE: New chat $initialChatId should have no row yet")
+                failWithScreenshot("new_chat_row_exists", "New chat $initialChatId should have no row before the first message")
                 return@runBlocking
             } else {
-                Log.d(TAG, "✅ Confirmed: New chat initially has ID -1 (no optimistic chat created yet)")
+                Log.d(TAG, "✅ Confirmed: New chat $initialChatId has no row yet")
             }
             
             optimisticChatId = getCurrentOptimisticChatId()
@@ -256,35 +254,17 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             Log.d(TAG, "🔍 step 3.5: checking optimistic chat ID (already attempted capture after navigation)")
             
             // Only try to capture again if we didn't get it after navigation
+            // Chat ids are client-minted UUIDs now, so there is no negative/optimistic id to validate;
+            // we only record the id so we can assert it stays stable after the server assigns a serverId.
             if (optimisticChatId == null) {
                 optimisticChatId = getCurrentOptimisticChatId()
                 if (optimisticChatId != null) {
-                    // Verify it's negative but not exactly -1
-                    if (optimisticChatId!! >= 0) {
-                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
-                        failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
-                        return@runBlocking
-                    } else if (optimisticChatId == -1L) {
-                        Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                        failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                        return@runBlocking
-                    }
-                    Log.d(TAG, "✅ captured optimistic chat ID after first message: $optimisticChatId (negative, not -1)")
+                    Log.d(TAG, "✅ captured chat ID after first message: $optimisticChatId")
                 } else {
-                    Log.w(TAG, "⚠️ could not capture optimistic chat ID - migration likely happened too quickly")
+                    Log.w(TAG, "⚠️ could not capture chat ID after first message")
                 }
             } else {
-                // Verify the previously captured ID is negative but not -1
-                if (optimisticChatId!! >= 0) {
-                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should be negative but is: $optimisticChatId")
-                    failWithScreenshot("optimistic_chat_id_not_negative", "Optimistic chat ID should be negative but is: $optimisticChatId")
-                    return@runBlocking
-                } else if (optimisticChatId == -1L) {
-                    Log.e(TAG, "❌ FAILURE: Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                    failWithScreenshot("optimistic_chat_id_is_minus_one", "Optimistic chat ID should not be exactly -1 but is: $optimisticChatId")
-                    return@runBlocking
-                }
-                Log.d(TAG, "✅ using previously captured optimistic chat ID: $optimisticChatId (negative, not -1)")
+                Log.d(TAG, "✅ using previously captured chat ID: $optimisticChatId")
             }
             
             // step 4: confirm bot is responding (thinking indicator visible)
@@ -416,7 +396,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private suspend fun trackNewChats(initialChats: List<com.example.whiz.data.local.ChatEntity>) {
         try {
-            val currentChats = repository.getAllChats()
+            val currentChats = repository.listChats()
             val newChats = currentChats.filter { !initialChats.map { it.id }.contains(it.id) }
             newChats.forEach { chat ->
                 if (!createdChatIds.contains(chat.id)) {
@@ -424,12 +404,12 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
                     Log.d(TAG, "📝 Tracked new chat for cleanup: ${chat.id} ('${chat.title}')")
                     
                     // Update tracking variables for migration monitoring
-                    if (chat.id < 0) {
+                    if (chat.serverId == null) {
                         optimisticChatId = chat.id
-                        Log.d(TAG, "🔍 Captured optimistic chat ID: $optimisticChatId")
+                        Log.d(TAG, "🔍 Captured chat ID (no serverId yet): $optimisticChatId")
                     } else {
                         finalServerChatId = chat.id
-                        Log.d(TAG, "🔍 Captured server chat ID: $finalServerChatId")
+                        Log.d(TAG, "🔍 Captured chat ID (serverId assigned): $finalServerChatId")
                     }
                 }
             }
@@ -670,12 +650,13 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
     /**
      * Get the current optimistic chat ID (negative ID) by finding the most recent chat
      */
-    private suspend fun getCurrentOptimisticChatId(): Long? {
+    private suspend fun getCurrentOptimisticChatId(): String? {
         return try {
-            val allChats = repository.getAllChats()
-            // Look for chats with negative IDs (optimistic) that contain our test identifier
+            val allChats = repository.observeChats().first()
+            // Look for a chat created by this test (not in the initial snapshot) with our test text
             val optimisticChat = allChats.find { chat ->
-                chat.id < 0 && (chat.title.contains("test message 1") || chat.title.contains("Hello"))
+                chat.id !in initialChatIdSnapshot &&
+                    (chat.title.contains("test message 1") || chat.title.contains("Hello"))
             }
             optimisticChat?.id
         } catch (e: Exception) {
@@ -689,9 +670,11 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private suspend fun checkChatMigration(): Boolean {
         return try {
-            val allChats = repository.getAllChats()
+            // No sync here: serverId must come from the app's own flow, not from this check
+            val allChats = repository.observeChats().first()
             val testChat = allChats.find { chat ->
-                chat.title.contains("test message 1") || chat.title.contains("Hello")
+                chat.id !in initialChatIdSnapshot &&
+                    (chat.title.contains("test message 1") || chat.title.contains("Hello"))
             }
             
             if (testChat == null) {
@@ -703,18 +686,18 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             finalServerChatId = currentChatId
             
             // migration is successful if:
-            // 1. we have a positive server ID (not negative optimistic ID)
-            // 2. the ID has changed from the original optimistic ID (if we captured one)
-            val hasServerID = currentChatId > 0
-            val hasChanged = optimisticChatId?.let { it != currentChatId } ?: true
-            
-            Log.d(TAG, "migration check: optimistic=$optimisticChatId, current=$currentChatId, hasServerID=$hasServerID, hasChanged=$hasChanged")
-            
-            if (hasServerID) {
+            // 1. the server has assigned a serverId to the chat
+            // 2. the client id did NOT change (ids are client-minted and stable)
+            val hasServerID = testChat.serverId != null
+            val idStable = optimisticChatId?.let { it == currentChatId } ?: true
+
+            Log.d(TAG, "migration check: initial=$optimisticChatId, current=$currentChatId, hasServerID=$hasServerID, idStable=$idStable")
+
+            if (!createdChatIds.contains(currentChatId)) {
                 createdChatIds.add(currentChatId) // track for cleanup
             }
-            
-            return hasServerID && hasChanged
+
+            return hasServerID && idStable
         } catch (e: Exception) {
             Log.w(TAG, "failed to check chat migration", e)
             false
@@ -775,11 +758,11 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
      */
     private suspend fun checkAllMessagesAssociated(): Boolean {
         return try {
-            if (finalServerChatId == null || finalServerChatId!! <= 0) {
+            if (finalServerChatId == null) {
                 return false
             }
-            
-            val chatMessages = repository.getMessagesForChat(finalServerChatId!!).first()
+
+            val chatMessages = repository.observeMessages(finalServerChatId!!).first()
             val userMessages = chatMessages.filter { it.type == com.example.whiz.data.local.MessageType.USER }
             
             Log.d(TAG, "🔍 checking message association: ${userMessages.size} user messages in chat $finalServerChatId")
@@ -788,7 +771,7 @@ class MessageFlowComposeTest : BaseIntegrationTest() {
             val hasExpectedMessages = userMessages.size >= 3
             
             // All messages should have positive chat ID
-            val allHavePositiveId = userMessages.all { it.chatId > 0 }
+            val allHavePositiveId = userMessages.all { it.chatId == finalServerChatId }
             
             Log.d(TAG, "📊 message association check: hasExpected=$hasExpectedMessages, allPositive=$allHavePositiveId")
             

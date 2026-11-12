@@ -84,13 +84,10 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
     lateinit var preloadManager: com.example.whiz.data.PreloadManager
 
     @Inject
-    lateinit var permissionManager: com.example.whiz.permissions.PermissionManager
-
-    @Inject
     override lateinit var speechRecognitionService: com.example.whiz.services.SpeechRecognitionService
     
     // Track chats created during tests for cleanup
-    private val createdChatIds = mutableListOf<Long>()
+    private val createdChatIds = mutableListOf<String>()
     
     @After
     fun tearDown() {
@@ -134,7 +131,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
         try {
             // Capture initial chats before voice launch
             val initialChats = try {
-                repository.getAllChats()
+                repository.listChats()
             } catch (e: Exception) {
                 Log.w(TAG, "⚠️ Could not get initial chats: ${e.message}")
                 emptyList()
@@ -198,7 +195,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             // Track the chat ID from the ViewModel for cleanup
             try {
                 val currentChatId = capturedViewModel?.chatId?.value
-                if (currentChatId != null && currentChatId != 0L) {
+                if (currentChatId != null) {
                     if (!createdChatIds.contains(currentChatId)) {
                         createdChatIds.add(currentChatId)
                         Log.d(TAG, "📝 Tracked chat for cleanup: $currentChatId")
@@ -249,7 +246,7 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             // Check if chat ID has changed (from optimistic to server ID)
             try {
                 val updatedChatId = capturedViewModel?.chatId?.value
-                if (updatedChatId != null && updatedChatId > 0 && !createdChatIds.contains(updatedChatId)) {
+                if (updatedChatId != null && !createdChatIds.contains(updatedChatId)) {
                     createdChatIds.add(updatedChatId)
                     Log.d(TAG, "📝 Tracked server chat ID for cleanup: $updatedChatId")
                 }
@@ -459,13 +456,13 @@ class MessageFlowVoiceComposeTest : BaseIntegrationTest() {
             // Final chat ID tracking - capture any server-assigned IDs
             try {
                 val finalChatId = capturedViewModel?.chatId?.value
-                if (finalChatId != null && finalChatId > 0 && !createdChatIds.contains(finalChatId)) {
+                if (finalChatId != null && !createdChatIds.contains(finalChatId)) {
                     createdChatIds.add(finalChatId)
                     Log.d(TAG, "📝 Tracked final server chat ID for cleanup: $finalChatId")
                 }
                 
                 // Also try to get all chats and track any new ones with our test messages
-                val allChats = repository.getAllChats()
+                val allChats = repository.listChats()
                 val testMessagePatterns = listOf(
                     "Pls always reply with just 1 word for test",
                     "2nd voice msg",
