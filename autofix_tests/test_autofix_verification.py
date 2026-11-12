@@ -42,12 +42,11 @@ def test_autofix_sms_send_error(tester):
     time.sleep(20)  # wait for screen agent to send
 
     # Validate the message was actually sent in Google Messages.
-    tester.screenshot("/tmp/whiz_sms_sent.png")
-    result = tester.validate_screenshot(
-        "/tmp/whiz_sms_sent.png",
+    result = tester.check(
         "The Google Messages conversation with Ruth Grace Wong shows the sent "
         "message bubble containing 'No rush at all' / 'Godspeed' in the "
-        "conversation thread (a sent SMS, not just a draft in the input box)."
+        "conversation thread (a sent SMS, not just a draft in the input box).",
+        screenshot_path="/tmp/whiz_sms_sent.png",
     )
 
     if not result:
@@ -55,12 +54,11 @@ def test_autofix_sms_send_error(tester):
         # an SMS send error like "Error sending message: null".
         tester.open_app("com.example.whiz.debug")
         time.sleep(3)
-        tester.screenshot("/tmp/whiz_sms_chat_result.png")
-        result = tester.validate_screenshot(
-            "/tmp/whiz_sms_chat_result.png",
+        result = tester.check(
             "The Whiz chat shows the assistant confirming the text message was "
             "sent to Ruth Grace Wong. It should NOT show an error about failing "
-            "to send the message (e.g. 'Error sending message: null')."
+            "to send the message (e.g. 'Error sending message: null').",
+            screenshot_path="/tmp/whiz_sms_chat_result.png",
         )
         if not result:
             save_failed_screenshot(tester, "autofix_sms_send_error", "validation_failed")
