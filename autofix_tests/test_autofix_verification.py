@@ -5,7 +5,7 @@ import time
 import subprocess
 import os
 from helpers import (
-    check_element_exists_in_ui, save_failed_screenshot,
+    save_failed_screenshot,
     navigate_to_my_chats, send_voice_command, EMULATOR_SERIAL,
 )
 
