@@ -6827,7 +6827,19 @@ class ScreenAgentTools @Inject constructor(
         accessibilityService: WhizAccessibilityService,
         maxWaitMs: Long = 3000
     ): Boolean {
+        var collapseAttempts = 0
         return waitForElement(accessibilityService, { rootNode ->
+            // When the search deep link fires right after a song started, newer YT Music
+            // keeps the expanded Now Playing page on top for several seconds and nothing
+            // underneath is reachable. Minimize it here so this wait actually observes the
+            // results arriving, instead of burning its whole budget behind the player
+            // (phone dumps 1789-1798: player full-screen for the first ~2s of the later
+            // 3s menu loop, results still loading when that loop expired).
+            if (collapseAttempts < 2 &&
+                collapseYouTubeMusicExpandedPlayerIfPresent(rootNode, accessibilityService)) {
+                collapseAttempts++
+                return@waitForElement false
+            }
             // Check for filter chips (Songs, Videos, Artists, Albums, etc.)
             val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(
                 "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
@@ -6997,10 +7009,21 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         val startTime = System.currentTimeMillis()
         val pollIntervalMs = 200L
+        var collapseAttempts = 0
 
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
+                // Newer YT Music versions keep the expanded Now Playing page on top after the
+                // search deep link (e.g. right after playing a song), hiding the search results.
+                // Minimize it first so the result rows become reachable. Older versions that
+                // already show results simply won't have a visible collapse button.
+                if (collapseAttempts < 2 && collapseYouTubeMusicExpandedPlayerIfPresent(rootNode, accessibilityService)) {
+                    collapseAttempts++
+                    rootNode.recycle()
+                    delay(800)
+                    continue
+                }
                 val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
                 rootNode.recycle()
 
@@ -7015,6 +7038,32 @@ class ScreenAgentTools @Inject constructor(
 
         Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms")
         return false
+    }
+
+    /**
+     * If YouTube Music's expanded Now Playing page is covering the screen, click its
+     * "Minimize" (player_collapse_button) to reveal the content underneath.
+     * Returns true if a collapse click was performed.
+     */
+    private fun collapseYouTubeMusicExpandedPlayerIfPresent(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        val collapseNodes = rootNode.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.youtube.music:id/player_collapse_button"
+        )
+        if (collapseNodes.isNullOrEmpty()) return false
+        try {
+            for (node in collapseNodes) {
+                if (node.isVisibleToUser && node.isClickable) {
+                    Log.d(TAG, "Expanded Now Playing page is covering search results; minimizing it")
+                    return accessibilityService.clickNode(node)
+                }
+            }
+            return false
+        } finally {
+            collapseNodes.forEach { it.recycle() }
+        }
     }
 
     /**

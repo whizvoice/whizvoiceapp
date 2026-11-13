@@ -351,8 +351,10 @@ def navigate_to_my_chats(tester, test_name="unknown"):
             tester,
             "The WhizVoice app 'My Chats' page with a 'New Chat' button "
             "(a '+' icon at the bottom-right) visible. The page may show "
-            "either a list of chats OR a 'Loading chats...' indicator — "
-            "both are valid My Chats states."
+            "a list of chats, a 'Loading chats...' indicator, OR an empty "
+            "state such as 'No chats yet' — all are valid My Chats states. "
+            "This must be the chat list screen itself, not an individual "
+            "chat that merely shows 'My Chats' as a back-navigation label."
         ):
             print("Successfully navigated to My Chats page")
             return True, ""
