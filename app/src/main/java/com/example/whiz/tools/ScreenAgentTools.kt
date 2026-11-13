@@ -5812,11 +5812,8 @@ class ScreenAgentTools @Inject constructor(
         fun tryClickDirections(candidates: List<AccessibilityNodeInfo>, source: String): Boolean {
             for (node in candidates) {
                 val desc = node.contentDescription?.toString() ?: ""
-                // Match the Directions button (content-desc starts with "Directions to",
-                // content-desc is exactly "Directions", or text is "Directions")
-                if (desc.startsWith("Directions to", ignoreCase = true) ||
-                    desc.equals("Directions", ignoreCase = true) ||
-                    node.text?.toString() == "Directions") {
+                // Match the Directions button (content-desc starts with "Directions to") or text is "Directions"
+                if (desc.startsWith("Directions to", ignoreCase = true) || node.text?.toString() == "Directions") {
                     // If the node itself is clickable, click it directly
                     if (node.isClickable) {
                         val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
