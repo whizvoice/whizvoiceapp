@@ -6807,7 +6807,19 @@ class ScreenAgentTools @Inject constructor(
         accessibilityService: WhizAccessibilityService,
         maxWaitMs: Long = 3000
     ): Boolean {
+        var collapseAttempts = 0
         return waitForElement(accessibilityService, { rootNode ->
+            // When the search deep link fires right after a song started, newer YT Music
+            // keeps the expanded Now Playing page on top for several seconds and nothing
+            // underneath is reachable. Minimize it here so this wait actually observes the
+            // results arriving, instead of burning its whole budget behind the player
+            // (phone dumps 1789-1798: player full-screen for the first ~2s of the later
+            // 3s menu loop, results still loading when that loop expired).
+            if (collapseAttempts < 2 &&
+                collapseYouTubeMusicExpandedPlayerIfPresent(rootNode, accessibilityService)) {
+                collapseAttempts++
+                return@waitForElement false
+            }
             // Check for filter chips (Songs, Videos, Artists, Albums, etc.)
             val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(
                 "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
