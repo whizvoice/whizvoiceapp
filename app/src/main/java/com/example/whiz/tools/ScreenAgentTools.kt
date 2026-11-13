@@ -2374,6 +2374,65 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== SMS Specific Functions ==========
 
+    /**
+     * Google Messages can open on its first-run "Welcome! Customize how you're seen" profile
+     * screen (account picker + "Continue as <name>" button) instead of the conversation list.
+     * Pressing back on that screen exits Messages, so it has to be dismissed before any
+     * list navigation. Matches by resource id first (continue_as_button) and falls back to a
+     * button whose text starts with "Continue as", so builds that rename the id still work.
+     * Seen on the CI emulator snapshot (dump 1836); a real user who opens Messages through
+     * Whiz before finishing Messages' own onboarding hits the same screen.
+     *
+     * Returns true if the welcome screen was present and the continue button was tapped.
+     */
+    private suspend fun dismissMessagesWelcomeScreenIfPresent(accessibilityService: WhizAccessibilityService): Boolean {
+        val messagesPackage = "com.google.android.apps.messaging"
+        val continueButtonId = "$messagesPackage:id/continue_as_button"
+        val root = accessibilityService.getCurrentRootNode() ?: return false
+        try {
+            if (root.packageName?.toString() != messagesPackage) return false
+
+            var button: AccessibilityNodeInfo? = null
+            val byId = root.findAccessibilityNodeInfosByViewId(continueButtonId)
+            if (!byId.isNullOrEmpty()) {
+                button = byId[0]
+                byId.drop(1).forEach { it.recycle() }
+            } else {
+                val byText = mutableListOf<AccessibilityNodeInfo>()
+                findNodesByText(root, "Continue as", byText)
+                button = byText.firstOrNull {
+                    it.text?.toString()?.startsWith("Continue as", ignoreCase = true) == true
+                }
+                byText.filter { it !== button }.forEach { it.recycle() }
+            }
+            if (button == null) return false
+
+            Log.i(TAG, "Messages is on its first-run welcome screen; tapping '${button.text}'")
+            val target = if (button.isClickable) button else findClickableParent(button)
+            val clicked = target != null && accessibilityService.clickNode(target)
+            if (target !== button) target?.recycle()
+            button.recycle()
+            if (!clicked) {
+                Log.w(TAG, "Could not click the Messages welcome screen continue button")
+                return false
+            }
+
+            // Wait for the welcome screen to go away rather than sleeping a fixed amount.
+            val gone = waitForCondition(maxWaitMs = 5000) {
+                val current = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
+                val stillThere = current.findAccessibilityNodeInfosByViewId(continueButtonId)
+                val present = !stillThere.isNullOrEmpty()
+                stillThere?.forEach { it.recycle() }
+                current.recycle()
+                !present
+            }
+            Log.i(TAG, "Messages welcome screen dismissed: $gone")
+            return true
+        } finally {
+            root.recycle()
+        }
+    }
+
     suspend fun selectSMSChat(contactName: String): SMSResult {
         Log.i(TAG, "Attempting to select SMS chat: $contactName")
         trackAction("selectSMSChat: $contactName")
@@ -2424,6 +2483,10 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
             }
+
+            // Get past Messages' first-run welcome screen if it is showing; back on that
+            // screen would exit Messages instead of reaching the conversation list.
+            dismissMessagesWelcomeScreenIfPresent(accessibilityService)
 
             // Navigate to conversation list by pressing back repeatedly
             // Try up to 6 times to reach the list
@@ -2917,14 +2980,29 @@ class ScreenAgentTools @Inject constructor(
                 val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
                 val searchBoxNodes = checkRoot.findAccessibilityNodeInfosByViewId(searchBoxId)
                 if (searchBoxNodes != null && searchBoxNodes.isNotEmpty()) {
-                    Log.e(TAG, "Still in search screen - not in a conversation!")
+                    // The Messages search box is still open, which means the preceding
+                    // selectSMSChat search found no conversation or contact for this name
+                    // (dumps 1392 / 1599 both show "No results found"). That is a contact-name
+                    // or contact-data outcome, not a navigation bug, so report it the same way
+                    // sms_chat_not_found does: sampled 5% and flagged as an expected failure.
+                    // Formerly tagged sms_stuck_in_search_screen, which sent every occurrence
+                    // to the autofix pipeline (PRs 24, 57).
+                    val who = contactName ?: "that contact"
+                    Log.w(TAG, "Messages search still open - no conversation or contact found for '$who'")
                     searchBoxNodes.forEach { it.recycle() }
-                    dumpUIHierarchy(checkRoot, "sms_stuck_in_search_screen", "Cannot draft message: still in search screen. Please select a contact first to open a conversation.")
+                    if (Math.random() < 0.05) {
+                        dumpUIHierarchy(
+                            checkRoot,
+                            "sms_no_search_results",
+                            "No conversation or contact named '$who' found in Messages search",
+                            expectedFailure = true
+                        )
+                    }
                     checkRoot.recycle()
                     return DraftResult(
                         success = false,
                         message = message,
-                        error = "Cannot draft message: still in search screen. Please select a contact first to open a conversation."
+                        error = "No conversation or contact named '$who' found in Messages. Please verify the contact name."
                     )
                 }
                 searchBoxNodes?.forEach { it.recycle() }
@@ -2987,7 +3065,11 @@ class ScreenAgentTools @Inject constructor(
         val inputs = mutableListOf<AccessibilityNodeInfo>()
         findEditTextNodes(root, inputs)
         val filtered = inputs.filter { node ->
-            val viewId = node.viewIdResourceName
+            // viewIdResourceName is a platform type and can be null on newer
+            // Google Messages (Compose-based input EditTexts have no resource
+            // ID). A null ID is not a search box, so keep the node. Guarding
+            // here avoids an NPE that aborted the whole send.
+            val viewId = node.viewIdResourceName ?: ""
             viewId != searchBoxId && !viewId.contains("search")
         }
         inputs.filter { it !in filtered }.forEach { it.recycle() }

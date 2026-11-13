@@ -2,49 +2,68 @@
 """Autofix verification tests."""
 
 import time
-import subprocess
-import os
 from helpers import (
     save_failed_screenshot,
-    navigate_to_my_chats, send_voice_command, EMULATOR_SERIAL,
+    navigate_to_my_chats, send_voice_command,
 )
 
 
-def test_autofix_ytmusic_no_action_menu(tester):
-    """Verify fix for ytmusic_no_action_menu.
+def test_autofix_sms_send_error(tester):
+    """Verify fix for sms_send_error.
 
-    Reproduces the failing sequence: play a song on YouTube Music (which leaves
-    the expanded Now Playing page open), then queue another song. Newer YT Music
-    versions keep the expanded player on top of the search deep link, hiding the
-    result rows; the fix minimizes the player before looking for the action menu.
+    The screen agent crashed with a NullPointerException in smsFindBestInput
+    when sending an SMS via the updated Google Messages app: the generic
+    EditText fallback called String.contains() on a null viewIdResourceName
+    (newer Compose-based message inputs have no resource ID). The fix null-
+    guards the resource ID so the compose input is accepted instead of
+    crashing the whole send.
+
+    This test drives the actual screen agent: it asks Whiz to text a contact
+    via SMS, then confirms sending, and validates that the message was
+    delivered (i.e. no "Error sending message: null" failure).
     """
-    test_name = "autofix_ytmusic_no_action_menu"
-    success, error = navigate_to_my_chats(tester, test_name)
+    success, error = navigate_to_my_chats(tester, "autofix_sms_send_error")
     assert success, f"Could not reach My Chats: {error}"
 
+    # Open a new chat and let the UI settle before sending a voice command.
     tester.tap(950, 2225)
     time.sleep(2)
 
-    # Step 1: play a song, leaving the expanded Now Playing page up
-    send_voice_command("Play Golden from Kpop Demon Hunters on YouTube Music.")
-    time.sleep(35)
-
-    # Step 2: queue another song — this is the action that failed
-    send_voice_command("Queue How its Done by HUNTRIX on YouTube Music")
-    time.sleep(35)
-
-    # Validate the queue result in the Whiz chat
-    tester.open_app("com.example.whiz.debug")
-    time.sleep(3)
-    result = tester.check(
-        "The Whiz chat shows an assistant reply confirming that a song (e.g. "
-        "'How It's Done') was added to the queue on YouTube Music. It should NOT "
-        "say it couldn't find the song, couldn't open the menu, or couldn't queue it.",
-        screenshot_path="/tmp/whiz_ytmusic_queue_result.png",
+    # Ask Whiz to draft an SMS to the test contact. This routes through the
+    # screen agent's SMS draft pipeline (selectSMSChat + draftSMSMessage).
+    send_voice_command(
+        "Send a text message to Ruth Grace Wong saying No rush at all. Godspeed"
     )
+    time.sleep(30)  # wait for draft to be shown in Messages
+
+    # Confirm the send. This triggers agent_sms_send_message -> sendSMSMessage,
+    # which is exactly the path that previously NPE'd in smsFindBestInput.
+    send_voice_command("Yes send it")
+    time.sleep(20)  # wait for screen agent to send
+
+    # Validate the message was actually sent in Google Messages.
+    result = tester.check(
+        "The Google Messages conversation with Ruth Grace Wong shows the sent "
+        "message bubble containing 'No rush at all' / 'Godspeed' in the "
+        "conversation thread (a sent SMS, not just a draft in the input box).",
+        screenshot_path="/tmp/whiz_sms_sent.png",
+    )
+
     if not result:
-        save_failed_screenshot(tester, test_name, "validation_failed")
+        # Fall back to checking the Whiz chat: the assistant should NOT report
+        # an SMS send error like "Error sending message: null".
+        tester.open_app("com.example.whiz.debug")
+        time.sleep(3)
+        result = tester.check(
+            "The Whiz chat shows the assistant confirming the text message was "
+            "sent to Ruth Grace Wong. It should NOT show an error about failing "
+            "to send the message (e.g. 'Error sending message: null').",
+            screenshot_path="/tmp/whiz_sms_chat_result.png",
+        )
+        if not result:
+            save_failed_screenshot(tester, "autofix_sms_send_error", "validation_failed")
+
     assert result, (
-        "Queueing on YouTube Music after playing a song did not succeed — "
-        "ytmusic_no_action_menu may still be triggering"
+        "SMS message was not sent — sms_send_error (NPE in smsFindBestInput) "
+        "may still be triggering"
     )
