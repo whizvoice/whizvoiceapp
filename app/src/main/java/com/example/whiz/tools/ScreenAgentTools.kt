@@ -68,6 +68,17 @@ class ScreenAgentTools @Inject constructor(
     private val maxRecentActions = 5
 
     companion object {
+        const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+
+        /**
+         * The Maps "unknown screen state" recovery presses the system Back button. That is
+         * only safe while Google Maps owns the foreground window; once Back has left Maps,
+         * another press lands on whatever is in front, including Whiz itself (bug #1558).
+         * A null package (no readable window) is treated as unsafe.
+         */
+        internal fun mapsRecoveryMayPressBack(foregroundPackage: CharSequence?): Boolean =
+            foregroundPackage?.toString() == GOOGLE_MAPS_PACKAGE
+
         /**
          * Single source of truth mapping a normalized (lowercased, trimmed) app name to a
          * package name. Shared by launchApp, resolvePackageName and closeOtherApp so the
@@ -837,12 +848,15 @@ class ScreenAgentTools @Inject constructor(
             val intent = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
+            // MainActivity.onResume stops the bubble; that stop is this tool's doing, so it
+            // must not cancel the tool that is still finishing up.
+            BubbleOverlayService.markNextStopAsToolInitiated()
             context.startActivity(intent)
             Log.i(TAG, "restoreFullScreenWhiz: launched MainActivity")
         } catch (e: Exception) {
             Log.e(TAG, "restoreFullScreenWhiz: failed to launch MainActivity, falling back", e)
             try {
-                BubbleOverlayService.stop(context)
+                BubbleOverlayService.stop(context, cancelInFlightTools = false)
             } catch (_: Exception) {}
             try {
                 WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
@@ -4677,15 +4691,28 @@ class ScreenAgentTools @Inject constructor(
                 }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
+                    var foregroundPackage: CharSequence? = rootNode.packageName
                     rootNode.recycle()
 
-                    // Press back multiple times if needed to get to a known screen
+                    // Press back multiple times if needed to get to a known screen.
+                    // Only while Maps is still in front: once Back has left Maps, another press
+                    // would land on the launcher or on Whiz itself (bug #1558).
                     for (backAttempt in 1..3) {
+                        if (!mapsRecoveryMayPressBack(foregroundPackage)) {
+                            Log.w(TAG, "Google Maps left the foreground (now: $foregroundPackage); aborting back-press recovery")
+                            return MapsActionResult(
+                                success = false,
+                                action = "get_directions",
+                                mode = mode,
+                                error = "Google Maps left the foreground while recovering from an unknown screen (now showing: ${foregroundPackage ?: "no window"})"
+                            )
+                        }
                         accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                         delay(1000)
 
                         // Re-detect screen state after pressing back
                         val newRootNode = accessibilityService.getCurrentRootNode()
+                        foregroundPackage = newRootNode?.packageName
                         if (newRootNode != null) {
                             val newScreenState = detectGoogleMapsScreenState(newRootNode)
                             Log.d(TAG, "After back press $backAttempt, new screen state: $newScreenState")

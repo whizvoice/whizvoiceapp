@@ -1356,7 +1356,7 @@ class ToolExecutor @Inject constructor(
 
             // Stop bubble overlay service if active
             Log.i(TAG, "Stopping BubbleOverlayService")
-            BubbleOverlayService.stop(context)
+            BubbleOverlayService.stop(context, cancelInFlightTools = false)
 
             // Short delay to allow service to stop cleanly
             delay(50)
@@ -1410,7 +1410,7 @@ class ToolExecutor @Inject constructor(
             }
             context.startActivity(intent)
 
-            BubbleOverlayService.stop(context)
+            BubbleOverlayService.stop(context, cancelInFlightTools = false)
 
             val resultJson = JSONObject().apply {
                 put("success", true)
@@ -1927,7 +1927,7 @@ class ToolExecutor @Inject constructor(
                     val wasBubbleActive = BubbleOverlayService.isActive
                     if (wasBubbleActive) {
                         Log.i(TAG, "Bubble overlay active - stopping bubble and bringing MainActivity to foreground for permission dialog")
-                        BubbleOverlayService.stop(context)
+                        BubbleOverlayService.stop(context, cancelInFlightTools = false)
                         val bringToFrontIntent = android.content.Intent(context, MainActivity::class.java).apply {
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                         }
