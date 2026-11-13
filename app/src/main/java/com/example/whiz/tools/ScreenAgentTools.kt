@@ -2444,10 +2444,25 @@ class ScreenAgentTools @Inject constructor(
                     newMessageButton?.forEach { it.recycle() }
 
                     if (hasListIndicators) {
-                        Log.i(TAG, "Reached conversation list after $backAttempt back button(s)")
+                        Log.i(TAG, "Reached conversation list after $backAttempt back button(s) (root package: ${rootNode.packageName})")
                         onConversationList = true
                         rootNode.recycle()
                         break
+                    }
+
+                    // DIAGNOSTIC (temporary, revert after CI capture): on the CI emulator this
+                    // loop never recognises the Messages list and backs out to the launcher, but
+                    // it saves no evidence of what Messages was actually showing. Dump the first
+                    // two unrecognised screens before pressing back. expectedFailure=true keeps
+                    // these out of the autofix pipeline.
+                    if (backAttempt <= 2) {
+                        Log.i(TAG, "Not on conversation list (root package: ${rootNode.packageName}); dumping for diagnosis")
+                        dumpUIHierarchy(
+                            rootNode,
+                            "sms_list_detect_diag",
+                            "Conversation list not recognised on back attempt $backAttempt (root package: ${rootNode.packageName})",
+                            expectedFailure = true
+                        )
                     }
 
                     rootNode.recycle()
