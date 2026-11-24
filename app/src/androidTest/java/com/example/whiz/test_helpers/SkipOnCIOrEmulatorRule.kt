@@ -2,6 +2,7 @@ package com.example.whiz.test_helpers
 
 import android.os.Build
 import android.util.Log
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assume
 import org.junit.rules.TestRule
 import org.junit.runner.Description
@@ -20,23 +21,37 @@ import org.junit.runners.model.Statement
  * The test will be skipped (not failed) when:
  * - Running in GitHub Actions (CI=true or GITHUB_ACTIONS=true)
  * - Running on an Android emulator
+ *
+ * Pass the instrumentation argument `allowEmulator=true` to run anyway, e.g.
+ * `-Pandroid.testInstrumentationRunnerArguments.allowEmulator=true`. This is how the
+ * autofix pipeline runs the screen agent tests on its snapshot emulator.
  */
 class SkipOnCIOrEmulatorRule : TestRule {
-    
+
     companion object {
         private const val TAG = "SkipOnCIOrEmulatorRule"
+        private const val ALLOW_EMULATOR_ARG = "allowEmulator"
     }
-    
+
     override fun apply(base: Statement, description: Description): Statement {
         return object : Statement() {
             override fun evaluate() {
+                val allowEmulator = InstrumentationRegistry.getArguments()
+                    .getString(ALLOW_EMULATOR_ARG)
+                    ?.equals("true", ignoreCase = true) == true
+                if (allowEmulator) {
+                    Log.i(TAG, "$ALLOW_EMULATOR_ARG=true: running '${description.className}#${description.methodName}' on CI/emulator")
+                    base.evaluate()
+                    return
+                }
+
                 // Check if running in CI environment
-                val isCI = System.getenv("CI") != null || 
+                val isCI = System.getenv("CI") != null ||
                           System.getenv("GITHUB_ACTIONS") != null
-                
+
                 // Check if running on emulator
                 val isEmulator = isRunningOnEmulator()
-                
+
                 if (isCI || isEmulator) {
                     val reason = when {
                         isCI && isEmulator -> "CI environment with emulator"

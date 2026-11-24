@@ -1,0 +1,173 @@
+# SPIKE: can the instrumented UiAutomator screen agent tests run on the CI snapshot emulator?
+#
+# Boots the same x86_64 snapshot as autofix-tests.yml, then runs the chosen test class(es)
+# with -PallowEmulator=true so SkipOnCIOrEmulatorRule lets them execute. Manual dispatch only.
+# Shares the whizvoicetest account with the phone and other CI runs: don't run
+# `./run_tests_on_debug.sh --screen-agent` on the phone while this is in flight.
+name: Screen Agent Tests on Snapshot (spike)
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_classes:
+        description: 'Comma-separated fully-qualified test classes'
+        required: true
+        default: 'com.example.whiz.integration.MediaStreamDuckTest'
+        type: string
+
+concurrency:
+  group: whizvoicetest-account-instrumented
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  screen-agent-on-snapshot:
+    name: Screen agent tests on snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout whizvoiceapp
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Free up disk space
+        run: |
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          df -h
+
+      - name: Install zstd
+        run: sudo apt-get install -y zstd
+
+      - name: Download x86_64 emulator snapshot
+        id: download-snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_ENCRYPTION_KEY: ${{ secrets.SNAPSHOT_ENCRYPTION_KEY }}
+        run: |
+          chmod +x scripts/avd-snapshot-download.sh
+          ./scripts/avd-snapshot-download.sh \
+            --force \
+            --release-tag emulator-snapshot-x86_64-v4 \
+            --system-image "system-images;android-36;google_apis_playstore;x86_64" \
+            --target-api 36
+          BUILD_FILE="$HOME/.android/avd/whiz-test-device.avd/snapshot_emulator_build.txt"
+          if [[ -f "$BUILD_FILE" ]]; then
+            echo "emulator_build=$(cat "$BUILD_FILE")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup ADB keys
+        run: |
+          mkdir -p ~/.android
+          echo '${{ secrets.ADB_PRIVATE_KEY }}' > ~/.android/adbkey
+          chmod 600 ~/.android/adbkey
+          ssh-keygen -y -f ~/.android/adbkey > ~/.android/adbkey.pub 2>/dev/null || adb keygen ~/.android/adbkey.pub || true
+
+      - name: Setup debug keystore
+        run: |
+          mkdir -p ~/.android
+          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/build-cache
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Make scripts executable
+        run: chmod +x gradlew scripts/run-screen-agent-tests-on-snapshot.sh
+
+      - name: Setup local.properties with OAuth client IDs
+        run: |
+          echo "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" >> local.properties
+          echo "WEB_CLIENT_ID=${{ secrets.WEB_CLIENT_ID }}" >> local.properties
+
+      - name: Build debug + androidTest APKs
+        run: ./gradlew assembleDebug assembleDebugAndroidTest --console=plain
+
+      - name: Stop Gradle daemon to free memory for emulator
+        run: ./gradlew --stop
+
+      - name: Verify APK signing
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          ACTUAL_SHA1=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 | grep "SHA-1 digest" | head -1 | awk '{print $NF}')
+          EXPECTED_SHA1="c7992a6ecc0c8ebb0f28d35f94802d883073863b"
+          echo "Actual $ACTUAL_SHA1 / expected $EXPECTED_SHA1"
+          [ "$ACTUAL_SHA1" = "$EXPECTED_SHA1" ] || { echo "ERROR: debug signing cert mismatch; install over snapshot app would fail"; exit 1; }
+
+      - name: Setup test credentials
+        run: echo '${{ secrets.TEST_CREDENTIALS_JSON }}' > test_credentials.json
+
+      # Identical to autofix-tests.yml: emulator-runner rewrites config.ini before launch and
+      # would otherwise discard the snapshot's QCOW2 overlays.
+      - name: Create QCOW2 restore script
+        run: |
+          AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"
+          BACKUP_DIR="/tmp/qcow2-backup"
+          mkdir -p "$BACKUP_DIR"
+          for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do
+            [ -f "$AVD_DIR/$f" ] && cp "$AVD_DIR/$f" "$BACKUP_DIR/$f"
+          done
+          printf '%s\n' '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'AVD_DIR="$HOME/.android/avd/whiz-test-device.avd"' \
+            'BACKUP_DIR="/tmp/qcow2-backup"' \
+            'for f in userdata-qemu.img.qcow2 encryptionkey.img.qcow2; do' \
+            '  [ -f "$BACKUP_DIR/$f" ] && cp "$BACKUP_DIR/$f" "$AVD_DIR/$f"' \
+            'done' \
+            'sed -i "s/userdata.useQcow2 = no/userdata.useQcow2 = yes/" "$AVD_DIR/config.ini"' \
+            'sed -i "/^disk.cachePartition/d" "$AVD_DIR/config.ini"' \
+            'echo "disk.cachePartition = no" >> "$AVD_DIR/config.ini"' \
+            'if [ -f "$AVD_DIR/hardware-qemu.ini" ]; then sed -i "/^disk.cachePartition/d" "$AVD_DIR/hardware-qemu.ini"; echo "disk.cachePartition = no" >> "$AVD_DIR/hardware-qemu.ini"; fi' \
+            'rm -f "$AVD_DIR/cache.img" "$AVD_DIR/cache.img.qcow2"' \
+            'echo "hw.cpu.ncore=2" >> "$AVD_DIR/snapshots/baseline_clean/hardware.ini"' \
+            > /tmp/restore-qcow2.sh
+          chmod +x /tmp/restore-qcow2.sh
+
+      - name: Run screen agent tests on snapshot
+        env:
+          TEST_CLASSES: ${{ inputs.test_classes }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis_playstore
+          arch: x86_64
+          emulator-build: ${{ steps.download-snapshot.outputs.emulator_build }}
+          force-avd-creation: false
+          avd-name: whiz-test-device
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -memory 8192 -cores 4 -no-snapshot-load -no-snapshot-save
+          disable-animations: true
+          pre-emulator-launch-script: /tmp/restore-qcow2.sh
+          script: bash scripts/run-screen-agent-tests-on-snapshot.sh
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screen-agent-on-snapshot-output
+          path: screen_agent_test_output/
+          retention-days: 30
