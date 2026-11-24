@@ -168,7 +168,7 @@ class ToolExecutor @Inject constructor(
                 val ui = runCatching { screenAgentTools.getUi("interactable") }.getOrNull()
                 val screen = ui?.takeIf { it.success }?.dump?.takeIf { it.isNotBlank() }
                 val foreground = runCatching { WhizAccessibilityService.getCurrentPackageName() }.getOrNull()
-                StuckReport.attach(result.toolName, result.result, screen, foreground)
+                StuckReport.attach(result.toolName, result.result, screen, foreground, selfPackage = context.packageName)
                 Log.i(TAG, "[STUCK] attached screen (${screen?.length ?: 0} chars, foreground=$foreground) to ${result.toolName}")
             } catch (e: Exception) {
                 Log.w(TAG, "[STUCK] could not build stuck block for ${result.toolName}: ${e.message}")

@@ -22,13 +22,17 @@ object StuckReport {
 
     private const val TRUNCATION_MARK = "\n… (truncated)"
 
-    /** The generic UI tools never get a block: they are the recovery, not the thing being recovered. */
+    /**
+     * Never get a block: the generic UI tools are the recovery, not the thing being recovered, and
+     * agent_launch_app is intent-based (a failure there is "not installed", not an on-screen obstacle).
+     */
     val GENERIC_UI_TOOLS: Set<String> = setOf(
         "agent_get_ui",
         "agent_click",
         "agent_insert_text",
         "agent_press_back",
         "agent_peek_app",
+        "agent_launch_app",
     )
 
     /** One-line goal per scripted tool, so the model knows what "done" would have looked like. */
@@ -67,28 +71,46 @@ object StuckReport {
     /**
      * Adds the `stuck` block to [result] and returns the same instance. [screen] is the
      * `getUi("interactable")` dump (null when it could not be read); [foregroundPackage] is the
-     * package owning the active window (null when unknown). Absent inputs leave their keys out.
+     * package owning the active window (null when unknown). When the foreground is Whiz itself
+     * ([selfPackage]) the screen is withheld: offering Whiz's own controls as click targets is
+     * never the right recovery, launching the target app is. Absent inputs leave their keys out.
      */
-    fun attach(toolName: String, result: JSONObject, screen: String?, foregroundPackage: String?): JSONObject {
+    fun attach(
+        toolName: String,
+        result: JSONObject,
+        screen: String?,
+        foregroundPackage: String?,
+        selfPackage: String? = null,
+    ): JSONObject {
         val failedStep = result.optString("error").takeIf { it.isNotBlank() } ?: "unknown"
+        val whizInFront = selfPackage != null && foregroundPackage == selfPackage
+        val usableScreen = screen?.takeUnless { whizInFront }
         val stuck = JSONObject().apply {
             put("goal", GOALS[toolName] ?: "Complete $toolName")
             put("failed_step", failedStep)
             foregroundPackage?.let { put("foreground_app", it) }
-            screen?.let { put("screen", truncate(it)) }
-            put(
-                "recovery",
-                "The tool could not finish on the current screen. The element ids in 'screen' are valid " +
-                    "right now: use agent_click on a dismissive element (or agent_press_back) to clear " +
-                    "whatever is in the way, or agent_launch_app if the target app is not foreground_app, " +
-                    "then call $toolName again with the same arguments."
-            )
+            usableScreen?.let { put("screen", truncate(it)) }
+            put("recovery", recoveryText(toolName, usableScreen != null, whizInFront))
         }
         result.put("stuck", stuck)
         return result
     }
 
+    private fun recoveryText(toolName: String, hasScreen: Boolean, whizInFront: Boolean): String {
+        val look = when {
+            whizInFront -> "Whiz itself is in the foreground, so the target app is not open: use agent_launch_app to open it."
+            hasScreen -> "The element ids in 'screen' are valid right now: use agent_click on a dismissive element " +
+                "(or agent_press_back) to clear whatever is in the way, or agent_launch_app if the target app is not foreground_app."
+            else -> "The screen could not be read; call agent_get_ui to see what is in the way, then clear it with " +
+                "agent_click or agent_press_back, or agent_launch_app if the target app is not foreground_app."
+        }
+        return "The tool could not finish on the current screen. $look If you have not already retried " +
+            "$toolName for this request, call it once more with the same arguments; otherwise tell the user what is " +
+            "on screen and stop."
+    }
+
+    /** Keeps the END of the dump: in tree order, in-window popups and bottom sheets come last. */
     private fun truncate(screen: String): String =
         if (screen.length <= MAX_SCREEN_CHARS) screen
-        else screen.take(MAX_SCREEN_CHARS - TRUNCATION_MARK.length) + TRUNCATION_MARK
+        else TRUNCATION_MARK.trimStart() + "\n" + screen.takeLast(MAX_SCREEN_CHARS - TRUNCATION_MARK.length)
 }
