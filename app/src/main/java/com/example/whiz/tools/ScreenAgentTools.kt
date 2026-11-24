@@ -4928,6 +4928,10 @@ class ScreenAgentTools @Inject constructor(
             var modeRootNode: AccessibilityNodeInfo? = null
             var terminalFailureReason: String? = null
             var clickedHomeForOrigin = false
+            // Set when the wait ends on the Transit tab. Maps rebuilds the tab strip while routes
+            // load and isSelected is not always set on the fresh nodes, so a later re-read can miss
+            // it (2026-11-17: tab proven Transit here, re-read 4ms later saw nothing, tool failed).
+            var transitSelectedDuringWait = false
 
             val waitSucceeded = waitForCondition(maxWaitMs = 10_000, maxIntervalMs = 500) {
                 val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
@@ -4957,6 +4961,7 @@ class ScreenAgentTools @Inject constructor(
 
                     if (currentMode?.contains("Transit", ignoreCase = true) == true) {
                         Log.d(TAG, "Found mode tabs in transit mode (no Start button expected)")
+                        transitSelectedDuringWait = true
                         modeRootNode = root
                         return@waitForCondition true
                     }
@@ -5032,7 +5037,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Select transportation mode if needed and click Start
-            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
+            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService, transitSelectedDuringWait)
             modeRootNode.recycle()
 
             if (!started) {
@@ -5924,7 +5929,17 @@ class ScreenAgentTools @Inject constructor(
         return computing
     }
 
-    private suspend fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String?, accessibilityService: WhizAccessibilityService): Boolean {
+    /**
+     * [transitTabSelected]: the caller already saw the Transit tab selected on the directions
+     * screen (see the wait in getGoogleMapsDirections). Used only when [mode] is null, where it
+     * takes precedence over re-reading the tab, which is unreliable while Maps is loading routes.
+     */
+    private suspend fun selectTransportModeAndStart(
+        rootNode: AccessibilityNodeInfo,
+        mode: String?,
+        accessibilityService: WhizAccessibilityService,
+        transitTabSelected: Boolean = false,
+    ): Boolean {
         // If no mode specified, just click Start without changing the mode
         if (mode == null) {
             Log.d(TAG, "No mode specified, using currently selected mode")
@@ -6065,14 +6080,14 @@ class ScreenAgentTools @Inject constructor(
         // Transit tab: the screen is a transit route list with no Start button, so the
         // only way forward is the transit path (dumps 1578/1579/1630/1668-1670, bugs
         // 1581/1632/1672 — "Selected null mode but Start button not found").
-        val transitSelectedByDefault = mode == null && run {
+        val transitSelectedByDefault = mode == null && (transitTabSelected || run {
             val root = accessibilityService.getCurrentRootNode() ?: return@run false
             val selected = currentlySelectedTransportMode(root)
             root.recycle()
             selected?.contains("Transit", ignoreCase = true) == true
-        }
+        })
         if (transitSelectedByDefault) {
-            Log.d(TAG, "No mode requested and Maps is on the Transit tab; taking the transit path")
+            Log.d(TAG, "No mode requested and Maps is on the Transit tab (seen during wait: $transitTabSelected); taking the transit path")
         }
         if (mode?.lowercase() == "transit" || transitSelectedByDefault) {
             Log.d(TAG, "Transit mode: looking for route options to click first")

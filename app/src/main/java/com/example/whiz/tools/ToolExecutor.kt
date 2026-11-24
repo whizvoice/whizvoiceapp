@@ -1675,7 +1675,10 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
-            val mode = if (params.has("mode")) params.getString("mode") else null
+            // The server sends `"mode": null` when the user did not name one. getString() turns a JSON
+            // null into the string "null", which then matched no mode and hit the "Unknown mode" path
+            // instead of the no-mode path (the Start-button failures behind bugs 1581/1632/1672).
+            val mode = if (params.has("mode") && !params.isNull("mode")) params.getString("mode").takeIf { it.isNotBlank() && it != "null" } else null
             val search = if (params.has("search")) params.getString("search") else null
             val position = if (params.has("position")) params.getInt("position") else null
             val fragment = if (params.has("fragment")) params.getString("fragment") else null
