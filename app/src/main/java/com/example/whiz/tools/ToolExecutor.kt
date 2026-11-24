@@ -853,6 +853,7 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.chatName?.let { put("chat_name", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
                 result.error?.let { put("error", it) }
             }
             
@@ -895,6 +896,9 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
                 result.displayedText?.let { put("displayed_text", it) }
+                result.chatRequested?.let { put("chat_requested", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
+                put("chat_navigated", result.chatNavigated)
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
                     "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
@@ -974,6 +978,7 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.contactName?.let { put("contact_name", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
                 result.error?.let { put("error", it) }
             }
 
@@ -1017,6 +1022,9 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
                 result.displayedText?.let { put("displayed_text", it) }
+                result.chatRequested?.let { put("chat_requested", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
+                put("chat_navigated", result.chatNavigated)
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
                     "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."

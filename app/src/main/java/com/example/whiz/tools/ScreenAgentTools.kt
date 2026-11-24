@@ -244,14 +244,19 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val action: String,
         val chatName: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // The chat's label as WhatsApp shows it in the conversation header once selected
+        // (e.g. the saved contact name when the request was a phone number).
+        val chatNameOnScreen: String? = null
     )
 
     data class SMSResult(
         val success: Boolean,
         val action: String,
         val contactName: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // The conversation's label as Messages shows it in the header once selected.
+        val chatNameOnScreen: String? = null
     )
 
     data class DraftResult(
@@ -261,7 +266,12 @@ class ScreenAgentTools @Inject constructor(
         val overlayShown: Boolean = false,
         // Text actually rendered in the overlay (read back from the view), or null
         // if the overlay never became visible.
-        val displayedText: String? = null
+        val displayedText: String? = null,
+        // The chat as the caller asked for it (name or number) and as the app labels it on screen,
+        // plus whether this call had to navigate to it (false when already in the right chat).
+        val chatRequested: String? = null,
+        val chatNameOnScreen: String? = null,
+        val chatNavigated: Boolean = false
     )
 
     data class SendResult(
@@ -1743,7 +1753,19 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== WhatsApp Specific Functions ==========
 
+    /**
+     * Selects a WhatsApp chat and, on success, records how WhatsApp labels it (see [chatAliases])
+     * and reports that label as [WhatsAppResult.chatNameOnScreen].
+     */
     suspend fun selectWhatsAppChat(chatName: String): WhatsAppResult {
+        val result = selectWhatsAppChatInternal(chatName)
+        if (!result.success) return result
+        val onScreen = WhizAccessibilityService.getInstance()?.let { awaitWhatsAppChatName(it) }
+        rememberChatAlias("com.whatsapp", chatName, onScreen)
+        return result.copy(chatNameOnScreen = onScreen)
+    }
+
+    private suspend fun selectWhatsAppChatInternal(chatName: String): WhatsAppResult {
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
         trackAction("selectWhatsAppChat: $chatName")
 
@@ -2134,19 +2156,6 @@ class ScreenAgentTools @Inject constructor(
         trackAction("draftWhatsAppMessage: ${message.take(30)}...")
 
         try {
-            // Auto-launch WhatsApp if not already open
-            val launchResult = launchApp("WhatsApp", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Failed to open WhatsApp: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
-
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 logScreenAgentError(
@@ -2161,29 +2170,39 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // If chatName is provided, check if we need to navigate to that chat
-            if (chatName != null) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode != null) {
-                    val currentScreen = detectWhatsAppScreen(rootNode)
-                    val currentChatName = if (currentScreen == WhatsAppScreen.INSIDE_CHAT) {
-                        getCurrentWhatsAppChatName(rootNode)
-                    } else {
-                        null
-                    }
-                    rootNode.recycle()
+            // Updating an existing draft (previousText given) while the right chat is already open:
+            // skip the relaunch and the chat selection, as draftSMSMessage does. The server passes
+            // the original request (often a phone number) again; isSameChat also accepts the alias
+            // remembered when this chat was first selected, so the header name matches it.
+            var navigated = false
+            val chatBeforeLaunch = currentWhatsAppChatName(accessibilityService)
+            val updatingInPlace = previousText != null && chatBeforeLaunch != null &&
+                (chatName == null || isSameChat("com.whatsapp", chatName, chatBeforeLaunch))
+            if (updatingInPlace) {
+                Log.d(TAG, "Updating existing draft in place - already in chat: $chatBeforeLaunch")
+                // Dismiss the existing overlay first so the new draft's visibility is a fresh signal
+                // (otherwise displayed_text is read before the overlay re-renders).
+                MessageDraftOverlayService.stop(context)
+                delay(500)
+            } else {
+                // Auto-launch WhatsApp if not already open
+                val launchResult = launchApp("WhatsApp", enableOverlay = true)
+                if (!launchResult.success) {
+                    Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Failed to open WhatsApp: ${launchResult.error}"
+                    )
+                }
+                Log.i(TAG, "WhatsApp launched successfully")
+                delay(1000) // Wait for WhatsApp to fully load
 
-                    // Check if we're in the correct chat using normalized comparison
-                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005 (You)"
-                    val normalizedCurrent = normalizeChatName(currentChatName ?: "")
-                    val normalizedRequested = normalizeChatName(chatName)
-                    val isCorrectChat = currentChatName != null &&
-                        (normalizedCurrent == normalizedRequested ||
-                         normalizedCurrent.contains(normalizedRequested) ||
-                         normalizedRequested.contains(normalizedCurrent))
-
-                    if (!isCorrectChat) {
-                        Log.d(TAG, "Not in correct chat (current: $currentChatName [$normalizedCurrent], requested: $chatName [$normalizedRequested]). Auto-selecting chat...")
+                // If chatName is provided, check if we need to navigate to that chat
+                if (chatName != null) {
+                    val currentChatName = currentWhatsAppChatName(accessibilityService)
+                    if (!isSameChat("com.whatsapp", chatName, currentChatName)) {
+                        Log.d(TAG, "Not in correct chat (current: $currentChatName, requested: $chatName). Auto-selecting chat...")
                         val selectResult = selectWhatsAppChat(chatName)
                         if (!selectResult.success) {
                             return DraftResult(
@@ -2192,6 +2211,7 @@ class ScreenAgentTools @Inject constructor(
                                 error = "Could not open chat '$chatName': ${selectResult.error}"
                             )
                         }
+                        navigated = true
                         Log.d(TAG, "Successfully navigated to chat: $chatName")
                     } else {
                         Log.d(TAG, "Already in correct chat: $currentChatName")
@@ -2227,6 +2247,11 @@ class ScreenAgentTools @Inject constructor(
                 }
                 preDraftRoot.recycle()
             }
+
+            // Report the chat as WhatsApp labels it, and remember that label for the request so a
+            // later draft by number recognises this chat without re-selecting it.
+            val onScreen = awaitWhatsAppChatName(accessibilityService)
+            if (chatName != null) rememberChatAlias("com.whatsapp", chatName, onScreen)
 
             // Hand off to the shared draft pipeline with WhatsApp-specific lookups.
             return draftMessageCore(DraftCoreInput(
@@ -2277,7 +2302,7 @@ class ScreenAgentTools @Inject constructor(
                 onInputNotFound = { root ->
                     dumpUIHierarchy(root, "whatsapp_input_not_found", "Could not find message input field in WhatsApp")
                 },
-            ))
+            )).copy(chatRequested = chatName, chatNameOnScreen = onScreen, chatNavigated = navigated)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting WhatsApp message", e)
@@ -2388,7 +2413,19 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== SMS Specific Functions ==========
 
+    /**
+     * Selects a Messages conversation and, on success, records how Messages labels it (see
+     * [chatAliases]) and reports that label as [SMSResult.chatNameOnScreen].
+     */
     suspend fun selectSMSChat(contactName: String): SMSResult {
+        val result = selectSMSChatInternal(contactName)
+        if (!result.success) return result
+        val onScreen = WhizAccessibilityService.getInstance()?.let { awaitSMSContactName(it) }
+        rememberChatAlias("com.google.android.apps.messaging", contactName, onScreen)
+        return result.copy(chatNameOnScreen = onScreen)
+    }
+
+    private suspend fun selectSMSChatInternal(contactName: String): SMSResult {
         Log.i(TAG, "Attempting to select SMS chat: $contactName")
         trackAction("selectSMSChat: $contactName")
 
@@ -2880,35 +2917,25 @@ class ScreenAgentTools @Inject constructor(
             // If contactName is provided, check if we need to navigate to that conversation
             // SKIP this check if previousText is provided - that means we're updating an existing draft
             // and we're already in the correct conversation
+            var navigated = false
             if (contactName != null && previousText == null) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode != null) {
-                    val currentContactName = getCurrentSMSContactName(rootNode)
-                    rootNode.recycle()
-
-                    // Check if we're in the correct conversation using normalized comparison
-                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005"
-                    val normalizedCurrent = normalizeChatName(currentContactName ?: "")
-                    val normalizedRequested = normalizeChatName(contactName)
-                    val isCorrectConversation = currentContactName != null &&
-                        (normalizedCurrent == normalizedRequested ||
-                         normalizedCurrent.contains(normalizedRequested) ||
-                         normalizedRequested.contains(normalizedCurrent))
-
-                    if (!isCorrectConversation) {
-                        Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName [$normalizedCurrent], requested: $contactName [$normalizedRequested]). Auto-selecting contact...")
-                        val selectResult = selectSMSChat(contactName)
-                        if (!selectResult.success) {
-                            return DraftResult(
-                                success = false,
-                                message = message,
-                                error = "Could not open conversation with '$contactName': ${selectResult.error}"
-                            )
-                        }
-                        Log.d(TAG, "Successfully navigated to SMS conversation: $contactName")
-                    } else {
-                        Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
+                val currentContactName = currentSMSContactName(accessibilityService)
+                // Normalized comparison plus remembered aliases (a request by number vs the saved
+                // contact name in the header); see isSameChat.
+                if (!isSameChat("com.google.android.apps.messaging", contactName, currentContactName)) {
+                    Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName, requested: $contactName). Auto-selecting contact...")
+                    val selectResult = selectSMSChat(contactName)
+                    if (!selectResult.success) {
+                        return DraftResult(
+                            success = false,
+                            message = message,
+                            error = "Could not open conversation with '$contactName': ${selectResult.error}"
+                        )
                     }
+                    navigated = true
+                    Log.d(TAG, "Successfully navigated to SMS conversation: $contactName")
+                } else {
+                    Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
                 }
             } else if (previousText != null) {
                 Log.d(TAG, "Skipping contact navigation check - updating existing draft (previousText provided)")
@@ -2945,6 +2972,11 @@ class ScreenAgentTools @Inject constructor(
                 checkRoot.recycle()
             }
 
+            // Report the conversation as Messages labels it, and remember that label for the
+            // request so a later draft by number recognises this conversation.
+            val onScreen = awaitSMSContactName(accessibilityService)
+            if (contactName != null) rememberChatAlias("com.google.android.apps.messaging", contactName, onScreen)
+
             // Hand off to the shared draft pipeline with SMS-specific lookups.
             return draftMessageCore(DraftCoreInput(
                 targetPackage = "com.google.android.apps.messaging",
@@ -2955,7 +2987,7 @@ class ScreenAgentTools @Inject constructor(
                 onInputNotFound = { root ->
                     dumpUIHierarchy(root, "sms_input_not_found", "Could not find message input field in SMS app")
                 },
-            ))
+            )).copy(chatRequested = contactName, chatNameOnScreen = onScreen, chatNavigated = navigated)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting SMS message", e)
@@ -3433,8 +3465,15 @@ class ScreenAgentTools @Inject constructor(
                 "top_app_bar_title_row"
             )
             for (topAppBarTitleId in topAppBarTitleIds) {
-                val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
-                if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
+                // findAccessibilityNodeInfosByViewId is a framework View search and never matches a
+                // Compose testTag (the bare "top_app_bar_title_row" Messages exposes since its Compose
+                // rewrite), so fall back to walking the tree and comparing viewIdResourceName.
+                val topAppBarTitleNodes: MutableList<AccessibilityNodeInfo> =
+                    rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)?.toMutableList() ?: mutableListOf()
+                if (topAppBarTitleNodes.isEmpty()) {
+                    findNodesByResourceId(rootNode, topAppBarTitleId, topAppBarTitleNodes)
+                }
+                if (topAppBarTitleNodes.isNotEmpty()) {
                     val titleRow = topAppBarTitleNodes[0]
                     // Find the TextView child that contains the contact name
                     val name = findTextInChildren(titleRow)
@@ -8021,6 +8060,87 @@ class ScreenAgentTools @Inject constructor(
             .replace(Regex("[\\s\\u200B-\\u200D\\uFEFF]"), "") // Remove all whitespace and invisible chars
             .replace(Regex("\\(you\\)$"), "") // Remove "(You)" suffix
             .replace(Regex("[()\\-]"), "") // Remove parentheses and hyphens from phone numbers
+    }
+
+    /**
+     * What a messaging app labelled a chat we were asked to open, keyed by package + normalized
+     * request: e.g. "com.whatsapp|+16282099005" -> "ruthgracewong". A request by phone number can
+     * never string-match the saved contact name WhatsApp/Messages put in the header, so without this
+     * every follow-up draft re-selected a chat we were already in. In-memory on purpose: it lives as
+     * long as this singleton (the app process); a stale entry just costs one re-selection, after
+     * which the fresh header overwrites it.
+     */
+    private val chatAliases = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun rememberChatAlias(packageName: String, requested: String, onScreen: String?) {
+        val shown = onScreen?.let { normalizeChatName(it) }?.takeIf { it.isNotBlank() } ?: return
+        val key = "$packageName|${normalizeChatName(requested)}"
+        if (chatAliases.put(key, shown) != shown) {
+            Log.d(TAG, "Remembering chat alias $key -> $shown")
+        }
+    }
+
+    /**
+     * True when [onScreen] (the header of the open chat) is the chat the user asked for: either by
+     * normalized text (handles "+1(628)209-9005" vs "+1 (628) 209-9005 (You)") or by a remembered
+     * alias from an earlier selection in this process.
+     */
+    private fun isSameChat(packageName: String, requested: String, onScreen: String?): Boolean {
+        if (onScreen == null) return false
+        val current = normalizeChatName(onScreen)
+        val wanted = normalizeChatName(requested)
+        if (current.isBlank() || wanted.isBlank()) return false
+        if (current == wanted || current.contains(wanted) || wanted.contains(current)) return true
+        return chatAliases["$packageName|$wanted"] == current
+    }
+
+    /** Header name of the open WhatsApp chat, or null when WhatsApp is not inside a chat. */
+    private fun currentWhatsAppChatName(accessibilityService: WhizAccessibilityService): String? {
+        val root = accessibilityService.getRootNodeForPackage("com.whatsapp") ?: return null
+        return try {
+            if (detectWhatsAppScreen(root) == WhatsAppScreen.INSIDE_CHAT) getCurrentWhatsAppChatName(root) else null
+        } finally {
+            root.recycle()
+        }
+    }
+
+    /**
+     * Header name of the open Messages conversation, or null when none is open. Reads the Messages
+     * window itself rather than rootInActiveWindow, which can be the keyboard or a Whiz overlay.
+     */
+    private fun currentSMSContactName(accessibilityService: WhizAccessibilityService): String? {
+        val root = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
+            ?: accessibilityService.getCurrentRootNode()
+            ?: return null
+        return try {
+            getCurrentSMSContactName(root)
+        } finally {
+            root.recycle()
+        }
+    }
+
+    /** [currentSMSContactName], waiting briefly for the header to render after a navigation. */
+    private suspend fun awaitSMSContactName(accessibilityService: WhizAccessibilityService, maxWaitMs: Long = 2000): String? {
+        var name: String? = currentSMSContactName(accessibilityService)
+        if (name == null) {
+            waitForCondition(maxWaitMs = maxWaitMs) {
+                name = currentSMSContactName(accessibilityService)
+                name != null
+            }
+        }
+        return name
+    }
+
+    /** [currentWhatsAppChatName], waiting briefly for the header to render after a navigation. */
+    private suspend fun awaitWhatsAppChatName(accessibilityService: WhizAccessibilityService, maxWaitMs: Long = 2000): String? {
+        var name: String? = currentWhatsAppChatName(accessibilityService)
+        if (name == null) {
+            waitForCondition(maxWaitMs = maxWaitMs) {
+                name = currentWhatsAppChatName(accessibilityService)
+                name != null
+            }
+        }
+        return name
     }
 
     /**
