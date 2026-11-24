@@ -3,7 +3,7 @@
 
 Works on both emulator and physical devices. On emulators, accessibility
 is enabled via `adb settings`; on physical devices, it uses the UI tap
-approach (same as run_screen_agent_tests.py).
+approach.
 """
 
 import subprocess

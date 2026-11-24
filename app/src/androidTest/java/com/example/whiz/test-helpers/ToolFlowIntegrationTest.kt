@@ -31,10 +31,10 @@ import java.util.regex.Pattern
 import javax.inject.Inject
 
 /**
- * Base class for instrumented ports of the screen-agent tests (run_screen_agent_tests.py).
+ * Base class for the screen agent tests (SMS, WhatsApp, YouTube Music, Google Maps, media duck).
  *
- * A "tool flow" test launches Whiz in voice mode, sends the same voice transcriptions the Python
- * test sends, and asserts on in-process signals ([ToolExecutor.toolResults], the draft overlay's
+ * A "tool flow" test launches Whiz in voice mode, sends voice transcriptions the way a user would,
+ * and asserts on in-process signals ([ToolExecutor.toolResults], the draft overlay's
  * accessibility text) plus the third-party app's UI through UiDevice. This class owns the pieces
  * every such test needs; see SmsDraftMessageTest for the canonical use.
  *

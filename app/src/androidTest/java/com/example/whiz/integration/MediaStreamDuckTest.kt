@@ -24,7 +24,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Instrumented version of run_screen_agent_tests.py::test_media_stream_partial_duck.
+ * Screen agent media-duck test.
  *
  * Whiz lowers STREAM_MUSIC directly while a listening session is active (other apps ignore
  * focus-based ducking) and restores it when the session ends. Opening a chat starts continuous

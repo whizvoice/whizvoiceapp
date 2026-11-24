@@ -25,7 +25,7 @@ import org.junit.runner.RunWith
 import java.util.regex.Pattern
 
 /**
- * Instrumented version of run_screen_agent_tests.py::test_youtube_music_integration.
+ * Screen agent YouTube Music test.
  *
  * Play a song, queue a second one, switch to a 90s pop playlist, play a podcast, then stop. The
  * media session (`dumpsys media_session`) is the source of truth for the current track and

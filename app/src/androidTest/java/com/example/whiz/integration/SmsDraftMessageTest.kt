@@ -25,9 +25,7 @@ import org.junit.runner.RunWith
 import java.util.regex.Pattern
 
 /**
- * Instrumented version of the screen-agent SMS test (run_screen_agent_tests.py::test_sms_draft_message).
- *
- * Drives the same flow — draft an SMS, ask for it to be reworded, confirm sending — but asserts on
+ * Screen agent SMS test: draft an SMS, ask for it to be reworded, confirm sending. Asserts on
  * in-process signals instead of screenshots judged by a vision model:
  *
  *  - [com.example.whiz.tools.ToolExecutor.toolResults] tells us exactly which tools ran and what they
@@ -72,7 +70,7 @@ class SmsDraftMessageTest : ToolFlowIntegrationTest() {
     @get:Rule(order = 3)
     val skipOnCI = SkipOnCIOrEmulatorRule()
 
-    /** Same per-device mapping as run_screen_agent_tests.py: each phone messages the OTHER one. */
+    /** Per-device mapping: each test phone messages the OTHER one. */
     private val smsRecipient: String
         get() = if (Build.MODEL.contains("Pixel 8")) "Whiz Voice Test" else "Ruth Grace Wong"
 

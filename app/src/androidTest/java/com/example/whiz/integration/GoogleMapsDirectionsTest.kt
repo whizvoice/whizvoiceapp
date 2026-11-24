@@ -27,7 +27,7 @@ import java.util.TimeZone
 import java.util.regex.Pattern
 
 /**
- * Instrumented version of run_screen_agent_tests.py::test_google_maps_directions.
+ * Screen agent Google Maps directions test.
  *
  * Search for a store, ask for directions to one of the results, switch the destination with
  * public transit, then switch to driving, and finally check the assistant's last chat message

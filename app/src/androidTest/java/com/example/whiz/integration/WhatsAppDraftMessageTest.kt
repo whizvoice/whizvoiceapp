@@ -25,7 +25,7 @@ import org.junit.runner.RunWith
 import java.util.regex.Pattern
 
 /**
- * Instrumented version of run_screen_agent_tests.py::test_whatsapp_draft_message.
+ * Screen agent WhatsApp test.
  *
  * Structurally SmsDraftMessageTest with WhatsApp tool names and WhatsApp's UI: draft a message,
  * ask for it to be reworded (tracked-changes overlay), confirm sending, then delete the sent
