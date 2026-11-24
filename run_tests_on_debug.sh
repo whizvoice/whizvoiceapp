@@ -94,6 +94,13 @@ while [[ $# -gt 0 ]]; do
             SINGLE_TEST="$2"
             shift 2
             ;;
+        --screen-agent)
+            # The five instrumented screen agent tests (see README "screen agent tests"). The runner's
+            # `class` argument accepts a comma-separated list, so this is just a preset for --test.
+            SKIP_UNIT_TESTS=true
+            SINGLE_TEST="com.example.whiz.integration.MediaStreamDuckTest,com.example.whiz.integration.SmsDraftMessageTest,com.example.whiz.integration.WhatsAppDraftMessageTest,com.example.whiz.integration.GoogleMapsDirectionsTest,com.example.whiz.integration.YouTubeMusicTest"
+            shift
+            ;;
         -v|--verbose)
             VERBOSE_LOGGING=true
             shift
@@ -104,7 +111,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--emulator] [-v|--verbose] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--emulator] [-v|--verbose] [--test <test_class_or_method>] [--screen-agent]"
+            echo "  --screen-agent   Run only the five instrumented screen agent tests (implies --skip-unit)"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
