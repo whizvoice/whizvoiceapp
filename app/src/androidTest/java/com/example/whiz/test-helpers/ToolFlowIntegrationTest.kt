@@ -112,6 +112,10 @@ abstract class ToolFlowIntegrationTest : BaseIntegrationTest() {
      * tools fails immediately (with a screenshot), as does the timeout; Status results are skipped.
      * Several tools (YouTube Music, Maps) report action failure as a Success whose JSON carries
      * `"success": false` plus an `error`; that is treated as a failure too.
+     *
+     * Failing on the first `success: false` is deliberate. In production such a result now carries a
+     * `stuck` block and the model may clear the obstacle and retry; these tests cover the scripted
+     * flows themselves, so a script that needed rescuing is still a failing script here.
      */
     protected suspend fun awaitSuccess(
         toolNames: Set<String>,
@@ -139,6 +143,31 @@ abstract class ToolFlowIntegrationTest : BaseIntegrationTest() {
             delay(250)
         }
         failWithScreenshot("No $toolNames result within ${timeoutMs}ms", "${screenshotTag}_no_tool_result")
+    }
+
+    /**
+     * First Success result for [toolName] at index >= [fromIndex], whatever its `success` field says.
+     * For tests that deliberately drive a tool into failure and inspect the failure payload.
+     */
+    protected suspend fun awaitResult(
+        toolName: String,
+        fromIndex: Int,
+        timeoutMs: Long,
+        screenshotTag: String
+    ): ToolExecutionResult.Success {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val snapshot = toolResults.toList()
+            for (i in fromIndex until snapshot.size) {
+                val r = snapshot[i]
+                if (r is ToolExecutionResult.Success && r.toolName == toolName) return r
+                if (r is ToolExecutionResult.Error && r.toolName == toolName) {
+                    failWithScreenshot("$toolName threw instead of reporting a result: ${r.error}", "${screenshotTag}_tool_error")
+                }
+            }
+            delay(250)
+        }
+        failWithScreenshot("No $toolName result within ${timeoutMs}ms", "${screenshotTag}_no_tool_result")
     }
 
     // ---------------------------------------------------------------- launch + voice
