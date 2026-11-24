@@ -114,6 +114,22 @@ class StuckReportTest {
     }
 
     @Test
+    fun `attached when a send ran but did not send`() {
+        // agent_send_message reports "ran without crashing" as success=true and the real outcome in sent.
+        val unsent = JSONObject().put("success", true).put("sent", false).put("error", "Could not find send button; text drafted in input")
+        assertTrue(StuckReport.shouldAttach("agent_send_message", unsent, true))
+        assertEquals(
+            "Could not find send button; text drafted in input",
+            StuckReport.attach("agent_send_message", unsent, null, null).getJSONObject("stuck").getString("failed_step")
+        )
+    }
+
+    @Test
+    fun `not attached when a send actually sent`() {
+        assertFalse(StuckReport.shouldAttach("agent_send_message", JSONObject().put("success", true).put("sent", true), true))
+    }
+
+    @Test
     fun `not attached for the intent based app launcher`() {
         assertFalse(StuckReport.shouldAttach("agent_launch_app", failed(), true))
     }

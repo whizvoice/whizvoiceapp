@@ -59,14 +59,19 @@ object StuckReport {
     )
 
     /**
-     * True when [result] (a tool's own JSON) says `success: false`, the tool needs the accessibility
+     * True when [result] (a tool's own JSON) reports a failed outcome, the tool needs the accessibility
      * service (so it was driving another app's UI) and it is not one of the generic UI tools.
+     *
+     * A failed outcome is `success: false`, or `success: true` with `sent: false`: the generic send tool
+     * uses `success` for "ran without crashing" and `sent` for whether the message actually went, and a
+     * hidden Send button is exactly the kind of obstacle the block exists for.
      */
-    fun shouldAttach(toolName: String, result: JSONObject, requiresAccessibility: Boolean): Boolean =
-        requiresAccessibility &&
-            toolName !in GENERIC_UI_TOOLS &&
-            result.has("success") &&
-            !result.optBoolean("success", true)
+    fun shouldAttach(toolName: String, result: JSONObject, requiresAccessibility: Boolean): Boolean {
+        if (!requiresAccessibility || toolName in GENERIC_UI_TOOLS) return false
+        val failed = result.has("success") && !result.optBoolean("success", true)
+        val unsent = result.has("sent") && !result.optBoolean("sent", true)
+        return failed || unsent
+    }
 
     /**
      * Adds the `stuck` block to [result] and returns the same instance. [screen] is the
