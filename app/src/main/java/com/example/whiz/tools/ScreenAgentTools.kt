@@ -7060,9 +7060,51 @@ class ScreenAgentTools @Inject constructor(
                     return accessibilityService.clickNode(node)
                 }
             }
+            // Fallback: newer YT Music can report the Minimize button as not visible-to-user
+            // even while the expanded player fills the screen (dump 1795505286598: player_page
+            // full-screen over the search results, collapse button on screen, but neither
+            // collapse attempt fired). Detect the expanded player structurally — player_page
+            // covering most of the screen plus a collapse button with real on-screen bounds —
+            // and click it anyway. The mini player (old and new versions) is a short strip, so
+            // this never fires when results are already showing.
+            if (isYouTubeMusicPlayerExpanded(rootNode)) {
+                val bounds = android.graphics.Rect()
+                for (node in collapseNodes) {
+                    node.getBoundsInScreen(bounds)
+                    if (bounds.width() > 0 && bounds.height() > 0) {
+                        Log.d(TAG, "Expanded Now Playing page detected (collapse button visible=${node.isVisibleToUser}, clickable=${node.isClickable}); minimizing it")
+                        if (accessibilityService.clickNode(node)) return true
+                        Log.d(TAG, "Minimize click failed; pressing back to collapse the expanded player")
+                        return accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                    }
+                }
+            }
             return false
         } finally {
             collapseNodes.forEach { it.recycle() }
+        }
+    }
+
+    /**
+     * True if YouTube Music's `player_page` container covers most of the screen, i.e. the
+     * expanded Now Playing page (not the bottom mini player strip) is showing.
+     */
+    private fun isYouTubeMusicPlayerExpanded(rootNode: AccessibilityNodeInfo): Boolean {
+        val pages = rootNode.findAccessibilityNodeInfosByViewId(
+            "com.google.android.apps.youtube.music:id/player_page"
+        )
+        if (pages.isNullOrEmpty()) return false
+        try {
+            val rootBounds = android.graphics.Rect().also { rootNode.getBoundsInScreen(it) }
+            val screenHeight = if (rootBounds.height() > 0) rootBounds.height()
+                else context.resources.displayMetrics.heightPixels
+            val bounds = android.graphics.Rect()
+            return pages.any {
+                it.getBoundsInScreen(bounds)
+                bounds.height() >= screenHeight * 0.8
+            }
+        } finally {
+            pages.forEach { it.recycle() }
         }
     }
 
