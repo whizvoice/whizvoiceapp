@@ -44,7 +44,10 @@ Instrumented screen agent tests. They drive the real third-party app with UiAuto
 in-process tool results, the media session, or the live stream volume instead of a vision model's
 reading of a screenshot. They need a real phone (skipped on CI/emulator), the whizvoicetest login,
 and for the messaging tests the other test phone reachable. A plain `./run_tests_on_debug.sh` run
-includes them.
+includes them. The runner gives each of these classes its own Gradle invocation (its own app
+process): they observe the Hilt-injected `ToolExecutor` through the live app, and an Activity or
+Service left over from a previous test class in the same process holds the previous class's Hilt
+component, so the tool runs but the new class never sees the result.
 
 ```
 # just the five screen agent tests
