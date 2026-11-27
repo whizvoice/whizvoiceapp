@@ -77,6 +77,10 @@ class ScreenAgentTools @Inject constructor(
         /** Google Messages search box; present while on the search screen, gone once a conversation opens. */
         private const val SMS_SEARCH_BOX_ID = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
 
+        /** YT Music search page: the filter chips (Songs, Videos, ...) and the results spinner. */
+        private const val YTM_CHIP_TEXT_ID = "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
+        private const val YTM_LOAD_PROGRESS_ID = "com.google.android.apps.youtube.music:id/load_progress"
+
         /**
          * The Maps "unknown screen state" recovery presses the system Back button. That is
          * only safe while Google Maps owns the foreground window; once Back has left Maps,
@@ -3874,7 +3878,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = ytMusicPackage,
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
 
             if (!appReady) {
@@ -3893,12 +3897,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // 4. Wait for search results to load and click the first result
-            //    Use a longer wait since the deep link needs to load the search page
+            // 4. Wait for search results to load and click the first result. Bounded by the
+            //    tool's budget: the deep link's search page can take well over 8s on a slow
+            //    device, and the poll can tell "still loading" from "no matching row".
             val clickResult = waitForAndClickPlayButton(
                 accessibilityService = accessibilityService,
                 contentType = contentType,
-                maxWaitMs = 8000
             )
 
             if (!clickResult.clicked) {
@@ -3926,8 +3930,14 @@ class ScreenAgentTools @Inject constructor(
             // 5. Verify playback started
             val isSongType = contentType.lowercase() in listOf("song", "video")
             if (isSongType) {
-                // For songs/videos, wait for mini player to show the playing title
-                delay(2000)
+                // For songs/videos, wait for the mini player to show the playing title. Ceiling
+                // 5s: a track that never starts should still be reported, not waited out.
+                waitForScreen(
+                    accessibilityService,
+                    "YT Music mini player to show a title after clicking '$query'",
+                    ceilingMs = 5000,
+                    success = { getMiniPlayerTitle(it) != null },
+                )
                 val verifyRoot = accessibilityService.getCurrentRootNode()
                 var nowPlaying: String? = null
                 var nowPlayingArtist: String? = null
@@ -4013,12 +4023,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Ceiling 8s: this can cold-launch YT Music, and slow cold-start / network handoff
-            // can blow past a shorter wait. Intelligent wait returns as soon as it foregrounds.
+            // Bounded by the tool's budget: this can cold-launch YT Music, and slow cold-start /
+            // network handoff blew past the old 8s. Intelligent wait returns as soon as it foregrounds.
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = ytMusicPackage,
-                maxWaitMs = 8000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 8000
             )
 
             if (!appReady) {
@@ -4039,7 +4049,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Deep link needs time to load the search page; wait for the results list
             // (filter chips) rather than a fixed delay.
-            val searchResultsReady = waitForSearchResultsToLoad(accessibilityService, maxWaitMs = 8000)
+            val searchResultsReady = waitForSearchResultsToLoad(accessibilityService)
             if (!searchResultsReady) {
                 Log.w(TAG, "Search results did not load in time after deep link")
             }
@@ -4057,8 +4067,9 @@ class ScreenAgentTools @Inject constructor(
 
             // Open the Action menu on a row that matches the query. The filter chips above can
             // belong to the PREVIOUS search (the deep link lands on the old page first), so this
-            // polls up to 8s for a matching row instead of taking the first song row on screen.
-            val menu = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 8000, query = query)
+            // polls (within the tool's budget) for a matching row instead of taking the first
+            // song row on screen.
+            val menu = waitForAndOpenContextMenu(accessibilityService, query = query)
 
             if (!menu.opened) {
                 // Dump UI for debugging (the openYouTubeMusicContextMenu already dumps, but this captures the full state)
@@ -4075,8 +4086,8 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Poll for "Add to queue" option to appear and click it (max 1.5 seconds)
-            val queueSuccess = waitForAndClickAddToQueue(accessibilityService, maxWaitMs = 1500)
+            // Poll for "Add to queue" option to appear and click it
+            val queueSuccess = waitForAndClickAddToQueue(accessibilityService)
 
             return if (queueSuccess) {
                 MusicActionResult(
@@ -6898,42 +6909,51 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForSearchResultsToLoad(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000
     ): Boolean {
-        return waitForElement(accessibilityService, { rootNode ->
-            // Check for filter chips (Songs, Videos, Artists, Albums, etc.)
-            val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(
-                "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
-            )
-            if (chipNodes != null && chipNodes.isNotEmpty()) {
-                // Found filter chips - search results are loaded
-                Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
-                chipNodes.forEach { it.recycle() }
-                return@waitForElement true
-            }
-            chipNodes?.forEach { it.recycle() }
+        return waitForScreen(
+            accessibilityService,
+            "YT Music search results (filter chips or a typed result row)",
+            stillLoading = ytmSearchStillLoading,
+            success = { rootNode ->
+                // Filter chips (Songs, Videos, Artists, Albums, ...) mean the results page is up
+                val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(YTM_CHIP_TEXT_ID)
+                val hasChips = !chipNodes.isNullOrEmpty()
+                if (hasChips) Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
+                chipNodes?.forEach { it.recycle() }
+                hasChips || hasYtmResultRow(rootNode)
+            },
+        )
+    }
 
-            // Alternatively, look for search result rows with type indicators ("Song •", "Video •", etc.)
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
-
+    /** True when the tree has a result row with a type indicator ("Song •", "Video •", ...). */
+    private fun hasYtmResultRow(rootNode: AccessibilityNodeInfo): Boolean {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        try {
             for (node in allNodes) {
                 val contentDesc = node.contentDescription?.toString() ?: ""
                 val text = node.text?.toString() ?: ""
-                // Check if this looks like a search result type indicator
                 if (contentDesc.startsWith("Song •") || contentDesc.startsWith("Video •") ||
                     contentDesc.startsWith("Album •") || contentDesc.startsWith("Episode •") ||
                     text.startsWith("Song •") || text.startsWith("Video •") ||
                     text.startsWith("Album •") || text.startsWith("Episode •")) {
                     Log.d(TAG, "Found search result with type indicator: $contentDesc$text")
-                    allNodes.forEach { it.recycle() }
-                    return@waitForElement true
+                    return true
                 }
             }
+            return false
+        } finally {
             allNodes.forEach { it.recycle() }
+        }
+    }
 
-            false
-        }, timeoutMs = maxWaitMs, pollIntervalMs = 200)
+    /**
+     * YT Music is still fetching results: its load spinner is up and no result row has
+     * rendered yet. (On the CI emulator this state lasted the whole 8s of the old poll; the
+     * rows arrived a second later and the retry succeeded. Dump 1916.)
+     */
+    private val ytmSearchStillLoading: (AccessibilityNodeInfo) -> Boolean = { root ->
+        elementPresent(YTM_LOAD_PROGRESS_ID)(root) && !hasYtmResultRow(root)
     }
 
     /**
@@ -7124,41 +7144,52 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun waitForAndClickPlayButton(
         accessibilityService: WhizAccessibilityService,
         contentType: String = "song",
-        maxWaitMs: Long = 3000
     ): ClickResultInfo {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                // ANR overlay steals focus mid-search; tap Wait and re-poll so the next
-                // iteration sees YT Music's real window rather than the system dialog.
-                if (dismissSystemAnrDialogIfPresent(rootNode)) {
-                    rootNode.recycle()
-                    delay(pollIntervalMs)
-                    continue
-                }
-                // An ad break keeps the expanded player over the search page; clear it and re-poll.
-                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
-                    rootNode.recycle()
-                    delay(PLAYER_DISMISS_SETTLE_MS)
-                    continue
-                }
-
+        var clicked = ClickResultInfo(false, null)
+        val outcome = pollUntil(
+            waitingFor = "YT Music '$contentType' result row to click",
+            deadline = currentToolDeadline(),
+            initialDelayMs = 200,
+            log = { Log.d(TAG, it) },
+            read = { readYtmSearchRoot(accessibilityService) },
+            success = { rootNode ->
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, contentType)
-                rootNode.recycle()
-
                 if (result.clicked) {
-                    Log.d(TAG, "Result found and clicked after ${System.currentTimeMillis() - startTime}ms")
-                    return result
+                    clicked = result
+                    rootNode.recycle()
                 }
-            }
-            delay(pollIntervalMs)
+                result.clicked
+            },
+            stillLoading = { rootNode ->
+                val loading = ytmSearchStillLoading(rootNode)
+                rootNode.recycle()
+                loading
+            },
+        )
+        if (outcome is WaitOutcome.TimedOut) {
+            Log.w(TAG, "Play button not found after ${outcome.elapsedMs}ms" +
+                if (outcome.wasLoading) " (results were still loading)" else "")
         }
+        return clicked
+    }
 
-        Log.w(TAG, "Play button not found after waiting ${maxWaitMs}ms")
-        return ClickResultInfo(false, null)
+    /**
+     * Root of the YT Music search page for one poll, or null (= not ready yet) after clearing
+     * whatever was in the way: the system ANR overlay (tap Wait, never Close app) or an
+     * ad-break expanded player. Clearing takes a moment, so the poll backs off before re-reading.
+     */
+    private suspend fun readYtmSearchRoot(accessibilityService: WhizAccessibilityService): AccessibilityNodeInfo? {
+        val rootNode = accessibilityService.getCurrentRootNode() ?: return null
+        if (dismissSystemAnrDialogIfPresent(rootNode)) {
+            rootNode.recycle()
+            return null
+        }
+        if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+            rootNode.recycle()
+            delay(PLAYER_DISMISS_SETTLE_MS)
+            return null
+        }
+        return rootNode
     }
 
     /**
@@ -7167,35 +7198,36 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndOpenContextMenu(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000,
         query: String? = null,
     ): ContextMenuOpen {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                // An ad break keeps the expanded player over the search page; clear it and re-poll.
-                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
-                    rootNode.recycle()
-                    delay(PLAYER_DISMISS_SETTLE_MS)
-                    continue
-                }
+        var opened = ContextMenuOpen(false)
+        val outcome = pollUntil(
+            waitingFor = "YT Music result row matching '${query ?: "any song"}' to open its Action menu",
+            deadline = currentToolDeadline(),
+            initialDelayMs = 200,
+            log = { Log.d(TAG, it) },
+            read = { readYtmSearchRoot(accessibilityService) },
+            success = { rootNode ->
                 val result = openYouTubeMusicContextMenu(rootNode, accessibilityService, query)
-                rootNode.recycle()
-
                 if (result.opened) {
-                    Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
-                    delay(500) // Small delay so user can see the menu appear
-                    return result
+                    opened = result
+                    rootNode.recycle()
                 }
-            }
-            delay(pollIntervalMs)
+                result.opened
+            },
+            stillLoading = { rootNode ->
+                val loading = ytmSearchStillLoading(rootNode)
+                rootNode.recycle()
+                loading
+            },
+        )
+        if (outcome is WaitOutcome.Met) {
+            delay(500) // Small delay so user can see the menu appear
+        } else {
+            Log.w(TAG, "Context menu not found (query=$query)" +
+                if ((outcome as WaitOutcome.TimedOut).wasLoading) " (results were still loading)" else "")
         }
-
-        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms (query=$query)")
-        return ContextMenuOpen(false)
+        return opened
     }
 
     /**
@@ -7204,28 +7236,17 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndClickAddToQueue(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 1500
     ): Boolean {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                val result = clickAddToQueue(rootNode, accessibilityService)
-                rootNode.recycle()
-
-                if (result) {
-                    Log.d(TAG, "Add to queue clicked after ${System.currentTimeMillis() - startTime}ms")
-                    delay(500) // Small delay so user can see the action complete
-                    return true
-                }
-            }
-            delay(pollIntervalMs)
-        }
-
-        Log.w(TAG, "Add to queue not found after waiting ${maxWaitMs}ms")
-        return false
+        // Ceiling 3s (was 1.5s): the menu is already open, so a missing "Add to queue" entry is
+        // a wrong menu, not a slow one, and should fail before the budget runs out.
+        val clicked = waitForScreen(
+            accessibilityService,
+            "YT Music 'Add to queue' entry in the open Action menu",
+            ceilingMs = 3000,
+            success = { rootNode -> clickAddToQueue(rootNode, accessibilityService) },
+        )
+        if (clicked) delay(500) // Small delay so user can see the action complete
+        return clicked
     }
 
     /**
