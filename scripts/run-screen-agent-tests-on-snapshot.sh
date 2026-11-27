@@ -84,6 +84,14 @@ adb shell svc power stayon true
 adb shell settings put system screen_off_timeout 2147483647
 adb push test_credentials.json /data/local/tmp/test_credentials.json
 
+# Give the emulator a GPS fix (San Francisco, Mission). Without one, Maps routes from the saved
+# Home address and shows "Preview" instead of "Start", which the directions tool treats as failure.
+adb shell settings put secure location_mode 3 || true
+adb emu geo fix -122.4194 37.7749 || echo "    WARNING: geo fix failed"
+sleep 2
+adb emu geo fix -122.4194 37.7749 || true
+echo "==> Location providers: $(adb shell settings get secure location_providers_allowed | tr -d '\r')"
+
 echo "==> Installing debug app over the snapshot's copy..."
 ./gradlew installDebug --console=plain --stacktrace > "$OUT/install-output.log" 2>&1
 
@@ -107,24 +115,44 @@ adb logcat -c || true
 adb logcat -v threadtime > "$OUT/logcat.log" 2>&1 &
 LOGCAT_PID=$!
 
-echo "==> Running: $TEST_CLASSES (allowEmulator=true)"
-set +e
-./gradlew connectedDebugAndroidTest --console=plain --stacktrace --continue \
-    -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
-    -Pandroid.testInstrumentationRunnerArguments.class="$TEST_CLASSES" \
-    -Pandroid.testInstrumentationRunnerArguments.allowEmulator=true \
-    > "$OUT/gradle-output.log" 2>&1
-GRADLE_EXIT=$?
-set -e
+# One Gradle invocation per class: a tool retry arriving during teardown can crash the app process
+# (BubbleOverlayService created after the Hilt test component is gone), which kills the whole
+# instrumentation run and silently drops every class after it.
+GRADLE_EXIT=0
+IFS=',' read -ra CLASSES <<< "$TEST_CLASSES"
+for cls in "${CLASSES[@]}"; do
+    short="${cls##*.}"
+    echo "==> Running: $cls (allowEmulator=true)"
+    adb shell am force-stop com.example.whiz.debug || true
+    adb shell am force-stop com.example.whiz.debug.test || true
+    # force-stop can drop the accessibility enrollment; re-assert it before each class
+    adb shell settings put secure enabled_accessibility_services $PKG/com.example.whiz.accessibility.WhizAccessibilityService || true
+    adb shell settings put secure accessibility_enabled 1 || true
+    sleep 2
+    set +e
+    ./gradlew connectedDebugAndroidTest --console=plain --stacktrace --continue \
+        -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
+        -Pandroid.testInstrumentationRunnerArguments.class="$cls" \
+        -Pandroid.testInstrumentationRunnerArguments.allowEmulator=true \
+        > "$OUT/gradle-output-$short.log" 2>&1
+    rc=$?
+    set -e
+    echo "    Gradle exit code: $rc"
+    (( rc == 0 )) || GRADLE_EXIT=$rc
+    mkdir -p "$OUT/androidTest-results-$short"
+    cp -r app/build/outputs/androidTest-results/connected/. "$OUT/androidTest-results-$short/" 2>/dev/null || true
+    echo "    Per-test outcomes:"
+    find "$OUT/androidTest-results-$short" -name '*.xml' -print0 2>/dev/null \
+        | xargs -0 grep -hoE '<testcase name="[^"]+" classname="[^"]+"|<skipped|<failure message="[^"]{0,200}' 2>/dev/null \
+        | sed -E 's/<testcase name="([^"]+)" classname="[^"]+\.([^".]+)"/    TEST \2#\1/; s/<skipped.*/        -> SKIPPED/; s/<failure message="(.*)/        -> FAILED: \1/' || true
+    if ! grep -q "<testcase" "$OUT/androidTest-results-$short"/*.xml 2>/dev/null; then
+        echo "    (no JUnit testcase recorded; see gradle-output-$short.log)"
+        grep -E "FAILED|Exception|Unable to|crash" "$OUT/gradle-output-$short.log" | head -5 || true
+    fi
+done
 
-echo "==> Gradle exit code: $GRADLE_EXIT"
-echo "==> Per-test outcomes (from JUnit XML):"
-find app/build/outputs/androidTest-results/connected -name '*.xml' -print0 2>/dev/null \
-    | xargs -0 grep -hoE '<testcase name="[^"]+" classname="[^"]+"|<skipped|<failure' 2>/dev/null \
-    | sed -E 's/<testcase name="([^"]+)" classname="[^"]+\.([^".]+)"/TEST \2#\1/; s/<skipped.*/    -> SKIPPED/; s/<failure.*/    -> FAILED/' || true
+echo "==> Overall exit code: $GRADLE_EXIT"
 echo "==> Skip-rule log lines:"
 grep -E "SkipOnCIOrEmulatorRule" "$OUT/logcat.log" | head -20 || true
-echo "==> Failures (tail of gradle output):"
-grep -E "FAILED|SKIPPED|tests completed" "$OUT/gradle-output.log" | head -40 || true
 
 exit $GRADLE_EXIT
