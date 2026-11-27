@@ -4224,7 +4224,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
             if (!appReady) {
                 val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -4498,7 +4498,14 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
 
-                delay(1500) // Wait for location details screen to fully load
+                WhizAccessibilityService.getInstance()?.let { svc ->
+                    waitForScreen(
+                        svc,
+                        "Maps location details after selecting '$search'",
+                        packageName = GOOGLE_MAPS_PACKAGE,
+                        success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                    )
+                }
             }
 
             // Auto-launch Google Maps if not already open
@@ -4513,7 +4520,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            // (no sleep here: waitForAppReady below polls for Maps to foreground)
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -4675,7 +4682,15 @@ class ScreenAgentTools @Inject constructor(
                     if (!reachedDirections) {
                         Log.w(TAG, "Did not reach directions screen after back from transit route detail, pressing back once more")
                         accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                        delay(1500)
+                        waitForScreen(
+                            accessibilityService,
+                            "Maps directions or location details after second back from transit detail",
+                            packageName = GOOGLE_MAPS_PACKAGE,
+                            success = {
+                                val state = detectGoogleMapsScreenState(it)
+                                state == GoogleMapsScreenState.DIRECTIONS_INPUT || state == GoogleMapsScreenState.LOCATION_DETAILS
+                            },
+                        )
                     }
                 }
                 GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
@@ -4720,7 +4735,12 @@ class ScreenAgentTools @Inject constructor(
                         }
                     }
                     Log.i(TAG, "Successfully selected location from search results list")
-                    delay(1500) // Wait for location details to load
+                    waitForScreen(
+                        accessibilityService,
+                        "Maps location details after selecting a search result",
+                        packageName = GOOGLE_MAPS_PACKAGE,
+                        success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                    )
                 }
                 GoogleMapsScreenState.FILTERS_SCREEN -> {
                     // Accidentally on the Filters screen - press Back to close it
@@ -4916,7 +4936,12 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 Log.i(TAG, "Successfully selected location from search results list after handling")
-                delay(1500) // Wait for location details to load
+                waitForScreen(
+                    accessibilityService,
+                    "Maps location details after selecting a search result (post-handling)",
+                    packageName = GOOGLE_MAPS_PACKAGE,
+                    success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                )
 
                 // Get fresh root node after selecting
                 currentRootNode = accessibilityService.getCurrentRootNode()
@@ -4985,8 +5010,7 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
 
-                // Wait for directions screen to appear with Start button
-                delay(1500)
+                // (no sleep here: the directions-screen wait below polls for the Start button)
             } else {
                 currentRootNode.recycle()
             }
@@ -5241,7 +5265,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            // (no sleep here: waitForAppReady below polls for Maps to foreground)
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -5257,7 +5281,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000
             )
 
             if (!appReady) {
@@ -5374,7 +5398,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000
             )
 
             if (!appReady) {
@@ -5482,7 +5506,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
             if (!appReady) {
                 val dumpRoot = accessibilityService.getCurrentRootNode()
