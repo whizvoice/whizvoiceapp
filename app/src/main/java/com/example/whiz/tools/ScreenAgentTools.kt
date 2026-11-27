@@ -7948,27 +7948,24 @@ class ScreenAgentTools @Inject constructor(
         return hasSongTypeIndicator(node, acceptableTypes)
     }
 
-    private fun findActionMenuInRow(rowNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    /**
+     * The row's "Action menu" (3-dot) button, searched up to [maxDepth] levels below the row.
+     * Older YouTube Music builds put it one or two levels down; the Nov 2026 search rows nest it
+     * three deep (Button > ViewGroup > ViewGroup > Button "Action menu", ui dump
+     * ytmusic_queue_no_context_menu 2026-11-26), the same depth [hasSongTypeIndicator] allows.
+     * The returned node is the caller's to recycle.
+     */
+    private fun findActionMenuInRow(rowNode: AccessibilityNodeInfo, maxDepth: Int = 4): AccessibilityNodeInfo? {
+        if (maxDepth <= 0) return null
         for (i in 0 until rowNode.childCount) {
             val child = rowNode.getChild(i) ?: continue
             val childContentDesc = child.contentDescription?.toString() ?: ""
-
             if (childContentDesc.equals("Action menu", ignoreCase = true)) {
                 return child
             }
-
-            // Check grandchildren
-            for (j in 0 until child.childCount) {
-                val grandchild = child.getChild(j) ?: continue
-                val grandchildContentDesc = grandchild.contentDescription?.toString() ?: ""
-
-                if (grandchildContentDesc.equals("Action menu", ignoreCase = true)) {
-                    child.recycle()
-                    return grandchild
-                }
-                grandchild.recycle()
-            }
+            val deeper = findActionMenuInRow(child, maxDepth - 1)
             child.recycle()
+            if (deeper != null) return deeper
         }
         return null
     }
