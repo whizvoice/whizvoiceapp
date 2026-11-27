@@ -4050,21 +4050,23 @@ class ScreenAgentTools @Inject constructor(
                 tabRootNode.recycle()
             }
 
-            // Poll for context menu button to appear and open it (max 3 seconds)
-            val menuSuccess = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 3000)
+            // Open the Action menu on a row that matches the query. The filter chips above can
+            // belong to the PREVIOUS search (the deep link lands on the old page first), so this
+            // polls up to 8s for a matching row instead of taking the first song row on screen.
+            val menu = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 8000, query = query)
 
-            if (!menuSuccess) {
+            if (!menu.opened) {
                 // Dump UI for debugging (the openYouTubeMusicContextMenu already dumps, but this captures the full state)
                 val debugRoot = accessibilityService.getCurrentRootNode()
                 if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu", "Could not find or open context menu after waiting for search results")
+                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu", "No song result matching '$query' to open the context menu on")
                     debugRoot.recycle()
                 }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
                     query = query,
-                    error = "Could not find or open context menu after waiting for search results"
+                    error = "No search result matching '$query' appeared to add to the queue"
                 )
             }
 
@@ -4075,7 +4077,9 @@ class ScreenAgentTools @Inject constructor(
                 MusicActionResult(
                     success = true,
                     action = "queue_song",
-                    query = query
+                    query = query,
+                    nowPlaying = menu.title,
+                    nowPlayingArtist = menu.artist
                 )
             } else {
                 // Note: waitForAndClickAddToQueue already dumps UI when it fails
@@ -7165,8 +7169,9 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndOpenContextMenu(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000
-    ): Boolean {
+        maxWaitMs: Long = 3000,
+        query: String? = null,
+    ): ContextMenuOpen {
         val startTime = System.currentTimeMillis()
         val pollIntervalMs = 200L
 
@@ -7179,20 +7184,20 @@ class ScreenAgentTools @Inject constructor(
                     delay(PLAYER_DISMISS_SETTLE_MS)
                     continue
                 }
-                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
+                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService, query)
                 rootNode.recycle()
 
-                if (result) {
+                if (result.opened) {
                     Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
                     delay(500) // Small delay so user can see the menu appear
-                    return true
+                    return result
                 }
             }
             delay(pollIntervalMs)
         }
 
-        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms")
-        return false
+        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms (query=$query)")
+        return ContextMenuOpen(false)
     }
 
     /**
@@ -7644,7 +7649,24 @@ class ScreenAgentTools @Inject constructor(
     }
 
 
-    private fun openYouTubeMusicContextMenu(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+    /** Outcome of opening a result row's Action menu: whether it opened and which row it belongs to. */
+    private data class ContextMenuOpen(
+        val opened: Boolean,
+        val title: String? = null,
+        val artist: String? = null,
+    )
+
+    /**
+     * Opens the Action menu of a song result row. With [query] set, only a row whose title/artist
+     * match it (see [YouTubeMusicRowMatcher]) is used and nothing is opened otherwise, so the
+     * caller keeps polling while a stale results page is replaced by the new search. Without a
+     * query the first song row is used, with the historical fallbacks.
+     */
+    private fun openYouTubeMusicContextMenu(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService,
+        query: String? = null,
+    ): ContextMenuOpen {
         try {
             // We need to find the "Action menu" button (3-dot menu) specifically for a song result
             // Song results are Button rows containing a child with content-desc like "Song •..." or "Video •..."
@@ -7666,19 +7688,33 @@ class ScreenAgentTools @Inject constructor(
                     val isSongResult = hasSongTypeIndicator(node, acceptableSongTypes)
                     if (isSongResult) {
                         foundSongRows++
+                        val title = extractTitleFromResultRow(node)
+                        val artist = extractArtistFromResultRow(node)
+                        if (query != null && !YouTubeMusicRowMatcher.matches(query, title, artist)) {
+                            Log.d(TAG, "Skipping song row '$title' by '$artist': does not match query '$query'")
+                            continue
+                        }
                         // Look for "Action menu" button within this row
                         val actionMenuButton = findActionMenuInRow(node)
                         if (actionMenuButton != null) {
                             val clicked = accessibilityService.clickNode(actionMenuButton)
-                            Log.d(TAG, "Clicked Action menu button for song result: $clicked")
+                            Log.d(TAG, "Clicked Action menu button for song result '$title' by '$artist': $clicked")
                             actionMenuButton.recycle()
                             allNodes.forEach { it.recycle() }
-                            return clicked
+                            return ContextMenuOpen(clicked, title, artist)
                         } else {
                             Log.d(TAG, "Found song row but no Action menu button inside")
                         }
                     }
                 }
+            }
+
+            if (query != null) {
+                // No row for this query yet (results still loading, or a stale page): let the caller
+                // poll again rather than fall back to an arbitrary row.
+                Log.d(TAG, "openContextMenu: no song row matching '$query' among $foundSongRows song rows ($foundResultRows result rows)")
+                allNodes.forEach { it.recycle() }
+                return ContextMenuOpen(false)
             }
 
             // Fallback: If no song type indicator found, collect all Action menus in result rows and try them
@@ -7701,13 +7737,13 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Fallback: Clicked second Action menu button (skipping first/top result): $clicked")
                 actionMenuButtons.forEach { it.recycle() }
                 allNodes.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             } else if (actionMenuButtons.isNotEmpty()) {
                 val clicked = accessibilityService.clickNode(actionMenuButtons[0])
                 Log.d(TAG, "Fallback: Only one Action menu found, clicking it: $clicked")
                 actionMenuButtons.forEach { it.recycle() }
                 allNodes.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             }
 
             // Final fallback: Find ANY "Action menu" buttons directly by content description
@@ -7725,7 +7761,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Final fallback: Found ${directActionMenus.size} direct Action menu buttons, clicked first: $clicked")
                 allNodes.forEach { if (!directActionMenus.contains(it)) it.recycle() }
                 directActionMenus.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             }
 
             // Log what content-descs we found for debugging
@@ -7740,10 +7776,10 @@ class ScreenAgentTools @Inject constructor(
             // Dump UI for debugging before recycling nodes
             dumpUIHierarchy(rootNode, "ytmusic_no_action_menu", "No song search results with action menu found in YouTube Music")
             allNodes.forEach { it.recycle() }
-            return false
+            return ContextMenuOpen(false)
         } catch (e: Exception) {
             Log.e(TAG, "Error opening YouTube Music context menu", e)
-            return false
+            return ContextMenuOpen(false)
         }
     }
 

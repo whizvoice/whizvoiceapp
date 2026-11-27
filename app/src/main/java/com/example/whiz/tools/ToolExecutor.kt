@@ -1574,6 +1574,9 @@ class ToolExecutor @Inject constructor(
                 put("action", result.action)
                 put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
+                // The row whose Action menu was used, so the model reports what was actually queued.
+                result.nowPlaying?.let { put("queued_title", it) }
+                result.nowPlayingArtist?.let { put("queued_artist", it) }
                 result.error?.let { put("error", it) }
             }
 
