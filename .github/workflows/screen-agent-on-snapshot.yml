@@ -7,6 +7,10 @@
 name: Screen Agent Tests on Snapshot (spike)
 
 on:
+  # GitHub only accepts workflow_dispatch for files on the default branch, so while this
+  # spike lives on its own branch a push to that branch runs the default class instead.
+  push:
+    branches: [uiautomator]
   workflow_dispatch:
     inputs:
       test_classes:
@@ -150,7 +154,7 @@ jobs:
 
       - name: Run screen agent tests on snapshot
         env:
-          TEST_CLASSES: ${{ inputs.test_classes }}
+          TEST_CLASSES: ${{ inputs.test_classes || 'com.example.whiz.integration.MediaStreamDuckTest' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
