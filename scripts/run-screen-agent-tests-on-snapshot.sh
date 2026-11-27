@@ -19,6 +19,7 @@ LOGCAT_PID=""
 
 cleanup() {
     local exit_code=$?
+    set +eo pipefail  # best-effort collection; nothing here may change the exit code
     echo "==> Exit trap (code $exit_code): collecting artifacts..."
     kill "$LOGCAT_PID" 2>/dev/null || true
     adb shell sync 2>/dev/null || true
@@ -31,6 +32,7 @@ cleanup() {
     cp -r app/build/outputs/androidTest-results "$OUT/" 2>/dev/null || true
     cp -r app/build/reports/androidTests "$OUT/" 2>/dev/null || true
     ls -la "$OUT" || true
+    exit "$exit_code"
 }
 trap cleanup EXIT
 
@@ -118,8 +120,8 @@ set -e
 echo "==> Gradle exit code: $GRADLE_EXIT"
 echo "==> Per-test outcomes (from JUnit XML):"
 find app/build/outputs/androidTest-results/connected -name '*.xml' -print0 2>/dev/null \
-    | xargs -0 grep -hoE '<testcase [^>]*name="[^"]+"[^>]*>|<skipped|<failure' 2>/dev/null \
-    | sed -E 's/.*name="([^"]+)".*/TEST \1/; s/<skipped.*/    -> SKIPPED/; s/<failure.*/    -> FAILED/' || true
+    | xargs -0 grep -hoE '<testcase name="[^"]+" classname="[^"]+"|<skipped|<failure' 2>/dev/null \
+    | sed -E 's/<testcase name="([^"]+)" classname="[^"]+\.([^".]+)"/TEST \2#\1/; s/<skipped.*/    -> SKIPPED/; s/<failure.*/    -> FAILED/' || true
 echo "==> Skip-rule log lines:"
 grep -E "SkipOnCIOrEmulatorRule" "$OUT/logcat.log" | head -20 || true
 echo "==> Failures (tail of gradle output):"

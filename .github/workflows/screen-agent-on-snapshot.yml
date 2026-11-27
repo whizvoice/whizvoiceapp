@@ -154,7 +154,9 @@ jobs:
 
       - name: Run screen agent tests on snapshot
         env:
-          TEST_CLASSES: ${{ inputs.test_classes || 'com.example.whiz.integration.MediaStreamDuckTest' }}
+          # Push default: the three app tests whose target apps the first run confirmed are in the
+          # snapshot. WhatsApp is run separately because it may crash the swiftshader renderer.
+          TEST_CLASSES: ${{ inputs.test_classes || 'com.example.whiz.integration.GoogleMapsDirectionsTest,com.example.whiz.integration.YouTubeMusicTest,com.example.whiz.integration.SmsDraftMessageTest' }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
