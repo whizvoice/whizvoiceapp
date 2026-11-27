@@ -75,8 +75,8 @@ class GoogleMapsDirectionsTest : ToolFlowIntegrationTest() {
         storeName = "Trader Joe's",
         searchQuery = "what are the trader joes near me ?",
         locationSelector = "Can you give me directions to the one on Laguna Street",
-        secondaryAddress = "1680 Mission Street",
-        secondaryAddressShort = "1680 Mission St",
+        secondaryAddress = "1885 Mission Street",
+        secondaryAddressShort = "1885 Mission St",
     )
     private val toronto = MapsCity(
         storeName = "Shoppers Drug Mart",
