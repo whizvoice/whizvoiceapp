@@ -114,6 +114,14 @@ for app in com.google.android.apps.youtube.music com.google.android.apps.messagi
            com.google.android.apps.maps com.whatsapp; do
     adb shell pm grant $app android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 done
+# Maps routes from the saved Home address unless it can read the GPS fix; Messages can't find a
+# contact by name without contacts access. Neither app has been granted anything on the snapshot.
+for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+    adb shell pm grant com.google.android.apps.maps android.permission.$p 2>/dev/null || true
+done
+for p in READ_CONTACTS READ_SMS SEND_SMS RECEIVE_SMS READ_PHONE_STATE; do
+    adb shell pm grant com.google.android.apps.messaging android.permission.$p 2>/dev/null || true
+done
 adb shell cmd role add-role-holder android.app.role.SMS com.google.android.apps.messaging 2>/dev/null || true
 echo "==> Default SMS app: $(adb shell cmd role get-role-holders android.app.role.SMS 2>/dev/null | tr -d '\r')"
 adb shell monkey -p com.google.android.apps.messaging -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
