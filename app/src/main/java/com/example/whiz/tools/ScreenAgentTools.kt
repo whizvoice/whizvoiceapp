@@ -69,6 +69,10 @@ class ScreenAgentTools @Inject constructor(
 
     companion object {
         const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+        const val YT_MUSIC_PACKAGE = "com.google.android.apps.youtube.music"
+
+        /** Time for the YT Music player to animate closed after Skip ad / Close ad panel / Minimize. */
+        private const val PLAYER_DISMISS_SETTLE_MS = 600L
 
         /** Google Messages search box; present while on the search screen, gone once a conversation opens. */
         private const val SMS_SEARCH_BOX_ID = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
@@ -6961,6 +6965,101 @@ class ScreenAgentTools @Inject constructor(
         }
     }
 
+    /**
+     * If YouTube Music's expanded ("now playing") player is covering the screen, clear it so the
+     * deep-linked search results underneath become reachable. Returns true when something was
+     * tapped, so the caller re-reads the tree before matching rows.
+     *
+     * Seen live on 2026-11-26 (ui dumps ytmusic_no_action_menu / ytmusic_play_deeplink_no_result):
+     * a video ad break ("Sponsored · 1 of 2 · 0:43") keeps the player expanded over the search
+     * page, with a companion ad panel ("Close ad panel") in its lower half and, once skippable,
+     * a `skip_ad_button`. In that order: skip the ad when allowed, close the companion panel,
+     * then collapse the player with `player_collapse_button` ("Minimize"). Each control is
+     * matched by resource id and by content description so older/newer builds still work.
+     */
+    private fun dismissYouTubeMusicExpandedPlayer(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        if (!isYouTubeMusicPlayerExpanded(rootNode)) return false
+        var tapped = false
+        val skipAd = findFirstYouTubeMusicControl(rootNode, "$YT_MUSIC_PACKAGE:id/skip_ad_button", "Skip ad")
+        if (skipAd != null) {
+            Log.d(TAG, "Expanded player shows a skippable ad; tapping Skip ad")
+            tapped = accessibilityService.clickNode(skipAd) || tapped
+            skipAd.recycle()
+        }
+        val closePanel = findFirstYouTubeMusicControl(rootNode, null, "Close ad panel")
+        if (closePanel != null) {
+            Log.d(TAG, "Expanded player shows a companion ad panel; tapping Close ad panel")
+            tapped = accessibilityService.clickNode(closePanel) || tapped
+            closePanel.recycle()
+        }
+        val collapse = findFirstYouTubeMusicControl(rootNode, "$YT_MUSIC_PACKAGE:id/player_collapse_button", "Minimize")
+        if (collapse != null) {
+            Log.d(TAG, "Collapsing the expanded player to reach the search results")
+            tapped = accessibilityService.clickNode(collapse) || tapped
+            collapse.recycle()
+        }
+        if (!tapped) Log.w(TAG, "Expanded player detected but none of Skip ad / Close ad panel / Minimize could be tapped")
+        return tapped
+    }
+
+    /** The full-screen player is up when its collapse button or an ad progress label is in the tree. */
+    private fun isYouTubeMusicPlayerExpanded(rootNode: AccessibilityNodeInfo): Boolean {
+        for (id in listOf("player_collapse_button", "ad_progress_text", "skip_ad_button")) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId("$YT_MUSIC_PACKAGE:id/$id")
+            val found = !nodes.isNullOrEmpty()
+            nodes?.forEach { it.recycle() }
+            if (found) return true
+        }
+        return false
+    }
+
+    /** A clickable node by resource id, else by exact content description; null when absent. */
+    private fun findFirstYouTubeMusicControl(
+        rootNode: AccessibilityNodeInfo,
+        resourceId: String?,
+        contentDesc: String
+    ): AccessibilityNodeInfo? {
+        if (resourceId != null) {
+            val byId = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+            if (!byId.isNullOrEmpty()) {
+                val pick = byId.firstOrNull { it.isClickable } ?: byId[0]
+                byId.forEach { if (it != pick) it.recycle() }
+                return pick
+            }
+        }
+        val byDesc = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByContentDesc(rootNode, contentDesc, byDesc)
+        val pick = byDesc.firstOrNull { it.isClickable } ?: byDesc.firstOrNull()
+        byDesc.forEach { if (it != pick) it.recycle() }
+        return pick
+    }
+
+    /**
+     * Every node in the tree except those inside the player (`player_page`, which holds the
+     * now-playing view and its up-next list). Row matchers for search results must use this:
+     * the player's up-next rows look like "Song •" result rows, so matching against them queues
+     * or plays whatever is already in the queue while reporting success for the user's query.
+     */
+    private fun collectSearchResultCandidates(rootNode: AccessibilityNodeInfo): MutableList<AccessibilityNodeInfo> {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        val playerRoots = rootNode.findAccessibilityNodeInfosByViewId("$YT_MUSIC_PACKAGE:id/player_page")
+        if (playerRoots.isNullOrEmpty()) return allNodes
+        val inPlayer = mutableListOf<AccessibilityNodeInfo>()
+        playerRoots.forEach { collectAllNodes(it, inPlayer) }
+        playerRoots.forEach { it.recycle() }
+        // AccessibilityNodeInfo.equals compares source/window ids, so containment works across copies.
+        val inPlayerSet = inPlayer.toSet()
+        val (excluded, kept) = allNodes.partition { it in inPlayerSet }
+        if (excluded.isNotEmpty()) Log.d(TAG, "Ignoring ${excluded.size} nodes inside the YT Music player when matching results")
+        excluded.forEach { it.recycle() }
+        inPlayer.forEach { it.recycle() }
+        return kept.toMutableList()
+    }
+
     private fun ensureYTMusicTabSelected(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
         try {
             // After search, YouTube Music shows tabs: YT MUSIC, LIBRARY, DOWNLOADS
@@ -7038,6 +7137,12 @@ class ScreenAgentTools @Inject constructor(
                     delay(pollIntervalMs)
                     continue
                 }
+                // An ad break keeps the expanded player over the search page; clear it and re-poll.
+                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+                    rootNode.recycle()
+                    delay(PLAYER_DISMISS_SETTLE_MS)
+                    continue
+                }
 
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, contentType)
                 rootNode.recycle()
@@ -7068,6 +7173,12 @@ class ScreenAgentTools @Inject constructor(
         while (System.currentTimeMillis() - startTime < maxWaitMs) {
             val rootNode = accessibilityService.getCurrentRootNode()
             if (rootNode != null) {
+                // An ad break keeps the expanded player over the search page; clear it and re-poll.
+                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+                    rootNode.recycle()
+                    delay(PLAYER_DISMISS_SETTLE_MS)
+                    continue
+                }
                 val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
                 rootNode.recycle()
 
@@ -7228,9 +7339,9 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Failed to click Shuffle play, falling back to row click")
             }
 
-            // Fall back to clicking a result row that matches the content type
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
+            // Fall back to clicking a result row that matches the content type. Rows inside the
+            // player (its up-next list) are excluded: they are not search results.
+            val allNodes = collectSearchResultCandidates(rootNode)
 
             // Get acceptable type indicators for this content type
             val acceptableTypes = getAcceptableTypeIndicators(contentType)
@@ -7537,8 +7648,9 @@ class ScreenAgentTools @Inject constructor(
         try {
             // We need to find the "Action menu" button (3-dot menu) specifically for a song result
             // Song results are Button rows containing a child with content-desc like "Song •..." or "Video •..."
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
+            // Rows inside the player (its up-next list) are excluded: queueing one of those re-queues
+            // whatever is already playing while reporting success for the user's query.
+            val allNodes = collectSearchResultCandidates(rootNode)
 
             val acceptableSongTypes = listOf("Song •", "Video •")
 
