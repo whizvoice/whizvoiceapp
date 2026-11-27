@@ -2581,8 +2581,16 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Click result: $success")
 
                             if (success) {
-                                // Wait longer for the screen to update (conversations list may take time to load)
-                                delay(1500)
+                                // Tapping a contact either opens the conversation or shows the
+                                // contact's conversations list; wait for whichever appears.
+                                waitForScreen(
+                                    accessibilityService,
+                                    "Messages conversation or conversations list after tapping '$contactName'",
+                                    success = { root ->
+                                        elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_header")(root) ||
+                                            elementGone(SMS_SEARCH_BOX_ID)(root)
+                                    },
+                                )
 
                                 // Check if we're on secondary search results screen
                                 // (Google Messages shows this when clicking a contact shows their conversations)
@@ -2620,7 +2628,11 @@ class ScreenAgentTools @Inject constructor(
 
                                                 if (clicked) {
                                                     Log.i(TAG, "✅ Clicked first conversation in list")
-                                                    delay(1200) // Wait for conversation to open
+                                                    waitForScreen(
+                                                        accessibilityService,
+                                                        "Messages conversation to open after tapping first conversation",
+                                                        success = elementGone(SMS_SEARCH_BOX_ID),
+                                                    )
                                                 } else {
                                                     Log.w(TAG, "Failed to click first conversation")
                                                 }
@@ -2638,8 +2650,8 @@ class ScreenAgentTools @Inject constructor(
                                     updatedRootNode.recycle()
                                 }
 
-                                // Validate we actually opened a conversation (not still in search)
-                                delay(800) // Wait for conversation to load
+                                // Validate we actually opened a conversation (not still in search);
+                                // the waits above already polled for the conversation screen.
                                 val validationRootNode = accessibilityService.getCurrentRootNode()
                                 if (validationRootNode != null) {
                                     // Check if we're still in search screen
@@ -2690,7 +2702,14 @@ class ScreenAgentTools @Inject constructor(
 
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
-                        delay(1500) // Wait for search results to appear
+                        waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$contactName'",
+                            success = { root ->
+                                elementPresent("com.google.android.apps.messaging:id/zero_state_search_results")(root) ||
+                                    elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results")(root)
+                            },
+                        )
 
                         // After search, click on the first search result
                         val searchResultRootNode = accessibilityService.getCurrentRootNode()
@@ -2735,7 +2754,11 @@ class ScreenAgentTools @Inject constructor(
                                         // Poll for the conversation to open instead of sleeping a fixed
                                         // 1.5s: on a slow device the single check fired before Messages
                                         // had rendered the conversation and we re-clicked the result.
-                                        waitForSmsConversationOpened(accessibilityService)
+                                        waitForScreen(
+                                            accessibilityService,
+                                            "Messages conversation to open after tapping result",
+                                            success = elementGone(SMS_SEARCH_BOX_ID),
+                                        )
 
                                         // Validate we opened a conversation
                                         val validationRootNode = accessibilityService.getCurrentRootNode()
@@ -2788,7 +2811,11 @@ class ScreenAgentTools @Inject constructor(
 
                                                         if (clickedAgain) {
                                                             Log.d(TAG, "Clicked result again, waiting for conversation...")
-                                                            waitForSmsConversationOpened(accessibilityService)
+                                                            waitForScreen(
+                                                                accessibilityService,
+                                                                "Messages conversation to open after second tap",
+                                                                success = elementGone(SMS_SEARCH_BOX_ID),
+                                                            )
 
                                                             // Final validation
                                                             val finalRootNode = accessibilityService.getCurrentRootNode()
@@ -3678,20 +3705,12 @@ class ScreenAgentTools @Inject constructor(
                     // Wait for search results to appear
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
-                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                            if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
-                                currentRoot.recycle()
-                                hasResults
-                            } else {
-                                false
-                            }
-                        }
+                        val resultsAppeared = waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$searchQuery'",
+                            packageName = "com.google.android.apps.messaging",
+                            success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                        )
                         if (resultsAppeared) {
                             Log.i(TAG, "✅ Search results appeared")
                         } else {
@@ -3706,18 +3725,12 @@ class ScreenAgentTools @Inject constructor(
                                 delay(500)
 
                                 // Wait for results again
-                                val resultsAppearedAfterKeycode = waitForCondition(maxWaitMs = 3000) {
-                                    val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                                    if (currentRoot != null) {
-                                        val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                        )
-                                        val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                        chatResults?.forEach { it.recycle() }
-                                        currentRoot.recycle()
-                                        hasResults
-                                    } else false
-                                }
+                                val resultsAppearedAfterKeycode = waitForScreen(
+                                    accessibilityService,
+                                    "Messages search results for '$searchQuery' after KEYCODE_ENTER",
+                                    packageName = "com.google.android.apps.messaging",
+                                    success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                                )
 
                                 if (resultsAppearedAfterKeycode) {
                                     Log.i(TAG, "✅ Search results appeared after KEYCODE_ENTER fallback")
@@ -3777,20 +3790,12 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Waiting for search results (fallback path)...")
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
-                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                            if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
-                                currentRoot.recycle()
-                                hasResults
-                            } else {
-                                false
-                            }
-                        }
+                        val resultsAppeared = waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$searchQuery'",
+                            packageName = "com.google.android.apps.messaging",
+                            success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                        )
 
                         if (resultsAppeared) {
                             Log.d(TAG, "Search results appeared after KEYCODE_ENTER (fallback path)")
@@ -8716,6 +8721,7 @@ class ScreenAgentTools @Inject constructor(
         accessibilityService: WhizAccessibilityService,
         waitingFor: String,
         ceilingMs: Long? = null,
+        packageName: String? = null,
         stillLoading: (AccessibilityNodeInfo) -> Boolean = { false },
         success: (AccessibilityNodeInfo) -> Boolean,
     ): Boolean {
@@ -8724,7 +8730,11 @@ class ScreenAgentTools @Inject constructor(
             deadline = currentToolDeadline(),
             ceilingMs = ceilingMs,
             log = { Log.d(TAG, it) },
-            read = { accessibilityService.getCurrentRootNode() },
+            // packageName: read that app's window rather than whatever is in front (e.g. the IME)
+            read = {
+                if (packageName != null) accessibilityService.getRootNodeForPackage(packageName)
+                else accessibilityService.getCurrentRootNode()
+            },
             // pollUntil's contract: success(root) is the last touch when it returns true,
             // otherwise stillLoading(root) is. Recycle in exactly those places.
             success = { root ->
@@ -8825,30 +8835,6 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
-    /**
-     * After tapping a search result in Google Messages, wait for the conversation to open,
-     * detected as the search box leaving the tree. Returns as soon as that happens (a few
-     * hundred ms on a phone); on a slow device it keeps polling up to [maxWaitMs] instead of
-     * checking once after a fixed sleep and wrongly concluding we are still on the search screen.
-     */
-    private suspend fun waitForSmsConversationOpened(
-        accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 5000
-    ): Boolean {
-        val opened = waitForCondition(maxWaitMs = maxWaitMs, initialDelayMs = 100, maxIntervalMs = 300) {
-            val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
-            val searchBox = root.findAccessibilityNodeInfosByViewId(SMS_SEARCH_BOX_ID)
-            val stillInSearch = searchBox != null && searchBox.isNotEmpty()
-            searchBox?.forEach { it.recycle() }
-            root.recycle()
-            !stillInSearch
-        }
-        if (!opened) {
-            Log.w(TAG, "Messages search box still present after ${maxWaitMs}ms; conversation may not have opened")
-        }
-        return opened
-    }
-
     /**
      * Wait for WhatsApp UI to be ready after an action
      */
