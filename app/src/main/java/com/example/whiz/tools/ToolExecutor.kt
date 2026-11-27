@@ -480,6 +480,8 @@ class ToolExecutor @Inject constructor(
                         status = "running",
                         message = "Accessibility service connected. Running the tool now."
                     ))
+                    // The server grants a fresh 30s on "running"; keep the device deadline in step.
+                    deadline.restart(ToolDeadline.RUNNING_EXTENSION_MS)
                     // Let the freshly bound service settle before the tool uses it.
                     delay(300)
                 }
@@ -531,6 +533,8 @@ class ToolExecutor @Inject constructor(
                         status = "running",
                         message = "Phone unlocked. Running the tool now."
                     ))
+                    // The server grants a fresh 30s on "running"; keep the device deadline in step.
+                    deadline.restart(ToolDeadline.RUNNING_EXTENSION_MS)
 
                     // Small delay after unlock to let the system settle
                     delay(500)

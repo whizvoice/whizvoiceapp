@@ -141,15 +141,27 @@ categories A, B, C, F migrated; E except the two loops below; D for the SMS, YT 
 tools. `waitForCondition` and the viewId `waitForElement` remain as shims over `pollUntil`
 (40+ callers, ceilings unchanged); the predicate `waitForElement` is deleted. 72 fixed sleeps → 48.
 
-## Remaining
+Final audit pass (same day): every remaining load-type sleep became a wait (WhatsApp/Messages
+back-press and message-button, Messages search field, Maps post-scroll/post-back and
+select-from-list, YT Music detail page, pause-state poll, draft-overlay dismiss); load-type
+`waitForCondition` ceilings in WhatsApp, Fitbit, transport-mode selection and navigation
+verification now draw on the budget. `ToolDeadline` falls back to the per-tool server timeout
+for servers that predate `budget_ms`, and restarts to 30 s when a parked tool resumes.
 
-- Category D outside the three tools: WhatsApp select/draft ceilings (5000 x2), Fitbit
-  `addFitbitQuickCalories` / `tapFoodTileAndLog` / `enterCaloriesAndLog` (5000), and the ~40
-  `waitForCondition(maxWaitMs = ...)` shim callers. Convert to `waitForScreen` with a description
-  as each tool is touched; drop the ceiling where it only encodes device speed.
-- Category E leftovers: `clickPlayButtonOnDetailPage` (5 attempts with branching and its own
-  sleeps) and `tapFoodTileAndLog`'s scroll-to-top loop (already a before/after settle check).
-- Category G stays as is.
+## What is left, and why it stays (27 sleeps, 15 ceiling-only waits)
+
+- Keyboard/text settles (`insertText`, `enterSMSSearchText` 300 ms, `sendDraftedMessageCore`,
+  `openKeyboardAndWaitForIme`, `updateSearchText`): load-bearing IME timing, no tree signal.
+- Poll spacing inside retry loops (200–500 ms between attempts): the loop is the wait.
+- Two cosmetic pauses so the user can see the menu / action; three 500 ms post-click playback
+  starts in `clickPlayButtonOnDetailPage` that the caller then verifies via the mini player.
+- `swipeUpToDismiss` 600 ms fallback (only when there is nothing to check); `enterSMSSearchText`
+  1 s on the no-accessibility error path; the ANR-dump path's 500 ms.
+- `tapFoodTileAndLog`'s scroll loop: already a before/after settle check.
+- Ceiling-only waits that are fail-fast by design: Maps filter/back/state-change checks
+  (1.5–3 s, field-tuned), the 10 s / 15 s Maps waits already reasoned against the 40 s server
+  timeout, `sendDraftedMessageCore`'s send-button and input-cleared checks (bug 1333 timing),
+  keyboard/IME-bounds waits, bubble-service and dismiss-card checks.
 
 Every commit keeps the same view ids and screen predicates, so older versions of Messages,
 WhatsApp, YT Music and Maps are navigated exactly as before; only how long we are willing to

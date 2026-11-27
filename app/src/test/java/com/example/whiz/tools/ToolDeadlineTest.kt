@@ -26,7 +26,15 @@ class ToolDeadlineTest {
 
     @Test
     fun `falls back to the per-tool default when the message has no budget`() {
+        // An old server sends no budget_ms; the default must match what that server waits
+        // with for this tool (agent_press_back: 8s), not a generic value that outlives it.
         val d = ToolDeadline.fromRequest(JSONObject("""{"tool": "agent_press_back"}"""), now)
+        assertEquals(8_000L - ToolDeadline.RESERVE_MS, d.remainingMs())
+    }
+
+    @Test
+    fun `unknown tool with no budget falls back to the generic default`() {
+        val d = ToolDeadline.fromRequest(JSONObject("""{"tool": "agent_not_a_real_tool"}"""), now)
         assertEquals(ToolDeadline.DEFAULT_BUDGET_MS - ToolDeadline.RESERVE_MS, d.remainingMs())
     }
 
@@ -35,6 +43,17 @@ class ToolDeadlineTest {
         val d = ToolDeadline.fromRequest(JSONObject("""{"budget_ms": 1000}"""), now)
         clock += 10_000
         assertEquals(0L, d.remainingMs())
+    }
+
+    @Test
+    fun `restart gives a fresh budget from now`() {
+        // After a parked tool resumes (phone unlocked), the server grants a fresh 30s; the
+        // device deadline must follow, or every wait in the tool starts with nothing left.
+        val d = ToolDeadline.fromRequest(JSONObject("""{"budget_ms": 5000}"""), now)
+        clock += 60_000
+        assertEquals(0L, d.remainingMs())
+        d.restart(ToolDeadline.RUNNING_EXTENSION_MS)
+        assertEquals(ToolDeadline.RUNNING_EXTENSION_MS - ToolDeadline.RESERVE_MS, d.remainingMs())
     }
 
     @Test
