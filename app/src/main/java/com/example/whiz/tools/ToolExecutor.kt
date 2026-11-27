@@ -420,13 +420,18 @@ class ToolExecutor @Inject constructor(
         voiceManager: com.example.whiz.ui.viewmodels.VoiceManager? = null,
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
     ) {
-        scope.launch {
+        // The server's budget_ms for this request rides in the coroutine context as a
+        // ToolDeadline, so every wait inside the tool can bound itself by what is left.
+        val deadline = ToolDeadline.fromRequest(toolRequest)
+        scope.launch(deadline) {
             try {
                 Log.i(TAG, "🎯 TOOL EXECUTOR: Starting execution")
                 Log.i(TAG, "🎯 Full request: ${toolRequest.toString(2)}")
 
                 val toolName = toolRequest.getString("tool")
                 val requestId = toolRequest.getString("request_id")
+                Log.i(TAG, "⏱ $toolName budget ${toolRequest.optLong("budget_ms", ToolDeadline.DEFAULT_BUDGET_MS)}ms " +
+                    "(deadline reserve ${ToolDeadline.RESERVE_MS}ms, ${deadline.remainingMs()}ms remaining)")
                 val params = if (toolRequest.has("params")) {
                     toolRequest.getJSONObject("params")
                 } else {
