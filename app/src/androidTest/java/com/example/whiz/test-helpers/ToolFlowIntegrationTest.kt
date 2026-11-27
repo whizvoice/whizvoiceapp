@@ -287,8 +287,18 @@ abstract class ToolFlowIntegrationTest : BaseIntegrationTest() {
      * snapshot emulator the Gradle APK reinstall kills the service and the system takes up to
      * ~60s to rebind it, which otherwise races the test's first screen agent call.
      */
-    protected suspend fun awaitAccessibilityServiceConnected(timeoutMs: Long = 90_000): Boolean {
-        val connected = waitUntil(timeoutMs) { com.example.whiz.accessibility.WhizAccessibilityService.isServiceConnected() }
+    protected suspend fun awaitAccessibilityServiceConnected(timeoutMs: Long = 60_000): Boolean {
+        val isConnected = { com.example.whiz.accessibility.WhizAccessibilityService.isServiceConnected() }
+        val start = System.currentTimeMillis()
+        // Give an in-flight rebind a moment, then force one: the reinstall leaves the setting
+        // untouched and the system only rebinds on a settings change, so waiting alone can
+        // never finish (seen on the CI emulator: 90s with no bind).
+        if (!waitUntil(5_000, isConnected)) {
+            Log.i("ToolFlowIntegrationTest", "accessibility service not connected; toggling the setting to force a rebind")
+            ensureAccessibilityServiceEnabled(timeoutMs = 15_000)
+        }
+        val remaining = timeoutMs - (System.currentTimeMillis() - start)
+        val connected = isConnected() || waitUntil(remaining.coerceAtLeast(1_000), isConnected)
         Log.i("ToolFlowIntegrationTest", "accessibility service connected=$connected")
         return connected
     }

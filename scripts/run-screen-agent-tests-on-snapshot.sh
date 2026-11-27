@@ -105,6 +105,22 @@ adb shell pm grant $PKG android.permission.READ_SMS || true
 adb shell settings put secure enabled_accessibility_services $PKG/com.example.whiz.accessibility.WhizAccessibilityService
 adb shell settings put secure accessibility_enabled 1
 sleep 2
+
+# Target apps on the snapshot have never been opened, so their first launch raises runtime
+# permission prompts (YouTube Music asked for notifications) and first-run screens that the
+# screen agent then has to fight through. Pre-grant what we can and open Messages once to get
+# its express sign-in prompt out of the way.
+for app in com.google.android.apps.youtube.music com.google.android.apps.messaging \
+           com.google.android.apps.maps com.whatsapp; do
+    adb shell pm grant $app android.permission.POST_NOTIFICATIONS 2>/dev/null || true
+done
+adb shell cmd role add-role-holder android.app.role.SMS com.google.android.apps.messaging 2>/dev/null || true
+echo "==> Default SMS app: $(adb shell cmd role get-role-holders android.app.role.SMS 2>/dev/null | tr -d '\r')"
+adb shell monkey -p com.google.android.apps.messaging -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+sleep 10
+adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
+adb shell am force-stop com.google.android.apps.messaging || true
+adb shell input keyevent KEYCODE_HOME
 echo "==> Accessibility services bound:"
 adb shell dumpsys accessibility | grep -iE "bound|WhizAccessibilityService" | head -5 || true
 
