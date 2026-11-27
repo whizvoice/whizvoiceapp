@@ -70,6 +70,9 @@ class ScreenAgentTools @Inject constructor(
     companion object {
         const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
 
+        /** Google Messages search box; present while on the search screen, gone once a conversation opens. */
+        private const val SMS_SEARCH_BOX_ID = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+
         /**
          * The Maps "unknown screen state" recovery presses the system Back button. That is
          * only safe while Google Maps owns the foreground window; once Back has left Maps,
@@ -2725,12 +2728,15 @@ class ScreenAgentTools @Inject constructor(
                                     clickableItems.forEach { it.recycle() }
 
                                     if (clicked) {
-                                        delay(1500) // Wait for conversation to open
+                                        // Poll for the conversation to open instead of sleeping a fixed
+                                        // 1.5s: on a slow device the single check fired before Messages
+                                        // had rendered the conversation and we re-clicked the result.
+                                        waitForSmsConversationOpened(accessibilityService)
 
                                         // Validate we opened a conversation
                                         val validationRootNode = accessibilityService.getCurrentRootNode()
                                         if (validationRootNode != null) {
-                                            val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                                            val searchBoxId = SMS_SEARCH_BOX_ID
                                             val stillInSearch = validationRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
 
                                             if (stillInSearch == null || stillInSearch.isEmpty()) {
@@ -2778,7 +2784,7 @@ class ScreenAgentTools @Inject constructor(
 
                                                         if (clickedAgain) {
                                                             Log.d(TAG, "Clicked result again, waiting for conversation...")
-                                                            delay(1500)
+                                                            waitForSmsConversationOpened(accessibilityService)
 
                                                             // Final validation
                                                             val finalRootNode = accessibilityService.getCurrentRootNode()
@@ -8586,6 +8592,30 @@ class ScreenAgentTools @Inject constructor(
         }
     }
     
+    /**
+     * After tapping a search result in Google Messages, wait for the conversation to open,
+     * detected as the search box leaving the tree. Returns as soon as that happens (a few
+     * hundred ms on a phone); on a slow device it keeps polling up to [maxWaitMs] instead of
+     * checking once after a fixed sleep and wrongly concluding we are still on the search screen.
+     */
+    private suspend fun waitForSmsConversationOpened(
+        accessibilityService: WhizAccessibilityService,
+        maxWaitMs: Long = 5000
+    ): Boolean {
+        val opened = waitForCondition(maxWaitMs = maxWaitMs, initialDelayMs = 100, maxIntervalMs = 300) {
+            val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
+            val searchBox = root.findAccessibilityNodeInfosByViewId(SMS_SEARCH_BOX_ID)
+            val stillInSearch = searchBox != null && searchBox.isNotEmpty()
+            searchBox?.forEach { it.recycle() }
+            root.recycle()
+            !stillInSearch
+        }
+        if (!opened) {
+            Log.w(TAG, "Messages search box still present after ${maxWaitMs}ms; conversation may not have opened")
+        }
+        return opened
+    }
+
     /**
      * Wait for WhatsApp UI to be ready after an action
      */
