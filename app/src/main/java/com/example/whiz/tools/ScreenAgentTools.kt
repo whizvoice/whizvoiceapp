@@ -6873,24 +6873,17 @@ class ScreenAgentTools @Inject constructor(
         timeoutMs: Long = 3000,
         pollIntervalMs: Long = 200
     ): Boolean {
-        val startTime = System.currentTimeMillis()
-
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                try {
-                    if (checkElement(rootNode)) {
-                        rootNode.recycle()
-                        return true
-                    }
-                } finally {
-                    rootNode.recycle()
-                }
-            }
-            delay(pollIntervalMs)
-        }
-
-        return false
+        // Shim over pollUntil: same fixed poll interval and ceiling as before, no tool deadline.
+        return pollUntil(
+            waitingFor = "element (predicate)",
+            deadline = null,
+            ceilingMs = timeoutMs,
+            initialDelayMs = pollIntervalMs,
+            maxIntervalMs = pollIntervalMs,
+            log = { Log.d(TAG, it) },
+            read = { accessibilityService.getCurrentRootNode() },
+            success = { root -> try { checkElement(root) } finally { root.recycle() } },
+        ) is WaitOutcome.Met
     }
 
     /**
@@ -8697,24 +8690,116 @@ class ScreenAgentTools @Inject constructor(
         maxIntervalMs: Long = 500,
         condition: suspend () -> Boolean
     ): Boolean {
-        val startTime = System.currentTimeMillis()
-        var currentDelay = initialDelayMs
+        // Shim over pollUntil: same backoff and ceiling as before, no tool deadline.
+        // New code should call waitForScreen with a description instead.
+        return pollUntil(
+            waitingFor = "condition",
+            deadline = null,
+            ceilingMs = maxWaitMs,
+            initialDelayMs = initialDelayMs,
+            maxIntervalMs = maxIntervalMs,
+            log = { Log.d(TAG, it) },
+            read = { Unit },
+            success = { condition() },
+        ) is WaitOutcome.Met
+    }
 
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            if (condition()) {
-                Log.d(TAG, "Condition met after ${System.currentTimeMillis() - startTime}ms")
-                return true
-            }
+    /**
+     * Wait for the screen to satisfy [success], bounded by the running tool's [ToolDeadline]
+     * (and [ceilingMs], when the predicate can tell "loaded but wrong" from "still loading" and
+     * should give up early). [waitingFor] names the wait in every log line, e.g.
+     * "Messages conversation to open". [stillLoading] is reported, not used to extend.
+     *
+     * Each polled root is recycled here; predicates must not keep it.
+     */
+    private suspend fun waitForScreen(
+        accessibilityService: WhizAccessibilityService,
+        waitingFor: String,
+        ceilingMs: Long? = null,
+        stillLoading: (AccessibilityNodeInfo) -> Boolean = { false },
+        success: (AccessibilityNodeInfo) -> Boolean,
+    ): Boolean {
+        val outcome = pollUntil(
+            waitingFor = waitingFor,
+            deadline = currentToolDeadline(),
+            ceilingMs = ceilingMs,
+            log = { Log.d(TAG, it) },
+            read = { accessibilityService.getCurrentRootNode() },
+            // pollUntil's contract: success(root) is the last touch when it returns true,
+            // otherwise stillLoading(root) is. Recycle in exactly those places.
+            success = { root ->
+                val met = success(root)
+                if (met) root.recycle()
+                met
+            },
+            stillLoading = { root ->
+                val loading = stillLoading(root)
+                root.recycle()
+                loading
+            },
+        )
+        if (outcome is WaitOutcome.TimedOut) {
+            Log.w(TAG, "$waitingFor: gave up after ${outcome.elapsedMs}ms" +
+                if (outcome.wasLoading) " while the screen was still loading" else "")
+        }
+        return outcome is WaitOutcome.Met
+    }
 
-            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
-            if (remainingTime > 0) {
-                delay(minOf(currentDelay, remainingTime))
-                currentDelay = minOf(currentDelay * 2, maxIntervalMs)
+    // ---- Predicate factories for waitForScreen ------------------------------------------
+
+    /** True when at least one node with [viewId] is in the tree. */
+    private fun elementPresent(viewId: String): (AccessibilityNodeInfo) -> Boolean = { root ->
+        val nodes = root.findAccessibilityNodeInfosByViewId(viewId)
+        val present = !nodes.isNullOrEmpty()
+        nodes?.forEach { it.recycle() }
+        present
+    }
+
+    /** True when no node with [viewId] is in the tree. */
+    private fun elementGone(viewId: String): (AccessibilityNodeInfo) -> Boolean {
+        val present = elementPresent(viewId)
+        return { root -> !present(root) }
+    }
+
+    /** True when at least one node whose text contains [text] is in the tree. */
+    private fun textPresent(text: String): (AccessibilityNodeInfo) -> Boolean = { root ->
+        val nodes = root.findAccessibilityNodeInfosByText(text)
+        val present = !nodes.isNullOrEmpty()
+        nodes?.forEach { it.recycle() }
+        present
+    }
+
+    /**
+     * True once the tree looks the same as on the previous poll (same shape and first few
+     * texts): a wait for scrolling or animation to stop rather than for an element. Each call
+     * site must make its own instance; the previous snapshot lives in the closure.
+     */
+    private fun treeSettled(): (AccessibilityNodeInfo) -> Boolean {
+        var previous: String? = null
+        return { root ->
+            val snapshot = treeSignature(root)
+            val settled = previous != null && snapshot == previous
+            previous = snapshot
+            settled
+        }
+    }
+
+    /** Child count and the first few texts/descriptions of the tree, visiting at most 60 nodes. */
+    private fun treeSignature(root: AccessibilityNodeInfo): String {
+        val texts = ArrayList<String>(5)
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo) {
+            if (visited++ >= 60 || texts.size >= 5) return
+            val label = node.text?.toString()?.takeIf { it.isNotBlank() }
+                ?: node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+            if (label != null) texts.add(label)
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                try { visit(child) } finally { child.recycle() }
             }
         }
-
-        Log.d(TAG, "Condition not met after ${maxWaitMs}ms timeout")
-        return false
+        visit(root)
+        return "${root.childCount}|${texts.joinToString("|")}"
     }
 
     /**
@@ -8832,42 +8917,32 @@ class ScreenAgentTools @Inject constructor(
         text: String? = null,
         maxWaitMs: Long = 2000
     ): AccessibilityNodeInfo? {
-        val startTime = System.currentTimeMillis()
-        var currentDelay = 50L
-        
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
+        // Shim over pollUntil: same backoff and ceiling as before, no tool deadline. Returns
+        // the first matching node (caller recycles it).
+        var found: AccessibilityNodeInfo? = null
+        pollUntil(
+            waitingFor = "element ${viewId ?: "text '$text'"}",
+            deadline = null,
+            ceilingMs = maxWaitMs,
+            log = { Log.d(TAG, it) },
+            read = { accessibilityService.getCurrentRootNode() },
+            success = { rootNode ->
                 val nodes = when {
                     viewId != null -> rootNode.findAccessibilityNodeInfosByViewId(viewId)
                     text != null -> rootNode.findAccessibilityNodeInfosByText(text)
                     else -> null
                 }
-                
-                if (nodes != null && nodes.isNotEmpty()) {
-                    val result = nodes[0]
-                    // Recycle the rest
-                    for (i in 1 until nodes.size) {
-                        nodes[i].recycle()
-                    }
-                    rootNode.recycle()
-                    Log.d(TAG, "Element found after ${System.currentTimeMillis() - startTime}ms")
-                    return result
+                if (!nodes.isNullOrEmpty()) {
+                    found = nodes[0]
+                    for (i in 1 until nodes.size) nodes[i].recycle()
+                } else {
+                    nodes?.forEach { it.recycle() }
                 }
-                
-                nodes?.forEach { it.recycle() }
                 rootNode.recycle()
-            }
-            
-            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
-            if (remainingTime > 0) {
-                delay(minOf(currentDelay, remainingTime))
-                currentDelay = minOf(currentDelay * 2, 500)
-            }
-        }
-        
-        Log.d(TAG, "Element not found after ${maxWaitMs}ms timeout")
-        return null
+                found != null
+            },
+        )
+        return found
     }
     
     /**

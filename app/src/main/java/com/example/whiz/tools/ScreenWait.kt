@@ -27,6 +27,10 @@ sealed class WaitOutcome {
  *
  * Polling backs off from [initialDelayMs] doubling to [maxIntervalMs]. The predicate is always
  * evaluated at least once, even when no time remains. A null [read] counts as not ready.
+ *
+ * Ownership contract for callers whose root must be released: for each non-null read, exactly
+ * one of [success] (when it returns true) or [stillLoading] (when success returned false) is
+ * the last touch of that root, so a wrapper can recycle in those two places.
  */
 suspend fun <T> pollUntil(
     waitingFor: String,
@@ -36,9 +40,9 @@ suspend fun <T> pollUntil(
     maxIntervalMs: Long = 500,
     now: () -> Long = System::currentTimeMillis,
     log: (String) -> Unit = {},
-    read: () -> T?,
-    stillLoading: (T) -> Boolean = { false },
-    success: (T) -> Boolean,
+    read: suspend () -> T?,
+    stillLoading: suspend (T) -> Boolean = { false },
+    success: suspend (T) -> Boolean,
 ): WaitOutcome {
     val start = now()
     val bound = listOfNotNull(ceilingMs, deadline?.remainingMs()).minOrNull() ?: DEFAULT_CEILING_MS
