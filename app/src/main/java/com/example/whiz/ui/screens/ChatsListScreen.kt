@@ -85,6 +85,7 @@ fun ChatsListScreen(
     val isFirstSyncComplete by viewModel.isFirstSyncComplete.collectAsState()
     val isShowingCachedData by viewModel.isShowingCachedData.collectAsState()
     val isWakeWordEnabled by viewModel.isWakeWordEnabled.collectAsState()
+    val wakeWordStartFailure by viewModel.wakeWordStartFailure.collectAsState()
     
     // Snackbar state
     val snackbarHostState = remember { SnackbarHostState() }
@@ -186,12 +187,18 @@ fun ChatsListScreen(
             }
         }
     ) { paddingValues ->
+      Column(
+          modifier = Modifier
+              .fillMaxSize()
+              .padding(paddingValues)
+      ) {
+        if (wakeWordStartFailure != null) {
+            WakeWordNotRunningBanner(onRetry = { viewModel.retryWakeWordStart() })
+        }
         SwipeRefresh(
             state = swipeRefreshState,
             onRefresh = { viewModel.refreshChats() },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
+            modifier = Modifier.fillMaxSize()
         ) {
             if (chats.isEmpty() && !isFirstSyncComplete) {
                 // Show loading text while initial sync is in progress
@@ -217,6 +224,31 @@ fun ChatsListScreen(
                 )
             }
         }
+      }
+    }
+}
+
+/** Shown when wake word is enabled but Android refused to start it with the app on screen. */
+@Composable
+private fun WakeWordNotRunningBanner(onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onRetry)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.HearingDisabled,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "Wake word isn't running. Tap to restart it.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error
+        )
     }
 }
 

@@ -188,6 +188,17 @@ class WhizAccessibilityService : AccessibilityService() {
         }
         registerReceiver(dumpReceiver, IntentFilter(ACTION_DUMP_UI), Context.RECEIVER_EXPORTED)
         Log.d(TAG, "UI dump broadcast receiver registered")
+
+        // The system binding this service is what brings the process back after a kill or
+        // reinstall, with nothing on screen. Retry the wake-word service from here in case the
+        // start in Application.onCreate was refused.
+        try {
+            com.example.whiz.services.WakeWordServiceSupervisor.from(this).ensureRunning(
+                com.example.whiz.services.WakeWordStartTrigger.ACCESSIBILITY_CONNECTED
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not check the wake-word service on connect", e)
+        }
     }
 
     /**
