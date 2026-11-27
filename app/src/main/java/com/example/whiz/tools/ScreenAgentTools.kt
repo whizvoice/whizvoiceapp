@@ -515,33 +515,29 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun enableSpeakerphoneViaAccessibility(
         accessibilityService: WhizAccessibilityService
     ): Boolean {
-        // Wait for the in-call UI to load after placing the call
-        for (attempt in 1..10) {
-            delay(500)
-            val root = accessibilityService.getCurrentRootNode() ?: continue
-            try {
+        // Wait for the in-call UI to load after placing the call (ceiling 5s, as before)
+        var clicked = false
+        val found = waitForScreen(
+            accessibilityService,
+            "dialer in-call Speaker button",
+            ceilingMs = 5000,
+            success = { root ->
                 val currentPackage = root.packageName?.toString() ?: ""
                 if (currentPackage != "com.google.android.dialer") {
-                    Log.d(TAG, "Speakerphone attempt $attempt: not in dialer ($currentPackage)")
-                    continue
+                    Log.d(TAG, "Speakerphone: not in dialer ($currentPackage)")
+                    return@waitForScreen false
                 }
-
                 // Find the Speaker button by content description
-                val speakerNode = findNodeByContentDesc(root, "Speaker")
-                if (speakerNode != null) {
-                    // The clickable parent is the checkable view wrapping the Speaker icon
-                    val clickTarget = findClickableParent(speakerNode) ?: speakerNode
-                    val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.i(TAG, "Speaker button click result: $clicked (attempt $attempt)")
-                    return clicked
-                }
-                Log.d(TAG, "Speakerphone attempt $attempt: Speaker button not found yet")
-            } finally {
-                root.recycle()
-            }
-        }
-        Log.w(TAG, "Failed to find Speaker button after all attempts")
-        return false
+                val speakerNode = findNodeByContentDesc(root, "Speaker") ?: return@waitForScreen false
+                // The clickable parent is the checkable view wrapping the Speaker icon
+                val clickTarget = findClickableParent(speakerNode) ?: speakerNode
+                clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "Speaker button click result: $clicked")
+                true
+            },
+        )
+        if (!found) Log.w(TAG, "Failed to find Speaker button after all attempts")
+        return found && clicked
     }
 
     private fun findNodeByContentDesc(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? {
@@ -1793,7 +1789,9 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
+            WhizAccessibilityService.getInstance()?.let {
+                waitForAppReady(it, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+            }
 
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1842,6 +1840,15 @@ class ScreenAgentTools @Inject constructor(
 
                     // Try to dismiss known dialogs before pressing back
                     if (currentScreen == WhatsAppScreen.UNKNOWN) {
+                        if (isRunningUnderInstrumentation) {
+                            // Tests only: record what the unrecognised screen was before backing out of it
+                            dumpUIHierarchy(
+                                rootNode,
+                                "whatsapp_back_unknown_attempt$backAttempt",
+                                "Unrecognised WhatsApp screen on back attempt $backAttempt",
+                                expectedFailure = true
+                            )
+                        }
                         if (dismissWhatsAppNotificationDialog(rootNode)) {
                             rootNode.recycle()
                             // Poll until we're on a known screen (chat list) instead of hard wait
@@ -2207,7 +2214,7 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
                 Log.i(TAG, "WhatsApp launched successfully")
-                delay(1000) // Wait for WhatsApp to fully load
+                waitForAppReady(accessibilityService, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
 
                 // If chatName is provided, check if we need to navigate to that chat
                 if (chatName != null) {
@@ -2346,7 +2353,9 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
+            WhizAccessibilityService.getInstance()?.let {
+                waitForAppReady(it, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+            }
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -2453,23 +2462,23 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
 
             // Wait for accessibility service to become available (with retry logic)
             // This handles cases where the service is temporarily disconnected
             var accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 Log.w(TAG, "Accessibility service not immediately available, waiting up to 2 seconds...")
-                val maxRetries = 8
-                var retryCount = 0
-                while (accessibilityService == null && retryCount < maxRetries) {
-                    delay(250) // Wait 250ms between retries
-                    accessibilityService = WhizAccessibilityService.getInstance()
-                    retryCount++
-                    if (accessibilityService != null) {
-                        Log.i(TAG, "Accessibility service became available after ${retryCount * 250}ms")
-                    }
-                }
+                pollUntil(
+                    waitingFor = "accessibility service instance",
+                    deadline = currentToolDeadline(),
+                    ceilingMs = 2000,
+                    initialDelayMs = 250,
+                    maxIntervalMs = 250,
+                    log = { Log.d(TAG, it) },
+                    read = { WhizAccessibilityService.getInstance() },
+                    success = { true },
+                )
+                accessibilityService = WhizAccessibilityService.getInstance()
 
                 if (accessibilityService == null) {
                     Log.e(TAG, "Accessibility service not available after waiting 2 seconds")
@@ -2938,7 +2947,9 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
                 Log.i(TAG, "Messages app launched successfully")
-                delay(1000) // Wait for Messages to fully load
+                WhizAccessibilityService.getInstance()?.let {
+                    waitForAppReady(it, "com.google.android.apps.messaging", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+                }
             }
 
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -4060,7 +4071,7 @@ class ScreenAgentTools @Inject constructor(
                 val ytMusicTabClicked = ensureYTMusicTabSelected(tabRootNode, accessibilityService)
                 if (ytMusicTabClicked) {
                     Log.d(TAG, "Switched to YT Music tab for queueing")
-                    delay(500) // Wait for tab content to load
+                    waitForScreen(accessibilityService, "YT Music tab content to settle", ceilingMs = 1000, success = treeSettled())
                 }
                 tabRootNode.recycle()
             }
@@ -4285,7 +4296,7 @@ class ScreenAgentTools @Inject constructor(
                         Log.w(TAG, "Failed to scroll results list")
                         break
                     }
-                    delay(1000) // Wait for scroll to complete
+                    waitForScreen(accessibilityService, "Maps results list to settle after scroll", ceilingMs = 2000, success = treeSettled())
                 }
 
                 val listRootNode = accessibilityService.getCurrentRootNode()
@@ -4469,7 +4480,9 @@ class ScreenAgentTools @Inject constructor(
                             Log.w(TAG, "Failed to scroll results list")
                             break
                         }
-                        delay(1000) // Wait for scroll to complete
+                        WhizAccessibilityService.getInstance()?.let {
+                            waitForScreen(it, "Maps results list to settle after scroll", ceilingMs = 2000, success = treeSettled())
+                        }
                     }
 
                     selectResult = selectLocationFromList(position, fragment, skipSponsored = true)
@@ -4592,7 +4605,13 @@ class ScreenAgentTools @Inject constructor(
                     val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     if (backPressed) {
                         Log.d(TAG, "Successfully pressed back button")
-                        delay(1000) // Wait for UI to update
+                        waitForScreen(
+                            accessibilityService,
+                            "Maps location details after back from directions input",
+                            packageName = GOOGLE_MAPS_PACKAGE,
+                            ceilingMs = 2000,
+                            success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                        )
                     } else {
                         Log.w(TAG, "Failed to press back button, continuing anyway")
                     }
@@ -9303,7 +9322,9 @@ class ScreenAgentTools @Inject constructor(
                     // Continue trying anyway - maybe the next one will work
                 }
 
-                delay(400) // Wait for scroll animation to complete
+                WhizAccessibilityService.getInstance()?.let {
+                    waitForScreen(it, "chat list to settle after scroll-to-top", ceilingMs = 800, success = treeSettled())
+                }
             }
 
             if (scrollAttempt >= maxScrollAttempts) {
@@ -9555,6 +9576,19 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
+    /**
+     * True only while an instrumented test is driving the app: the androidx.test classes are
+     * androidTest-only dependencies, so they are on the classpath only then.
+     */
+    private val isRunningUnderInstrumentation: Boolean by lazy {
+        try {
+            Class.forName("androidx.test.platform.app.InstrumentationRegistry")
+            true
+        } catch (e: ClassNotFoundException) {
+            false
+        }
+    }
+
     internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null, expectedFailure: Boolean = false) {
         try {
             val timestamp = System.currentTimeMillis()
