@@ -174,7 +174,7 @@ class GoogleMapsDirectionsTest : ToolFlowIntegrationTest() {
     fun testMapsDirections_search_select_transit_drive(): Unit = runBlocking {
         assertTrue(
             "Real accessibility service must be connected for the screen agent to drive Maps",
-            WhizAccessibilityService.isServiceConnected()
+            awaitAccessibilityServiceConnected()
         )
         val city = city
         Log.i(TAG, "city config: ${city.storeName} (tz=${TimeZone.getDefault().id})")

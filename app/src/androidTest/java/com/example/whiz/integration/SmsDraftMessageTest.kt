@@ -141,7 +141,7 @@ class SmsDraftMessageTest : ToolFlowIntegrationTest() {
     fun testSmsDraft_edit_send_andDelete(): Unit = runBlocking {
         assertTrue(
             "Real accessibility service must be connected for the screen agent to drive Messages",
-            WhizAccessibilityService.isServiceConnected()
+            awaitAccessibilityServiceConnected()
         )
 
         // ---- Launch in voice mode and capture the ChatViewModel ----

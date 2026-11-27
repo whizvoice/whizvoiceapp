@@ -145,7 +145,7 @@ for cls in "${CLASSES[@]}"; do
     find "$OUT/androidTest-results-$short" -name '*.xml' -print0 2>/dev/null \
         | xargs -0 grep -hoE '<testcase name="[^"]+" classname="[^"]+"|<skipped|<failure message="[^"]{0,200}' 2>/dev/null \
         | sed -E 's/<testcase name="([^"]+)" classname="[^"]+\.([^".]+)"/    TEST \2#\1/; s/<skipped.*/        -> SKIPPED/; s/<failure message="(.*)/        -> FAILED: \1/' || true
-    if ! grep -q "<testcase" "$OUT/androidTest-results-$short"/*.xml 2>/dev/null; then
+    if ! find "$OUT/androidTest-results-$short" -name '*.xml' -exec grep -q "<testcase" {} + 2>/dev/null; then
         echo "    (no JUnit testcase recorded; see gradle-output-$short.log)"
         grep -E "FAILED|Exception|Unable to|crash" "$OUT/gradle-output-$short.log" | head -5 || true
     fi

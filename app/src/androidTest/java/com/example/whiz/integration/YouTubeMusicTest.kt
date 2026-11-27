@@ -163,7 +163,7 @@ class YouTubeMusicTest : ToolFlowIntegrationTest() {
     fun testYouTubeMusic_play_queue_switch_podcast_pause(): Unit = runBlocking {
         assertTrue(
             "Real accessibility service must be connected for the screen agent to drive YouTube Music",
-            WhizAccessibilityService.isServiceConnected()
+            awaitAccessibilityServiceConnected()
         )
         voiceManager.setVoiceResponseEnabled(false)
         val chatViewModel = launchVoiceModeAndCaptureViewModel()

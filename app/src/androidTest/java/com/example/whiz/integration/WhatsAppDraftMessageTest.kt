@@ -134,7 +134,7 @@ class WhatsAppDraftMessageTest : ToolFlowIntegrationTest() {
     fun testWhatsAppDraft_edit_send_andDelete(): Unit = runBlocking {
         assertTrue(
             "Real accessibility service must be connected for the screen agent to drive WhatsApp",
-            WhizAccessibilityService.isServiceConnected()
+            awaitAccessibilityServiceConnected()
         )
         voiceManager.setVoiceResponseEnabled(false)
         val chatViewModel = launchVoiceModeAndCaptureViewModel()
