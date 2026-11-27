@@ -6923,29 +6923,6 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Wait for a specific element to appear in the UI hierarchy with a timeout.
-     * Returns true if the element was found within the timeout, false otherwise.
-     */
-    private suspend fun waitForElement(
-        accessibilityService: WhizAccessibilityService,
-        checkElement: (AccessibilityNodeInfo) -> Boolean,
-        timeoutMs: Long = 3000,
-        pollIntervalMs: Long = 200
-    ): Boolean {
-        // Shim over pollUntil: same fixed poll interval and ceiling as before, no tool deadline.
-        return pollUntil(
-            waitingFor = "element (predicate)",
-            deadline = null,
-            ceilingMs = timeoutMs,
-            initialDelayMs = pollIntervalMs,
-            maxIntervalMs = pollIntervalMs,
-            log = { Log.d(TAG, it) },
-            read = { accessibilityService.getCurrentRootNode() },
-            success = { root -> try { checkElement(root) } finally { root.recycle() } },
-        ) is WaitOutcome.Met
-    }
-
-    /**
      * Wait for YouTube Music search results to load by checking the UI for indicators.
      * Looks for filter chips (Songs, Videos, Artists) or search result rows with type indicators.
      * Returns true if search results appear, false if timeout.
