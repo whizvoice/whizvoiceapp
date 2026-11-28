@@ -26,6 +26,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ruthgrace/android_accessibility_tester
+          # conftest.py imports capture_failure/find_tester, which only exist on this branch
+          ref: restructure-api-v3
           path: android_accessibility_tester
 
       - name: Set up JDK 21

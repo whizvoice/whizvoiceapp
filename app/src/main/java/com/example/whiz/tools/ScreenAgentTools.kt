@@ -5971,38 +5971,58 @@ class ScreenAgentTools @Inject constructor(
             return false
         }
 
-        val directionNodes = freshRoot.findAccessibilityNodeInfosByText("Directions")
-        Log.d(TAG, "Found ${directionNodes.size} nodes matching 'Directions' via built-in search")
-
-        for (node in directionNodes) {
-            val desc = node.contentDescription?.toString() ?: ""
-            // Match the Directions button (content-desc starts with "Directions to") or text is "Directions"
-            if (desc.startsWith("Directions to", ignoreCase = true) || node.text?.toString() == "Directions") {
-                // If the node itself is clickable, click it directly
-                if (node.isClickable) {
-                    val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (clicked) {
-                        Log.d(TAG, "Clicked Directions button directly")
-                        directionNodes.forEach { it.recycle() }
-                        freshRoot.recycle()
-                        return true
+        // Returns true if one of the candidates is (or has a clickable ancestor that is) the
+        // Directions button and the click succeeded.
+        fun tryClickDirections(candidates: List<AccessibilityNodeInfo>, source: String): Boolean {
+            for (node in candidates) {
+                val desc = node.contentDescription?.toString() ?: ""
+                // Match the Directions button (content-desc starts with "Directions to") or text is "Directions"
+                if (desc.startsWith("Directions to", ignoreCase = true) || node.text?.toString() == "Directions") {
+                    // If the node itself is clickable, click it directly
+                    if (node.isClickable) {
+                        val clicked = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clicked) {
+                            Log.d(TAG, "Clicked Directions button directly ($source)")
+                            return true
+                        }
                     }
-                }
-                // Otherwise find clickable parent
-                val clickableNode = findClickableParent(node)
-                if (clickableNode != null) {
-                    val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    clickableNode.recycle()
-                    if (clicked) {
-                        Log.d(TAG, "Clicked Directions button via parent")
-                        directionNodes.forEach { it.recycle() }
-                        freshRoot.recycle()
-                        return true
+                    // Otherwise find clickable parent
+                    val clickableNode = findClickableParent(node)
+                    if (clickableNode != null) {
+                        val clicked = clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickableNode.recycle()
+                        if (clicked) {
+                            Log.d(TAG, "Clicked Directions button via parent ($source)")
+                            return true
+                        }
                     }
                 }
             }
+            return false
+        }
+
+        val directionNodes = freshRoot.findAccessibilityNodeInfosByText("Directions")
+        Log.d(TAG, "Found ${directionNodes.size} nodes matching 'Directions' via built-in search")
+
+        if (tryClickDirections(directionNodes, "built-in search")) {
+            directionNodes.forEach { it.recycle() }
+            freshRoot.recycle()
+            return true
         }
         directionNodes.forEach { it.recycle() }
+
+        // Fallback: manually walk the tree. Newer Google Maps place sheets render the
+        // Directions/Details/Save action row inside a Compose view (GmmComposeView), whose
+        // virtual nodes are not returned by findAccessibilityNodeInfosByText - that search
+        // comes back empty even though a TextView with text "Directions" is on screen.
+        val traversedNodes = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByText(freshRoot, "Directions", traversedNodes)
+        Log.d(TAG, "Found ${traversedNodes.size} nodes matching 'Directions' via tree traversal")
+
+        if (tryClickDirections(traversedNodes, "tree traversal")) {
+            freshRoot.recycle()
+            return true
+        }
         freshRoot.recycle()
 
         Log.w(TAG, "Could not find Directions button")
@@ -6976,12 +6996,21 @@ class ScreenAgentTools @Inject constructor(
             "YT Music search results (filter chips or a typed result row)",
             stillLoading = ytmSearchStillLoading,
             success = { rootNode ->
-                // Filter chips (Songs, Videos, Artists, Albums, ...) mean the results page is up
-                val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(YTM_CHIP_TEXT_ID)
-                val hasChips = !chipNodes.isNullOrEmpty()
-                if (hasChips) Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
-                chipNodes?.forEach { it.recycle() }
-                hasChips || hasYtmResultRow(rootNode)
+                // When the search deep link fires right after a song started, newer YT Music
+                // keeps the expanded Now Playing page on top for several seconds and nothing
+                // underneath is reachable. Clear it here so this wait observes the results
+                // arriving instead of spending its budget behind the player (phone dumps
+                // 1789-1798).
+                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+                    false
+                } else {
+                    // Filter chips (Songs, Videos, Artists, Albums, ...) mean the results page is up
+                    val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(YTM_CHIP_TEXT_ID)
+                    val hasChips = !chipNodes.isNullOrEmpty()
+                    if (hasChips) Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
+                    chipNodes?.forEach { it.recycle() }
+                    hasChips || hasYtmResultRow(rootNode)
+                }
             },
         )
     }
