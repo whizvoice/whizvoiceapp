@@ -5061,7 +5061,12 @@ class ScreenAgentTools @Inject constructor(
                     return@waitForCondition true
                 }
 
-                if (hasClickableStartButton(root)) {
+                // A Start button is in the tree before it works: while the directions sheet is
+                // still sliding in over the place page, the sheet reads "Finding best route...",
+                // the place page's own Start is still present and the sheet's Start sits below the
+                // screen; a tap then does nothing (2026-11-27 dumps gmaps_at_start_tap). Only
+                // accept Start once the route has been computed.
+                if (hasClickableStartButton(root) && !isRouteStillComputing(root)) {
                     Log.d(TAG, "Found Start button")
                     modeRootNode = root
                     return@waitForCondition true
@@ -5229,10 +5234,9 @@ class ScreenAgentTools @Inject constructor(
      * interactive yet, the tap no-ops and navigation never begins (bug 1410). We confirm by polling
      * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
      *
-     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 15s appReady + 10s
-     * directions waits above and the 6s post-mode-switch route wait in selectTransportModeAndStart
-     * (the ceilings are rarely hit together), worst case stays under the 40s server timeout
-     * (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
+     * Budget: the first verify window is at most 2500ms; the window after the re-tap runs to the
+     * tool's deadline (2500ms when there is none). The happy path returns the instant nav is
+     * detected.
      */
     private suspend fun verifyNavigationStarted(
         accessibilityService: WhizAccessibilityService,
@@ -5240,7 +5244,13 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         val maxTaps = 2  // the original Start tap already happened; allow one re-tap
         for (tap in 1..maxTaps) {
-            val confirmed = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2500, maxIntervalMs = 300) {
+            // Only the last tap may wait out the tool's budget. Earlier taps keep the short
+            // window: a Start tap that did nothing never starts navigation by waiting longer,
+            // and a budget-long wait here left the re-tap 0ms (2026-11-27, transit failed and
+            // the default-mode call took 37s).
+            val remainingMs = currentToolDeadline()?.remainingMs()
+            val verifyWindowMs = if (tap < maxTaps) minOf(2500L, remainingMs ?: 2500L) else (remainingMs ?: 2500L)
+            val confirmed = waitForCondition(maxWaitMs = verifyWindowMs, maxIntervalMs = 300) {
                 val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     ?: return@waitForCondition false
                 val state = detectGoogleMapsScreenState(node)
@@ -6148,8 +6158,27 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
+        // The transit route list has no Start button of its own, but the Driving sheet's Start
+        // stays in the tree after the tab switch and tapping it does nothing (2026-11-27: cost
+        // a 2.5s verify window every transit call). When we know the mode is transit (we were
+        // asked for it, or the caller saw the Transit tab selected) and the mode tabs are on
+        // screen, go straight to the route cards. Without the tabs we may be on a transit trip
+        // page whose Start is real, so that case still taps Start as before.
+        val knownTransit = mode?.lowercase() == "transit" || (mode == null && transitTabSelected)
+        val onTransitRouteList = knownTransit && run {
+            val root = accessibilityService.getCurrentRootNode() ?: return@run false
+            val tabs = root.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+            val hasTabs = tabs.isNotEmpty()
+            tabs.forEach { it.recycle() }
+            root.recycle()
+            hasTabs
+        }
+        if (onTransitRouteList) {
+            Log.d(TAG, "Transit route list: skipping the Start button, going to route cards")
+        }
+
         // Now click the Start button using built-in search (no depth limit)
-        val freshStartRoot = accessibilityService.getCurrentRootNode()
+        val freshStartRoot = if (onTransitRouteList) null else accessibilityService.getCurrentRootNode()
         if (freshStartRoot != null) {
             val startNodes = freshStartRoot.findAccessibilityNodeInfosByText("Start")
 
@@ -6195,7 +6224,9 @@ class ScreenAgentTools @Inject constructor(
             freshStartRoot.recycle()
         }
 
-        Log.w(TAG, "Could not find or click Start button")
+        if (!onTransitRouteList) {
+            Log.w(TAG, "Could not find or click Start button")
+        }
 
         // For transit mode, we need to click a route first, then find the Start button.
         // That also applies when no mode was requested and Maps opened on its remembered
