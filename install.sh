@@ -328,6 +328,34 @@ else
     log_with_time "📱 Please enable it in Settings → Accessibility → $DISPLAY_NAME"
 fi
 
+# An update discards the running wake-word service, and Android only lets a microphone
+# foreground service start while the app is on screen. Right after an install the process comes
+# back in the background (accessibility rebind), so the app's own restart is refused and the
+# wake word stays dead until the app is next opened. Open the production app once here so the
+# service gets its start, then check it. (Debug installs are left alone: they run before tests.)
+if [[ "$BUILD_TYPE" == "production" ]]; then
+    log_with_time ""
+    log_with_time "⏳ Opening $DISPLAY_NAME so the wake-word service can start..."
+    adb shell am start -n "$PACKAGE_NAME/com.example.whiz.MainActivity" >/dev/null 2>&1 || true
+
+    WAKE_WORD_RUNNING=false
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if adb shell dumpsys activity services "$PACKAGE_NAME/com.example.whiz.services.WakeWordService" 2>/dev/null \
+            | grep -q "isForeground=true"; then
+            WAKE_WORD_RUNNING=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ "$WAKE_WORD_RUNNING" == "true" ]]; then
+        log_with_time "✅ Wake-word service is running"
+    else
+        log_with_time "⚠️  WAKE-WORD SERVICE IS NOT RUNNING"
+        log_with_time "📱 If wake word is enabled, unlock the phone and open $DISPLAY_NAME, then check for the wake-word notification"
+    fi
+fi
+
 echo ""
 log_with_time "📋 Installed versions:"
 

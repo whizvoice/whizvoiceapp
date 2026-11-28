@@ -58,22 +58,13 @@ Crucially, screenshots from failed tests will show up in whizvoiceapp/test_scree
 
 ### Screen Agent Tests
 
-To run screen agent integration tests (which use ~/android_screenshot_testing/android_accessibility_tester.py):
+The screen agent tests (SMS, WhatsApp, YouTube Music, Google Maps directions, media duck) are
+instrumented tests under `app/src/androidTest/.../integration/`. They need a physical phone and are
+skipped on CI/emulator. Run just those five with:
 
 ```
-cd whizvoiceapp && ./venv/bin/pytest run_screen_agent_tests.py
+cd whizvoiceapp && ./run_tests_on_debug.sh --screen-agent
 ```
-
-The test script automatically sources `export_anthropic_key.sh` to load the API key.
-
-To run a specific test:
-```
-cd whizvoiceapp && ./venv/bin/pytest run_screen_agent_tests.py::test_google_maps_ui_dump -v
-```
-
-Test output for screen agent tests is stored in whizvoiceapp/screen_agent_test_output directory:
-- **screen_agent_logcat.log** - Android logcat output during screen agent test execution
-- Screenshots from tests are also saved in this directory
 
 ## Wake Word Detection Metrics
 

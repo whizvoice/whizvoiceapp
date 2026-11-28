@@ -75,6 +75,20 @@ SKIP_APP_INSTALL=false
 VERBOSE_LOGGING=false
 USE_EMULATOR=false
 SINGLE_TEST=""
+SCREEN_AGENT_ONLY=false
+
+# The five instrumented screen agent tests (see README "screen agent tests"). Each runs in its
+# own Gradle invocation, i.e. its own app process: they observe the Hilt-injected ToolExecutor
+# through the live app, and when several Hilt test classes share one process a MainActivity,
+# Service or static left by the previous class keeps the OLD component, so the tool runs but the
+# new class's collector never hears the result ("No ... result within 60000ms").
+SCREEN_AGENT_CLASSES=(
+    com.example.whiz.integration.MediaStreamDuckTest
+    com.example.whiz.integration.SmsDraftMessageTest
+    com.example.whiz.integration.WhatsAppDraftMessageTest
+    com.example.whiz.integration.GoogleMapsDirectionsTest
+    com.example.whiz.integration.YouTubeMusicTest
+)
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -94,6 +108,12 @@ while [[ $# -gt 0 ]]; do
             SINGLE_TEST="$2"
             shift 2
             ;;
+        --screen-agent)
+            # Only the SCREEN_AGENT_CLASSES, one Gradle invocation each.
+            SKIP_UNIT_TESTS=true
+            SCREEN_AGENT_ONLY=true
+            shift
+            ;;
         -v|--verbose)
             VERBOSE_LOGGING=true
             shift
@@ -104,7 +124,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--emulator] [-v|--verbose] [--test <test_class_or_method>]"
+            echo "Usage: $0 [--clean] [--skip-unit] [--skip-app-install] [--emulator] [-v|--verbose] [--test <test_class_or_method>] [--screen-agent]"
+            echo "  --screen-agent   Run only the five instrumented screen agent tests (implies --skip-unit)"
             echo "Examples:"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest#botInterruption_allowsImmediateMessageSending"
             echo "  $0 --test com.example.whiz.integration.ChatViewModelIntegrationTest"
@@ -286,24 +307,22 @@ parse_gradle_test_results() {
         # For integration tests, parse from android test runner output
         # Look for "Starting X tests on device" and individual test results
         
-        local total_tests=$(grep -o "Starting [0-9]\+ tests" "$log_file" | grep -o "[0-9]\+" | tail -1 | tr -d '\n\r ')
+        # Summed over invocations: the integration run is several Gradle passes (see run_integration_gradle_passes).
+        local total_tests=$(grep -o "Starting [0-9]\+ tests" "$log_file" | grep -o "[0-9]\+" | awk '{s += $1} END {print s+0}' | tr -d '\n\r ')
         
         # Count test results from android test runner - be specific to avoid gradle task results
         local failed_count=$(grep -c "FAILED.*\[" "$log_file" 2>/dev/null | tr -d '\n' || echo "0")
         local skipped_count=$(grep -c "SKIPPED.*\[" "$log_file" 2>/dev/null | tr -d '\n' || echo "0")
         
         # Also check for gradle's final test summary for android tests
-        local gradle_summary=$(grep -E "Tests run: [0-9]+.*Failures: [0-9]+.*Errors: [0-9]+" "$log_file" | tail -1)
+        local gradle_summary=$(grep -E "Tests run: [0-9]+.*Failures: [0-9]+.*Errors: [0-9]+" "$log_file")
         if [[ -n "$gradle_summary" ]]; then
-            # Parse gradle test summary format: "Tests run: X, Failures: Y, Errors: Z, Skipped: W"
-            local gradle_total=$(echo "$gradle_summary" | grep -o 'Tests run: [0-9]\+' | grep -o '[0-9]\+')
-            local gradle_failures=$(echo "$gradle_summary" | grep -o 'Failures: [0-9]\+' | grep -o '[0-9]\+')
-            local gradle_errors=$(echo "$gradle_summary" | grep -o 'Errors: [0-9]\+' | grep -o '[0-9]\+')
-            local gradle_skipped=$(echo "$gradle_summary" | grep -o 'Skipped: [0-9]\+' | grep -o '[0-9]\+')
-            
-            total_tests="${gradle_total:-$total_tests}"
-            failed_count="$((${gradle_failures:-0} + ${gradle_errors:-0}))"
-            skipped_count="${gradle_skipped:-$skipped_count}"
+            # Parse gradle test summary format: "Tests run: X, Failures: Y, Errors: Z, Skipped: W",
+            # summed over the lines (one per Gradle pass).
+            sum_field() { echo "$gradle_summary" | grep -o "$1: [0-9]\+" | grep -o '[0-9]\+' | awk '{s += $1} END {print s+0}'; }
+            total_tests="$(sum_field 'Tests run')"
+            failed_count="$(( $(sum_field 'Failures') + $(sum_field 'Errors') ))"
+            skipped_count="$(sum_field 'Skipped')"
         fi
         
         if [[ -n "$total_tests" && "$total_tests" -gt 0 ]]; then
@@ -546,6 +565,80 @@ pull_test_screenshots() {
 }
 
 # Function to run integration tests with clean log separation
+# Rewrites the accessibility setting so the system rebinds our service. Needed after every
+# instrumentation run: its force-stop leaves the service in the system's "crashed services"
+# list, enabled in settings but never rebound, not even when the app is launched.
+rebind_accessibility_service() {
+    local svc="com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"
+    local current others
+    current=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r')
+    others=$(echo "$current" | tr ':' '\n' | grep -v "^$svc$" | grep -v "^null$" | grep -v '^$' | paste -sd: -)
+    # `settings put` with an empty value fails ("Bad arguments"), so delete the row instead
+    # when ours is the only service; the point is to change the value so the system rebinds.
+    if [[ -z "$others" ]]; then
+        adb shell settings delete secure enabled_accessibility_services >/dev/null 2>&1 || true
+    else
+        adb shell settings put secure enabled_accessibility_services "$others" >/dev/null 2>&1 || true
+    fi
+    adb shell settings put secure enabled_accessibility_services "${others:+$others:}$svc" >/dev/null 2>&1 || true
+    adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1 || true
+}
+
+# One connectedDebugAndroidTest invocation. $1 is the instrumentation runner argument
+# ("class=X", "notClass=X,Y") or empty for everything. Output goes to test_gradle_output.log.
+# leaveApksInstalledAfterRun: by default AGP uninstalls the app and test APKs after the
+# run, which on Android 16 wipes enabled_accessibility_services and forces a fresh install
+# (and a manual accessibility re-enable) before the app can be used again.
+run_gradle_android_test() {
+    local runner_arg="$1"
+    local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
+    if [[ -n "$runner_arg" ]]; then
+        gradle_command="$gradle_command -Pandroid.testInstrumentationRunnerArguments.$runner_arg"
+    fi
+    echo "# ----- $gradle_command -----" >> test_gradle_output.log
+    $gradle_command >> test_gradle_output.log 2>&1
+}
+
+# Runs the integration tests as one or more Gradle invocations and returns non-zero if any failed.
+#  --test X       : one invocation, exactly as given.
+#  --screen-agent : one invocation per SCREEN_AGENT_CLASSES entry.
+#  (default)      : one invocation for everything except the screen agent classes, then one per class.
+# Each invocation is a fresh app process (see SCREEN_AGENT_CLASSES for why that matters). The
+# force-stop at the end of an instrumentation run leaves our accessibility service unbound, so the
+# setting is rewritten between invocations, while the app process is dead (see the note at the
+# rebind call after the suite for why it must be then).
+run_integration_gradle_passes() {
+    local rc=0
+    if [[ -n "$SINGLE_TEST" ]]; then
+        # Fix the test class path if it's missing the integration package
+        # This handles the case where WebSocketReconnectionTest is specified without the full package path
+        if [[ "$SINGLE_TEST" == "com.example.whiz.WebSocketReconnectionTest" ]]; then
+            SINGLE_TEST="com.example.whiz.integration.WebSocketReconnectionTest"
+            echo "🔧 Fixed test path: using $SINGLE_TEST" >> test_summary.log
+        fi
+        echo "🎯 Running single test: $SINGLE_TEST" >> test_summary.log
+        run_gradle_android_test "class=$SINGLE_TEST"
+        return $?
+    fi
+
+    if [[ "$SCREEN_AGENT_ONLY" != "true" ]]; then
+        local excluded
+        excluded=$(IFS=,; echo "${SCREEN_AGENT_CLASSES[*]}")
+        echo "🎯 Running all integration tests except the screen agent classes" >> test_summary.log
+        run_gradle_android_test "notClass=$excluded" || rc=1
+        rebind_accessibility_service
+    fi
+
+    local cls
+    for cls in "${SCREEN_AGENT_CLASSES[@]}"; do
+        log_with_time "🎯 Screen agent class in its own process: ${cls##*.}"
+        echo "🎯 Running screen agent class in its own process: $cls" >> test_summary.log
+        run_gradle_android_test "class=$cls" || rc=1
+        rebind_accessibility_service
+    done
+    return $rc
+}
+
 run_integration_tests_with_logcat() {
     local start_time=$(date +%s.%3N)
     log_with_time "🚀 Starting Integration Tests with Logcat..."
@@ -556,8 +649,10 @@ run_integration_tests_with_logcat() {
     echo "📋 INTEGRATION TEST EXECUTION" >> test_summary.log  
     if [[ -n "$SINGLE_TEST" ]]; then
         echo "Command: ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST" >> test_summary.log
+    elif [[ "$SCREEN_AGENT_ONLY" == "true" ]]; then
+        echo "Command: ./gradlew connectedDebugAndroidTest, once per screen agent class" >> test_summary.log
     else
-        echo "Command: ./gradlew connectedDebugAndroidTest" >> test_summary.log
+        echo "Command: ./gradlew connectedDebugAndroidTest (notClass=screen agent classes), then once per screen agent class" >> test_summary.log
     fi
     echo "Started: $(date +'%H:%M:%S.%3N')" >> test_summary.log
     echo "=================================================================================" >> test_summary.log
@@ -596,19 +691,7 @@ run_integration_tests_with_logcat() {
     # leaveApksInstalledAfterRun: by default AGP uninstalls the app and test APKs after the
     # run, which on Android 16 wipes enabled_accessibility_services and forces a fresh install
     # (and a manual accessibility re-enable) before the app can be used again.
-    local gradle_command="./gradlew connectedDebugAndroidTest --console=plain --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
-    if [[ -n "$SINGLE_TEST" ]]; then
-        # Fix the test class path if it's missing the integration package
-        # This handles the case where WebSocketReconnectionTest is specified without the full package path
-        if [[ "$SINGLE_TEST" == "com.example.whiz.WebSocketReconnectionTest" ]]; then
-            SINGLE_TEST="com.example.whiz.integration.WebSocketReconnectionTest"
-            echo "🔧 Fixed test path: using $SINGLE_TEST" >> test_summary.log
-        fi
-        gradle_command="$gradle_command -Pandroid.testInstrumentationRunnerArguments.class=$SINGLE_TEST"
-        echo "🎯 Running single test: $SINGLE_TEST" >> test_summary.log
-    fi
-    
-    if $gradle_command >> test_gradle_output.log 2>&1; then
+    if run_integration_gradle_passes; then
         # Stop logcat capture
         kill $logcat_pid 2>/dev/null || true
         sleep 1
@@ -1092,21 +1175,6 @@ set -e  # Re-enable exit on error
 # the app is launched. Rewriting the setting forces a rebind. This must run now, while the
 # app process is dead: once the app is listening (VOICE_COMMUNICATION mic), Play services'
 # in-call scam protection refuses to enable accessibility services.
-rebind_accessibility_service() {
-    local svc="com.example.whiz.debug/com.example.whiz.accessibility.WhizAccessibilityService"
-    local current others
-    current=$(adb shell settings get secure enabled_accessibility_services 2>/dev/null | tr -d '\r')
-    others=$(echo "$current" | tr ':' '\n' | grep -v "^$svc$" | grep -v "^null$" | grep -v '^$' | paste -sd: -)
-    # `settings put` with an empty value fails ("Bad arguments"), so delete the row instead
-    # when ours is the only service; the point is to change the value so the system rebinds.
-    if [[ -z "$others" ]]; then
-        adb shell settings delete secure enabled_accessibility_services >/dev/null 2>&1 || true
-    else
-        adb shell settings put secure enabled_accessibility_services "$others" >/dev/null 2>&1 || true
-    fi
-    adb shell settings put secure enabled_accessibility_services "${others:+$others:}$svc" >/dev/null 2>&1 || true
-    adb shell settings put secure accessibility_enabled 1 >/dev/null 2>&1 || true
-}
 log_with_time "🔁 Rebinding accessibility service after instrumentation..."
 rebind_accessibility_service
 

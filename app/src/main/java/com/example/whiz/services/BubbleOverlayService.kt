@@ -191,10 +191,36 @@ class BubbleOverlayService : Service() {
             context.startService(intent)
         }
 
-        fun stop(context: Context) {
+        /**
+         * Whether the next teardown should cancel in-flight tool executions. True for
+         * user-caused teardowns (main app resumed, auto-close, drag-dismiss). Tools that
+         * stop the bubble as part of their own work (close app, open app, permission
+         * prompt, restoring full-screen Whiz) set this false so they are not cancelled
+         * mid-flight. Reset to true in onDestroy.
+         */
+        @Volatile
+        private var cancelInFlightToolsOnStop = true
+
+        /**
+         * @param cancelInFlightTools false when a running tool is stopping the bubble as
+         * part of its own work and must survive the teardown (bug #1558).
+         */
+        fun stop(context: Context, cancelInFlightTools: Boolean = true) {
+            cancelInFlightToolsOnStop = cancelInFlightTools
             val intent = Intent(context, BubbleOverlayService::class.java)
             context.stopService(intent)
         }
+
+        /**
+         * Call before launching MainActivity from a running tool: its onResume will stop
+         * the bubble, and that stop must not cancel the tool.
+         */
+        fun markNextStopAsToolInitiated() {
+            cancelInFlightToolsOnStop = false
+        }
+
+        internal fun shouldCancelInFlightTools(dismissedByUser: Boolean, cancelToolsOnStop: Boolean): Boolean =
+            dismissedByUser || cancelToolsOnStop
 
         fun updateBotResponse(text: String) {
             Log.d(TAG, "[BUBBLE_UPDATE] updateBotResponse called with text: '$text'")
@@ -1098,11 +1124,21 @@ class BubbleOverlayService : Service() {
             inactivityTimer.cancel()
         }
 
-        // Cancel active server requests and in-flight tools only when user drag-dismissed the bubble
+        // Cancel active server requests only when the user drag-dismissed the bubble.
+        // Cancel in-flight tools on any user-caused teardown (drag-dismiss, main app resumed,
+        // auto-close): a screen-agent tool must not keep driving the screen once the bubble is
+        // gone (bug #1558: it backed out of Whiz itself). Tool-initiated stops are exempt.
         if (dismissedByUser) {
-            Log.d(TAG, "Bubble dismissed by user - cancelling active requests and tools")
+            Log.d(TAG, "Bubble dismissed by user - cancelling active requests")
             whizServerRepository.cancelAllActiveRequests()
+        }
+        val cancelTools = shouldCancelInFlightTools(dismissedByUser, cancelInFlightToolsOnStop)
+        cancelInFlightToolsOnStop = true
+        if (cancelTools) {
+            Log.d(TAG, "Bubble torn down by user action - cancelling in-flight tools")
             toolExecutor.cancelAllInFlight()
+        } else {
+            Log.d(TAG, "Bubble stopped by a running tool - leaving in-flight tools alone")
         }
 
         isActive = false

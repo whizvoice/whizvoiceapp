@@ -256,13 +256,18 @@ class WakeWordService : Service() {
         isAudioOnly = intent?.getBooleanExtra(EXTRA_AUDIO_ONLY, false) ?: false
         Log.d(TAG, "onStartCommand: isAudioOnly=$isAudioOnly")
 
+        val supervisor = WakeWordServiceSupervisor.from(this)
         try {
             startForeground(NOTIFICATION_ID, buildNotification())
         } catch (e: Exception) {
-            Log.w(TAG, "startForeground failed (likely missing RECORD_AUDIO permission) — stopping service", e)
+            // Android refuses a microphone foreground service when the app is not visible
+            // (or RECORD_AUDIO is missing). The supervisor retries on the next foreground.
+            Log.w(TAG, "startForeground failed — stopping service", e)
+            supervisor.onStartForegroundFailed(e)
             stopSelf()
             return START_NOT_STICKY
         }
+        supervisor.onStarted()
         if (isAudioOnly) {
             startAudioOnlyCapture()
         } else {

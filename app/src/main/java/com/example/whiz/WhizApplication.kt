@@ -13,7 +13,11 @@ import dagger.hilt.android.HiltAndroidApp
 import com.example.whiz.data.api.ApiService
 import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.services.SpeechRecognitionService
-import com.example.whiz.services.WakeWordService
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.example.whiz.services.WakeWordServiceSupervisor
+import com.example.whiz.services.WakeWordStartTrigger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,6 +36,9 @@ class WhizApplication : Application() {
 
     @Inject
     lateinit var wakeWordPreferences: WakeWordPreferences
+
+    @Inject
+    lateinit var wakeWordServiceSupervisor: WakeWordServiceSupervisor
 
     @Inject
     lateinit var audioFocusManager: com.example.whiz.services.AudioFocusManager
@@ -119,15 +126,15 @@ class WhizApplication : Application() {
 
         Log.d("WhizApplication", "Application created - AppLifecycleService will automatically track foreground/background state")
 
-        // Auto-start wake word service if enabled (recovers from process death)
-        try {
-            if (wakeWordPreferences.isEnabledOnce() && !WakeWordService.isRunning) {
-                Log.d("WhizApplication", "Wake word enabled, starting WakeWordService")
-                WakeWordService.start(this)
+        // Auto-start wake word service if enabled (recovers from process death). After a kill
+        // or reinstall the process usually comes back in the background, where Android refuses
+        // a microphone foreground service, so also retry each time the app becomes visible.
+        wakeWordServiceSupervisor.ensureRunning(WakeWordStartTrigger.PROCESS_START)
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                wakeWordServiceSupervisor.ensureRunning(WakeWordStartTrigger.APP_FOREGROUND)
             }
-        } catch (e: Exception) {
-            Log.e("WhizApplication", "Error checking wake word preference", e)
-        }
+        })
     }
 
     private fun uploadPendingCrashReport() {

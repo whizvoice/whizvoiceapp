@@ -68,6 +68,28 @@ class ScreenAgentTools @Inject constructor(
     private val maxRecentActions = 5
 
     companion object {
+        const val GOOGLE_MAPS_PACKAGE = "com.google.android.apps.maps"
+        const val YT_MUSIC_PACKAGE = "com.google.android.apps.youtube.music"
+
+        /** Time for the YT Music player to animate closed after Skip ad / Close ad panel / Minimize. */
+        private const val PLAYER_DISMISS_SETTLE_MS = 600L
+
+        /** Google Messages search box; present while on the search screen, gone once a conversation opens. */
+        private const val SMS_SEARCH_BOX_ID = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+
+        /** YT Music search page: the filter chips (Songs, Videos, ...) and the results spinner. */
+        private const val YTM_CHIP_TEXT_ID = "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
+        private const val YTM_LOAD_PROGRESS_ID = "com.google.android.apps.youtube.music:id/load_progress"
+
+        /**
+         * The Maps "unknown screen state" recovery presses the system Back button. That is
+         * only safe while Google Maps owns the foreground window; once Back has left Maps,
+         * another press lands on whatever is in front, including Whiz itself (bug #1558).
+         * A null package (no readable window) is treated as unsafe.
+         */
+        internal fun mapsRecoveryMayPressBack(foregroundPackage: CharSequence?): Boolean =
+            foregroundPackage?.toString() == GOOGLE_MAPS_PACKAGE
+
         /**
          * Single source of truth mapping a normalized (lowercased, trimmed) app name to a
          * package name. Shared by launchApp, resolvePackageName and closeOtherApp so the
@@ -233,14 +255,19 @@ class ScreenAgentTools @Inject constructor(
         val success: Boolean,
         val action: String,
         val chatName: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // The chat's label as WhatsApp shows it in the conversation header once selected
+        // (e.g. the saved contact name when the request was a phone number).
+        val chatNameOnScreen: String? = null
     )
 
     data class SMSResult(
         val success: Boolean,
         val action: String,
         val contactName: String? = null,
-        val error: String? = null
+        val error: String? = null,
+        // The conversation's label as Messages shows it in the header once selected.
+        val chatNameOnScreen: String? = null
     )
 
     data class DraftResult(
@@ -250,7 +277,12 @@ class ScreenAgentTools @Inject constructor(
         val overlayShown: Boolean = false,
         // Text actually rendered in the overlay (read back from the view), or null
         // if the overlay never became visible.
-        val displayedText: String? = null
+        val displayedText: String? = null,
+        // The chat as the caller asked for it (name or number) and as the app labels it on screen,
+        // plus whether this call had to navigate to it (false when already in the right chat).
+        val chatRequested: String? = null,
+        val chatNameOnScreen: String? = null,
+        val chatNavigated: Boolean = false
     )
 
     data class SendResult(
@@ -483,33 +515,29 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun enableSpeakerphoneViaAccessibility(
         accessibilityService: WhizAccessibilityService
     ): Boolean {
-        // Wait for the in-call UI to load after placing the call
-        for (attempt in 1..10) {
-            delay(500)
-            val root = accessibilityService.getCurrentRootNode() ?: continue
-            try {
+        // Wait for the in-call UI to load after placing the call (ceiling 5s, as before)
+        var clicked = false
+        val found = waitForScreen(
+            accessibilityService,
+            "dialer in-call Speaker button",
+            ceilingMs = 5000,
+            success = { root ->
                 val currentPackage = root.packageName?.toString() ?: ""
                 if (currentPackage != "com.google.android.dialer") {
-                    Log.d(TAG, "Speakerphone attempt $attempt: not in dialer ($currentPackage)")
-                    continue
+                    Log.d(TAG, "Speakerphone: not in dialer ($currentPackage)")
+                    return@waitForScreen false
                 }
-
                 // Find the Speaker button by content description
-                val speakerNode = findNodeByContentDesc(root, "Speaker")
-                if (speakerNode != null) {
-                    // The clickable parent is the checkable view wrapping the Speaker icon
-                    val clickTarget = findClickableParent(speakerNode) ?: speakerNode
-                    val clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.i(TAG, "Speaker button click result: $clicked (attempt $attempt)")
-                    return clicked
-                }
-                Log.d(TAG, "Speakerphone attempt $attempt: Speaker button not found yet")
-            } finally {
-                root.recycle()
-            }
-        }
-        Log.w(TAG, "Failed to find Speaker button after all attempts")
-        return false
+                val speakerNode = findNodeByContentDesc(root, "Speaker") ?: return@waitForScreen false
+                // The clickable parent is the checkable view wrapping the Speaker icon
+                val clickTarget = findClickableParent(speakerNode) ?: speakerNode
+                clicked = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.i(TAG, "Speaker button click result: $clicked")
+                true
+            },
+        )
+        if (!found) Log.w(TAG, "Failed to find Speaker button after all attempts")
+        return found && clicked
     }
 
     private fun findNodeByContentDesc(root: AccessibilityNodeInfo, desc: String): AccessibilityNodeInfo? {
@@ -837,12 +865,15 @@ class ScreenAgentTools @Inject constructor(
             val intent = Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             }
+            // MainActivity.onResume stops the bubble; that stop is this tool's doing, so it
+            // must not cancel the tool that is still finishing up.
+            BubbleOverlayService.markNextStopAsToolInitiated()
             context.startActivity(intent)
             Log.i(TAG, "restoreFullScreenWhiz: launched MainActivity")
         } catch (e: Exception) {
             Log.e(TAG, "restoreFullScreenWhiz: failed to launch MainActivity, falling back", e)
             try {
-                BubbleOverlayService.stop(context)
+                BubbleOverlayService.stop(context, cancelInFlightTools = false)
             } catch (_: Exception) {}
             try {
                 WhizAccessibilityService.getInstance()?.performGlobalActionSafely(
@@ -1012,7 +1043,7 @@ class ScreenAgentTools @Inject constructor(
             val dismissed = findAndDismissFromRecents(accessibilityService, appLabel)
 
             // Navigate back: restore full-screen Whiz or press Home
-            delay(300)
+            waitForScreen(accessibilityService, "recents to settle after dismissing '$appLabel'", ceilingMs = 600, success = treeSettled())
             if (needToRestoreFullScreen) {
                 Log.i(TAG, "closeOtherApp: restoring full-screen Whiz after recents operation")
                 restoreFullScreenWhiz()
@@ -1085,7 +1116,7 @@ class ScreenAgentTools @Inject constructor(
                     endY = screenHeight * 0.5f,
                     duration = 300
                 )
-                delay(500)
+                waitForScreen(accessibilityService, "recents carousel to settle after scroll", ceilingMs = 1000, success = treeSettled())
             }
 
             val rootNode = accessibilityService.getCurrentRootNode() ?: continue
@@ -1729,7 +1760,19 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== WhatsApp Specific Functions ==========
 
+    /**
+     * Selects a WhatsApp chat and, on success, records how WhatsApp labels it (see [chatAliases])
+     * and reports that label as [WhatsAppResult.chatNameOnScreen].
+     */
     suspend fun selectWhatsAppChat(chatName: String): WhatsAppResult {
+        val result = selectWhatsAppChatInternal(chatName)
+        if (!result.success) return result
+        val onScreen = WhizAccessibilityService.getInstance()?.let { awaitWhatsAppChatName(it) }
+        rememberChatAlias("com.whatsapp", chatName, onScreen)
+        return result.copy(chatNameOnScreen = onScreen)
+    }
+
+    private suspend fun selectWhatsAppChatInternal(chatName: String): WhatsAppResult {
         Log.i(TAG, "Attempting to select WhatsApp chat: $chatName")
         trackAction("selectWhatsAppChat: $chatName")
 
@@ -1746,7 +1789,9 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
+            WhizAccessibilityService.getInstance()?.let {
+                waitForAppReady(it, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+            }
 
             // Get accessibility service instance
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -1795,6 +1840,15 @@ class ScreenAgentTools @Inject constructor(
 
                     // Try to dismiss known dialogs before pressing back
                     if (currentScreen == WhatsAppScreen.UNKNOWN) {
+                        if (isRunningUnderInstrumentation) {
+                            // Tests only: record what the unrecognised screen was before backing out of it
+                            dumpUIHierarchy(
+                                rootNode,
+                                "whatsapp_back_unknown_attempt$backAttempt",
+                                "Unrecognised WhatsApp screen on back attempt $backAttempt",
+                                expectedFailure = true
+                            )
+                        }
                         if (dismissWhatsAppNotificationDialog(rootNode)) {
                             rootNode.recycle()
                             // Poll until we're on a known screen (chat list) instead of hard wait
@@ -1808,7 +1862,7 @@ class ScreenAgentTools @Inject constructor(
                     // Not on chat list yet, press back
                     Log.i(TAG, "Not on chat list, pressing back button")
                     accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                    delay(500) // Wait for navigation to complete
+                    waitForWhatsAppReady(accessibilityService, WhatsAppScreen.CHAT_LIST, maxWaitMs = 1500)
                 } else {
                     Log.w(TAG, "Could not get root node on back attempt $backAttempt")
                     delay(500)
@@ -1876,7 +1930,7 @@ class ScreenAgentTools @Inject constructor(
                             
                             if (success) {
                                 // Wait to verify we're in the chat
-                                val inChat = waitForCondition(maxWaitMs = 5000) {
+                                val inChat = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
                                     val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                     if (rootNode != null) {
                                         val screen = detectWhatsAppScreen(rootNode)
@@ -1925,8 +1979,7 @@ class ScreenAgentTools @Inject constructor(
                                             messageBtnNodes.forEach { it.recycle() }
                                             profileRoot.recycle()
                                             if (msgClicked) {
-                                                delay(1000)
-                                                val msgInChat = waitForCondition(maxWaitMs = 5000) {
+                                                val msgInChat = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
                                                     val r = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                                     if (r != null) {
                                                         val ic = detectWhatsAppScreen(r) == WhatsAppScreen.INSIDE_CHAT
@@ -1952,7 +2005,7 @@ class ScreenAgentTools @Inject constructor(
                                     // Fall back to pressing back and retrying
                                     Log.w(TAG, "No message_btn found, pressing back to retry")
                                     accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                                    delay(300)
+                                    waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)
                                 }
                             }
                             clickableNode.recycle()
@@ -1971,7 +2024,7 @@ class ScreenAgentTools @Inject constructor(
                         val clicked = accessibilityService.clickNode(firstResult)
                         if (clicked) {
                             // Wait to verify we entered a chat
-                            val inChat = waitForCondition(maxWaitMs = 2000) {
+                            val inChat = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2000) {
                                 val checkRoot = accessibilityService.getRootNodeForPackage("com.whatsapp")
                                 if (checkRoot != null) {
                                     val screen = detectWhatsAppScreen(checkRoot)
@@ -1995,7 +2048,7 @@ class ScreenAgentTools @Inject constructor(
                             } else {
                                 Log.w(TAG, "Clicked first search result but not in chat - pressing back to retry")
                                 accessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                                delay(300)
+                                waitForWhatsAppReady(accessibilityService, maxWaitMs = 1000)
                             }
                         }
                         firstResult.recycle()
@@ -2120,19 +2173,6 @@ class ScreenAgentTools @Inject constructor(
         trackAction("draftWhatsAppMessage: ${message.take(30)}...")
 
         try {
-            // Auto-launch WhatsApp if not already open
-            val launchResult = launchApp("WhatsApp", enableOverlay = true)
-            if (!launchResult.success) {
-                Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
-                return DraftResult(
-                    success = false,
-                    message = message,
-                    error = "Failed to open WhatsApp: ${launchResult.error}"
-                )
-            }
-            Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
-
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 logScreenAgentError(
@@ -2147,29 +2187,39 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // If chatName is provided, check if we need to navigate to that chat
-            if (chatName != null) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode != null) {
-                    val currentScreen = detectWhatsAppScreen(rootNode)
-                    val currentChatName = if (currentScreen == WhatsAppScreen.INSIDE_CHAT) {
-                        getCurrentWhatsAppChatName(rootNode)
-                    } else {
-                        null
-                    }
-                    rootNode.recycle()
+            // Updating an existing draft (previousText given) while the right chat is already open:
+            // skip the relaunch and the chat selection, as draftSMSMessage does. The server passes
+            // the original request (often a phone number) again; isSameChat also accepts the alias
+            // remembered when this chat was first selected, so the header name matches it.
+            var navigated = false
+            val chatBeforeLaunch = currentWhatsAppChatName(accessibilityService)
+            val updatingInPlace = previousText != null && chatBeforeLaunch != null &&
+                (chatName == null || isSameChat("com.whatsapp", chatName, chatBeforeLaunch))
+            if (updatingInPlace) {
+                Log.d(TAG, "Updating existing draft in place - already in chat: $chatBeforeLaunch")
+                // Dismiss the existing overlay first so the new draft's visibility is a fresh signal
+                // (otherwise displayed_text is read before the overlay re-renders).
+                MessageDraftOverlayService.stop(context)
+                awaitDraftOverlayGone()
+            } else {
+                // Auto-launch WhatsApp if not already open
+                val launchResult = launchApp("WhatsApp", enableOverlay = true)
+                if (!launchResult.success) {
+                    Log.e(TAG, "Failed to launch WhatsApp: ${launchResult.error}")
+                    return DraftResult(
+                        success = false,
+                        message = message,
+                        error = "Failed to open WhatsApp: ${launchResult.error}"
+                    )
+                }
+                Log.i(TAG, "WhatsApp launched successfully")
+                waitForAppReady(accessibilityService, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
 
-                    // Check if we're in the correct chat using normalized comparison
-                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005 (You)"
-                    val normalizedCurrent = normalizeChatName(currentChatName ?: "")
-                    val normalizedRequested = normalizeChatName(chatName)
-                    val isCorrectChat = currentChatName != null &&
-                        (normalizedCurrent == normalizedRequested ||
-                         normalizedCurrent.contains(normalizedRequested) ||
-                         normalizedRequested.contains(normalizedCurrent))
-
-                    if (!isCorrectChat) {
-                        Log.d(TAG, "Not in correct chat (current: $currentChatName [$normalizedCurrent], requested: $chatName [$normalizedRequested]). Auto-selecting chat...")
+                // If chatName is provided, check if we need to navigate to that chat
+                if (chatName != null) {
+                    val currentChatName = currentWhatsAppChatName(accessibilityService)
+                    if (!isSameChat("com.whatsapp", chatName, currentChatName)) {
+                        Log.d(TAG, "Not in correct chat (current: $currentChatName, requested: $chatName). Auto-selecting chat...")
                         val selectResult = selectWhatsAppChat(chatName)
                         if (!selectResult.success) {
                             return DraftResult(
@@ -2178,6 +2228,7 @@ class ScreenAgentTools @Inject constructor(
                                 error = "Could not open chat '$chatName': ${selectResult.error}"
                             )
                         }
+                        navigated = true
                         Log.d(TAG, "Successfully navigated to chat: $chatName")
                     } else {
                         Log.d(TAG, "Already in correct chat: $currentChatName")
@@ -2186,7 +2237,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Wait to ensure we're in a chat
-            waitForCondition(maxWaitMs = 1000) {
+            waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 1000) {
                 val rootNode = accessibilityService.getRootNodeForPackage("com.whatsapp")
                 if (rootNode != null) {
                     val isInChat = detectWhatsAppScreen(rootNode) == WhatsAppScreen.INSIDE_CHAT
@@ -2207,12 +2258,18 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "On contact profile page, clicking message button to open chat")
                     messageBtnNodes[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     messageBtnNodes.forEach { it.recycle() }
-                    delay(1500) // Wait for chat to open
+                    waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT,
+                        maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000)
                 } else {
                     messageBtnNodes?.forEach { it.recycle() }
                 }
                 preDraftRoot.recycle()
             }
+
+            // Report the chat as WhatsApp labels it, and remember that label for the request so a
+            // later draft by number recognises this chat without re-selecting it.
+            val onScreen = awaitWhatsAppChatName(accessibilityService)
+            if (chatName != null) rememberChatAlias("com.whatsapp", chatName, onScreen)
 
             // Hand off to the shared draft pipeline with WhatsApp-specific lookups.
             return draftMessageCore(DraftCoreInput(
@@ -2263,7 +2320,7 @@ class ScreenAgentTools @Inject constructor(
                 onInputNotFound = { root ->
                     dumpUIHierarchy(root, "whatsapp_input_not_found", "Could not find message input field in WhatsApp")
                 },
-            ))
+            )).copy(chatRequested = chatName, chatNameOnScreen = onScreen, chatNavigated = navigated)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting WhatsApp message", e)
@@ -2296,7 +2353,9 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "WhatsApp launched successfully")
-            delay(1000) // Wait for WhatsApp to fully load
+            WhizAccessibilityService.getInstance()?.let {
+                waitForAppReady(it, "com.whatsapp", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+            }
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -2309,7 +2368,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Wait to ensure we're in a chat and UI is ready
-            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT, maxWaitMs = 1500)) {
+            if (!waitForWhatsAppReady(accessibilityService, WhatsAppScreen.INSIDE_CHAT, maxWaitMs = currentToolDeadline()?.remainingMs() ?: 1500)) {
                 Log.w(TAG, "Not in a WhatsApp chat after waiting")
             }
 
@@ -2374,7 +2433,19 @@ class ScreenAgentTools @Inject constructor(
 
     // ========== SMS Specific Functions ==========
 
+    /**
+     * Selects a Messages conversation and, on success, records how Messages labels it (see
+     * [chatAliases]) and reports that label as [SMSResult.chatNameOnScreen].
+     */
     suspend fun selectSMSChat(contactName: String): SMSResult {
+        val result = selectSMSChatInternal(contactName)
+        if (!result.success) return result
+        val onScreen = WhizAccessibilityService.getInstance()?.let { awaitSMSContactName(it) }
+        rememberChatAlias("com.google.android.apps.messaging", contactName, onScreen)
+        return result.copy(chatNameOnScreen = onScreen)
+    }
+
+    private suspend fun selectSMSChatInternal(contactName: String): SMSResult {
         Log.i(TAG, "Attempting to select SMS chat: $contactName")
         trackAction("selectSMSChat: $contactName")
 
@@ -2391,23 +2462,23 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Messages app launched successfully")
-            delay(1000) // Wait for Messages to fully load
 
             // Wait for accessibility service to become available (with retry logic)
             // This handles cases where the service is temporarily disconnected
             var accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
                 Log.w(TAG, "Accessibility service not immediately available, waiting up to 2 seconds...")
-                val maxRetries = 8
-                var retryCount = 0
-                while (accessibilityService == null && retryCount < maxRetries) {
-                    delay(250) // Wait 250ms between retries
-                    accessibilityService = WhizAccessibilityService.getInstance()
-                    retryCount++
-                    if (accessibilityService != null) {
-                        Log.i(TAG, "Accessibility service became available after ${retryCount * 250}ms")
-                    }
-                }
+                pollUntil(
+                    waitingFor = "accessibility service instance",
+                    deadline = currentToolDeadline(),
+                    ceilingMs = 2000,
+                    initialDelayMs = 250,
+                    maxIntervalMs = 250,
+                    log = { Log.d(TAG, it) },
+                    read = { WhizAccessibilityService.getInstance() },
+                    success = { true },
+                )
+                accessibilityService = WhizAccessibilityService.getInstance()
 
                 if (accessibilityService == null) {
                     Log.e(TAG, "Accessibility service not available after waiting 2 seconds")
@@ -2455,7 +2526,7 @@ class ScreenAgentTools @Inject constructor(
                     // Not on conversation list yet, press back
                     Log.i(TAG, "Not on conversation list, pressing back button")
                     accessibilityService.performGlobalActionSafely(AccessibilityService.GLOBAL_ACTION_BACK)
-                    delay(500) // Wait for navigation to complete
+                    waitForScreen(accessibilityService, "Messages to settle after back", ceilingMs = 1000, success = treeSettled())
                 } else {
                     Log.w(TAG, "Could not get root node on back attempt $backAttempt")
                     delay(500)
@@ -2523,8 +2594,16 @@ class ScreenAgentTools @Inject constructor(
                             Log.d(TAG, "Click result: $success")
 
                             if (success) {
-                                // Wait longer for the screen to update (conversations list may take time to load)
-                                delay(1500)
+                                // Tapping a contact either opens the conversation or shows the
+                                // contact's conversations list; wait for whichever appears.
+                                waitForScreen(
+                                    accessibilityService,
+                                    "Messages conversation or conversations list after tapping '$contactName'",
+                                    success = { root ->
+                                        elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_header")(root) ||
+                                            elementGone(SMS_SEARCH_BOX_ID)(root)
+                                    },
+                                )
 
                                 // Check if we're on secondary search results screen
                                 // (Google Messages shows this when clicking a contact shows their conversations)
@@ -2562,7 +2641,11 @@ class ScreenAgentTools @Inject constructor(
 
                                                 if (clicked) {
                                                     Log.i(TAG, "✅ Clicked first conversation in list")
-                                                    delay(1200) // Wait for conversation to open
+                                                    waitForScreen(
+                                                        accessibilityService,
+                                                        "Messages conversation to open after tapping first conversation",
+                                                        success = elementGone(SMS_SEARCH_BOX_ID),
+                                                    )
                                                 } else {
                                                     Log.w(TAG, "Failed to click first conversation")
                                                 }
@@ -2580,8 +2663,8 @@ class ScreenAgentTools @Inject constructor(
                                     updatedRootNode.recycle()
                                 }
 
-                                // Validate we actually opened a conversation (not still in search)
-                                delay(800) // Wait for conversation to load
+                                // Validate we actually opened a conversation (not still in search);
+                                // the waits above already polled for the conversation screen.
                                 val validationRootNode = accessibilityService.getCurrentRootNode()
                                 if (validationRootNode != null) {
                                     // Check if we're still in search screen
@@ -2632,7 +2715,14 @@ class ScreenAgentTools @Inject constructor(
 
                     if (searchSuccess) {
                         Log.d(TAG, "Search performed, waiting for results...")
-                        delay(1500) // Wait for search results to appear
+                        waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$contactName'",
+                            success = { root ->
+                                elementPresent("com.google.android.apps.messaging:id/zero_state_search_results")(root) ||
+                                    elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results")(root)
+                            },
+                        )
 
                         // After search, click on the first search result
                         val searchResultRootNode = accessibilityService.getCurrentRootNode()
@@ -2674,12 +2764,19 @@ class ScreenAgentTools @Inject constructor(
                                     clickableItems.forEach { it.recycle() }
 
                                     if (clicked) {
-                                        delay(1500) // Wait for conversation to open
+                                        // Poll for the conversation to open instead of sleeping a fixed
+                                        // 1.5s: on a slow device the single check fired before Messages
+                                        // had rendered the conversation and we re-clicked the result.
+                                        waitForScreen(
+                                            accessibilityService,
+                                            "Messages conversation to open after tapping result",
+                                            success = elementGone(SMS_SEARCH_BOX_ID),
+                                        )
 
                                         // Validate we opened a conversation
                                         val validationRootNode = accessibilityService.getCurrentRootNode()
                                         if (validationRootNode != null) {
-                                            val searchBoxId = "com.google.android.apps.messaging:id/zero_state_search_box_auto_complete"
+                                            val searchBoxId = SMS_SEARCH_BOX_ID
                                             val stillInSearch = validationRootNode.findAccessibilityNodeInfosByViewId(searchBoxId)
 
                                             if (stillInSearch == null || stillInSearch.isEmpty()) {
@@ -2727,7 +2824,11 @@ class ScreenAgentTools @Inject constructor(
 
                                                         if (clickedAgain) {
                                                             Log.d(TAG, "Clicked result again, waiting for conversation...")
-                                                            delay(1500)
+                                                            waitForScreen(
+                                                                accessibilityService,
+                                                                "Messages conversation to open after second tap",
+                                                                success = elementGone(SMS_SEARCH_BOX_ID),
+                                                            )
 
                                                             // Final validation
                                                             val finalRootNode = accessibilityService.getCurrentRootNode()
@@ -2846,7 +2947,9 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
                 Log.i(TAG, "Messages app launched successfully")
-                delay(1000) // Wait for Messages to fully load
+                WhizAccessibilityService.getInstance()?.let {
+                    waitForAppReady(it, "com.google.android.apps.messaging", maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000)
+                }
             }
 
             val accessibilityService = WhizAccessibilityService.getInstance()
@@ -2866,35 +2969,25 @@ class ScreenAgentTools @Inject constructor(
             // If contactName is provided, check if we need to navigate to that conversation
             // SKIP this check if previousText is provided - that means we're updating an existing draft
             // and we're already in the correct conversation
+            var navigated = false
             if (contactName != null && previousText == null) {
-                val rootNode = accessibilityService.getCurrentRootNode()
-                if (rootNode != null) {
-                    val currentContactName = getCurrentSMSContactName(rootNode)
-                    rootNode.recycle()
-
-                    // Check if we're in the correct conversation using normalized comparison
-                    // This handles different phone number formats like "+1(628)209-9005" vs "+1 (628) 209-9005"
-                    val normalizedCurrent = normalizeChatName(currentContactName ?: "")
-                    val normalizedRequested = normalizeChatName(contactName)
-                    val isCorrectConversation = currentContactName != null &&
-                        (normalizedCurrent == normalizedRequested ||
-                         normalizedCurrent.contains(normalizedRequested) ||
-                         normalizedRequested.contains(normalizedCurrent))
-
-                    if (!isCorrectConversation) {
-                        Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName [$normalizedCurrent], requested: $contactName [$normalizedRequested]). Auto-selecting contact...")
-                        val selectResult = selectSMSChat(contactName)
-                        if (!selectResult.success) {
-                            return DraftResult(
-                                success = false,
-                                message = message,
-                                error = "Could not open conversation with '$contactName': ${selectResult.error}"
-                            )
-                        }
-                        Log.d(TAG, "Successfully navigated to SMS conversation: $contactName")
-                    } else {
-                        Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
+                val currentContactName = currentSMSContactName(accessibilityService)
+                // Normalized comparison plus remembered aliases (a request by number vs the saved
+                // contact name in the header); see isSameChat.
+                if (!isSameChat("com.google.android.apps.messaging", contactName, currentContactName)) {
+                    Log.d(TAG, "Not in correct SMS conversation (current: $currentContactName, requested: $contactName). Auto-selecting contact...")
+                    val selectResult = selectSMSChat(contactName)
+                    if (!selectResult.success) {
+                        return DraftResult(
+                            success = false,
+                            message = message,
+                            error = "Could not open conversation with '$contactName': ${selectResult.error}"
+                        )
                     }
+                    navigated = true
+                    Log.d(TAG, "Successfully navigated to SMS conversation: $contactName")
+                } else {
+                    Log.d(TAG, "Already in correct SMS conversation: $currentContactName")
                 }
             } else if (previousText != null) {
                 Log.d(TAG, "Skipping contact navigation check - updating existing draft (previousText provided)")
@@ -2902,7 +2995,7 @@ class ScreenAgentTools @Inject constructor(
                 // Dismiss the existing overlay first so we can find the actual input field
                 Log.d(TAG, "Dismissing existing draft overlay before updating")
                 MessageDraftOverlayService.stop(context)
-                delay(500) // Wait for overlay to fully dismiss
+                awaitDraftOverlayGone()
                 Log.d(TAG, "Overlay dismissed, proceeding to find input field")
             }
 
@@ -2931,6 +3024,11 @@ class ScreenAgentTools @Inject constructor(
                 checkRoot.recycle()
             }
 
+            // Report the conversation as Messages labels it, and remember that label for the
+            // request so a later draft by number recognises this conversation.
+            val onScreen = awaitSMSContactName(accessibilityService)
+            if (contactName != null) rememberChatAlias("com.google.android.apps.messaging", contactName, onScreen)
+
             // Hand off to the shared draft pipeline with SMS-specific lookups.
             return draftMessageCore(DraftCoreInput(
                 targetPackage = "com.google.android.apps.messaging",
@@ -2941,7 +3039,7 @@ class ScreenAgentTools @Inject constructor(
                 onInputNotFound = { root ->
                     dumpUIHierarchy(root, "sms_input_not_found", "Could not find message input field in SMS app")
                 },
-            ))
+            )).copy(chatRequested = contactName, chatNameOnScreen = onScreen, chatNavigated = navigated)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error drafting SMS message", e)
@@ -3083,8 +3181,8 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait a bit to ensure UI is ready (matches the prior 500ms settle).
-            delay(500)
+            // Let the Messages screen settle before reading the input/send button.
+            waitForScreen(accessibilityService, "Messages screen to settle before send", ceilingMs = 1000, success = treeSettled())
 
             val coreResult = sendDraftedMessageCore(SendCoreInput(
                 targetPackage = "com.google.android.apps.messaging",
@@ -3419,8 +3517,15 @@ class ScreenAgentTools @Inject constructor(
                 "top_app_bar_title_row"
             )
             for (topAppBarTitleId in topAppBarTitleIds) {
-                val topAppBarTitleNodes = rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)
-                if (topAppBarTitleNodes != null && topAppBarTitleNodes.isNotEmpty()) {
+                // findAccessibilityNodeInfosByViewId is a framework View search and never matches a
+                // Compose testTag (the bare "top_app_bar_title_row" Messages exposes since its Compose
+                // rewrite), so fall back to walking the tree and comparing viewIdResourceName.
+                val topAppBarTitleNodes: MutableList<AccessibilityNodeInfo> =
+                    rootNode.findAccessibilityNodeInfosByViewId(topAppBarTitleId)?.toMutableList() ?: mutableListOf()
+                if (topAppBarTitleNodes.isEmpty()) {
+                    findNodesByResourceId(rootNode, topAppBarTitleId, topAppBarTitleNodes)
+                }
+                if (topAppBarTitleNodes.isNotEmpty()) {
                     val titleRow = topAppBarTitleNodes[0]
                     // Find the TextView child that contains the contact name
                     val name = findTextInChildren(titleRow)
@@ -3516,8 +3621,7 @@ class ScreenAgentTools @Inject constructor(
 
                 if (clicked) {
                     Log.d(TAG, "Clicked search button, waiting for search field...")
-                    // Wait for search field to appear
-                    delay(800)
+                    waitForScreen(accessibilityService, "Messages search field after tapping Search", success = elementPresent(SMS_SEARCH_BOX_ID))
 
                     // Now find the search input field and enter text
                     val searchRootNode = accessibilityService.getCurrentRootNode()
@@ -3553,7 +3657,7 @@ class ScreenAgentTools @Inject constructor(
                         }
 
                         if (clicked) {
-                            delay(800)
+                            waitForScreen(accessibilityService, "Messages search field after tapping Search (by text)", success = elementPresent(SMS_SEARCH_BOX_ID))
                             val searchRootNode = accessibilityService.getCurrentRootNode()
                             if (searchRootNode != null) {
                                 val searchFieldEntered = enterSMSSearchText(searchRootNode, searchQuery)
@@ -3615,20 +3719,12 @@ class ScreenAgentTools @Inject constructor(
                     // Wait for search results to appear
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
-                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                            if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
-                                currentRoot.recycle()
-                                hasResults
-                            } else {
-                                false
-                            }
-                        }
+                        val resultsAppeared = waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$searchQuery'",
+                            packageName = "com.google.android.apps.messaging",
+                            success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                        )
                         if (resultsAppeared) {
                             Log.i(TAG, "✅ Search results appeared")
                         } else {
@@ -3640,21 +3736,14 @@ class ScreenAgentTools @Inject constructor(
                                 val process = Runtime.getRuntime().exec("input keyevent 66")
                                 process.waitFor()
                                 Log.d(TAG, "Sent KEYCODE_ENTER (66) as fallback")
-                                delay(500)
 
                                 // Wait for results again
-                                val resultsAppearedAfterKeycode = waitForCondition(maxWaitMs = 3000) {
-                                    val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                                    if (currentRoot != null) {
-                                        val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                            "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                        )
-                                        val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                        chatResults?.forEach { it.recycle() }
-                                        currentRoot.recycle()
-                                        hasResults
-                                    } else false
-                                }
+                                val resultsAppearedAfterKeycode = waitForScreen(
+                                    accessibilityService,
+                                    "Messages search results for '$searchQuery' after KEYCODE_ENTER",
+                                    packageName = "com.google.android.apps.messaging",
+                                    success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                                )
 
                                 if (resultsAppearedAfterKeycode) {
                                     Log.i(TAG, "✅ Search results appeared after KEYCODE_ENTER fallback")
@@ -3704,7 +3793,6 @@ class ScreenAgentTools @Inject constructor(
                         val process = Runtime.getRuntime().exec("input keyevent 66") // KEYCODE_ENTER
                         process.waitFor()
                         Log.d(TAG, "Sent KEYCODE_ENTER (66) - fallback")
-                        delay(500)
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to send KEYCODE_ENTER: ${e.message}")
                         return false
@@ -3714,20 +3802,12 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "Waiting for search results (fallback path)...")
                     val accessibilityService = WhizAccessibilityService.getInstance()
                     if (accessibilityService != null) {
-                        val resultsAppeared = waitForCondition(maxWaitMs = 3000) {
-                            val currentRoot = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
-                            if (currentRoot != null) {
-                                val chatResults = currentRoot.findAccessibilityNodeInfosByViewId(
-                                    "com.google.android.apps.messaging:id/zero_state_search_chat_results"
-                                )
-                                val hasResults = chatResults != null && chatResults.isNotEmpty()
-                                chatResults?.forEach { it.recycle() }
-                                currentRoot.recycle()
-                                hasResults
-                            } else {
-                                false
-                            }
-                        }
+                        val resultsAppeared = waitForScreen(
+                            accessibilityService,
+                            "Messages search results for '$searchQuery'",
+                            packageName = "com.google.android.apps.messaging",
+                            success = elementPresent("com.google.android.apps.messaging:id/zero_state_search_chat_results"),
+                        )
 
                         if (resultsAppeared) {
                             Log.d(TAG, "Search results appeared after KEYCODE_ENTER (fallback path)")
@@ -3806,7 +3886,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = ytMusicPackage,
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
 
             if (!appReady) {
@@ -3825,12 +3905,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // 4. Wait for search results to load and click the first result
-            //    Use a longer wait since the deep link needs to load the search page
+            // 4. Wait for search results to load and click the first result. Bounded by the
+            //    tool's budget: the deep link's search page can take well over 8s on a slow
+            //    device, and the poll can tell "still loading" from "no matching row".
             val clickResult = waitForAndClickPlayButton(
                 accessibilityService = accessibilityService,
                 contentType = contentType,
-                maxWaitMs = 8000
             )
 
             if (!clickResult.clicked) {
@@ -3858,8 +3938,14 @@ class ScreenAgentTools @Inject constructor(
             // 5. Verify playback started
             val isSongType = contentType.lowercase() in listOf("song", "video")
             if (isSongType) {
-                // For songs/videos, wait for mini player to show the playing title
-                delay(2000)
+                // For songs/videos, wait for the mini player to show the playing title. Ceiling
+                // 5s: a track that never starts should still be reported, not waited out.
+                waitForScreen(
+                    accessibilityService,
+                    "YT Music mini player to show a title after clicking '$query'",
+                    ceilingMs = 5000,
+                    success = { getMiniPlayerTitle(it) != null },
+                )
                 val verifyRoot = accessibilityService.getCurrentRootNode()
                 var nowPlaying: String? = null
                 var nowPlayingArtist: String? = null
@@ -3945,12 +4031,12 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Ceiling 8s: this can cold-launch YT Music, and slow cold-start / network handoff
-            // can blow past a shorter wait. Intelligent wait returns as soon as it foregrounds.
+            // Bounded by the tool's budget: this can cold-launch YT Music, and slow cold-start /
+            // network handoff blew past the old 8s. Intelligent wait returns as soon as it foregrounds.
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = ytMusicPackage,
-                maxWaitMs = 8000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 8000
             )
 
             if (!appReady) {
@@ -3971,7 +4057,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Deep link needs time to load the search page; wait for the results list
             // (filter chips) rather than a fixed delay.
-            val searchResultsReady = waitForSearchResultsToLoad(accessibilityService, maxWaitMs = 8000)
+            val searchResultsReady = waitForSearchResultsToLoad(accessibilityService)
             if (!searchResultsReady) {
                 Log.w(TAG, "Search results did not load in time after deep link")
             }
@@ -3982,37 +4068,42 @@ class ScreenAgentTools @Inject constructor(
                 val ytMusicTabClicked = ensureYTMusicTabSelected(tabRootNode, accessibilityService)
                 if (ytMusicTabClicked) {
                     Log.d(TAG, "Switched to YT Music tab for queueing")
-                    delay(500) // Wait for tab content to load
+                    waitForScreen(accessibilityService, "YT Music tab content to settle", ceilingMs = 1000, success = treeSettled())
                 }
                 tabRootNode.recycle()
             }
 
-            // Poll for context menu button to appear and open it (max 3 seconds)
-            val menuSuccess = waitForAndOpenContextMenu(accessibilityService, maxWaitMs = 3000)
+            // Open the Action menu on a row that matches the query. The filter chips above can
+            // belong to the PREVIOUS search (the deep link lands on the old page first), so this
+            // polls (within the tool's budget) for a matching row instead of taking the first
+            // song row on screen.
+            val menu = waitForAndOpenContextMenu(accessibilityService, query = query)
 
-            if (!menuSuccess) {
+            if (!menu.opened) {
                 // Dump UI for debugging (the openYouTubeMusicContextMenu already dumps, but this captures the full state)
                 val debugRoot = accessibilityService.getCurrentRootNode()
                 if (debugRoot != null) {
-                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu", "Could not find or open context menu after waiting for search results")
+                    dumpUIHierarchy(debugRoot, "ytmusic_queue_no_context_menu", "No song result matching '$query' to open the context menu on")
                     debugRoot.recycle()
                 }
                 return MusicActionResult(
                     success = false,
                     action = "queue_song",
                     query = query,
-                    error = "Could not find or open context menu after waiting for search results"
+                    error = "No search result matching '$query' appeared to add to the queue"
                 )
             }
 
-            // Poll for "Add to queue" option to appear and click it (max 1.5 seconds)
-            val queueSuccess = waitForAndClickAddToQueue(accessibilityService, maxWaitMs = 1500)
+            // Poll for "Add to queue" option to appear and click it
+            val queueSuccess = waitForAndClickAddToQueue(accessibilityService)
 
             return if (queueSuccess) {
                 MusicActionResult(
                     success = true,
                     action = "queue_song",
-                    query = query
+                    query = query,
+                    nowPlaying = menu.title,
+                    nowPlayingArtist = menu.artist
                 )
             } else {
                 // Note: waitForAndClickAddToQueue already dumps UI when it fails
@@ -4060,7 +4151,15 @@ class ScreenAgentTools @Inject constructor(
                 KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
             )
 
-            delay(300) // Brief wait for state to update
+            // Wait for the playback state to flip (ceiling 1s), rather than reading it after a guess
+            pollUntil(
+                waitingFor = "media playback state to flip after KEYCODE_MEDIA_PLAY_PAUSE",
+                deadline = currentToolDeadline(),
+                ceilingMs = 1000,
+                log = { Log.d(TAG, it) },
+                read = { Unit },
+                success = { audioManager.isMusicActive != wasPlaying },
+            )
 
             val isNowPlaying = audioManager.isMusicActive
             val newState = if (isNowPlaying) "playing" else "paused"
@@ -4141,7 +4240,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
             if (!appReady) {
                 val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -4202,7 +4301,7 @@ class ScreenAgentTools @Inject constructor(
                         Log.w(TAG, "Failed to scroll results list")
                         break
                     }
-                    delay(1000) // Wait for scroll to complete
+                    waitForScreen(accessibilityService, "Maps results list to settle after scroll", ceilingMs = 2000, success = treeSettled())
                 }
 
                 val listRootNode = accessibilityService.getCurrentRootNode()
@@ -4215,7 +4314,7 @@ class ScreenAgentTools @Inject constructor(
                 listRootNode.recycle()
 
                 // Wait for screen to change from SEARCH_RESULTS_LIST
-                waitForCondition(maxWaitMs = 2000) {
+                waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2000) {
                     val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     if (node != null) {
                         val state = detectGoogleMapsScreenState(node)
@@ -4386,7 +4485,9 @@ class ScreenAgentTools @Inject constructor(
                             Log.w(TAG, "Failed to scroll results list")
                             break
                         }
-                        delay(1000) // Wait for scroll to complete
+                        WhizAccessibilityService.getInstance()?.let {
+                            waitForScreen(it, "Maps results list to settle after scroll", ceilingMs = 2000, success = treeSettled())
+                        }
                     }
 
                     selectResult = selectLocationFromList(position, fragment, skipSponsored = true)
@@ -4415,7 +4516,14 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
 
-                delay(1500) // Wait for location details screen to fully load
+                WhizAccessibilityService.getInstance()?.let { svc ->
+                    waitForScreen(
+                        svc,
+                        "Maps location details after selecting '$search'",
+                        packageName = GOOGLE_MAPS_PACKAGE,
+                        success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                    )
+                }
             }
 
             // Auto-launch Google Maps if not already open
@@ -4430,7 +4538,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            // (no sleep here: waitForAppReady below polls for Maps to foreground)
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -4502,7 +4610,13 @@ class ScreenAgentTools @Inject constructor(
                     val backPressed = accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                     if (backPressed) {
                         Log.d(TAG, "Successfully pressed back button")
-                        delay(1000) // Wait for UI to update
+                        waitForScreen(
+                            accessibilityService,
+                            "Maps location details after back from directions input",
+                            packageName = GOOGLE_MAPS_PACKAGE,
+                            ceilingMs = 2000,
+                            success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                        )
                     } else {
                         Log.w(TAG, "Failed to press back button, continuing anyway")
                     }
@@ -4534,7 +4648,7 @@ class ScreenAgentTools @Inject constructor(
                         }
 
                         // Wait for screen state to change from ACTIVE_NAVIGATION
-                        exitedNavigation = waitForCondition(maxWaitMs = 2000) {
+                        exitedNavigation = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2000) {
                             val checkNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                             if (checkNode != null) {
                                 val newState = detectGoogleMapsScreenState(checkNode)
@@ -4581,7 +4695,7 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "On transit route detail, pressing back once to return to mode selection")
                     rootNode.recycle()
                     accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                    val reachedDirections = waitForCondition(maxWaitMs = 3000) {
+                    val reachedDirections = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000) {
                         val checkNode = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                         if (checkNode != null) {
                             val state = detectGoogleMapsScreenState(checkNode)
@@ -4592,7 +4706,15 @@ class ScreenAgentTools @Inject constructor(
                     if (!reachedDirections) {
                         Log.w(TAG, "Did not reach directions screen after back from transit route detail, pressing back once more")
                         accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                        delay(1500)
+                        waitForScreen(
+                            accessibilityService,
+                            "Maps directions or location details after second back from transit detail",
+                            packageName = GOOGLE_MAPS_PACKAGE,
+                            success = {
+                                val state = detectGoogleMapsScreenState(it)
+                                state == GoogleMapsScreenState.DIRECTIONS_INPUT || state == GoogleMapsScreenState.LOCATION_DETAILS
+                            },
+                        )
                     }
                 }
                 GoogleMapsScreenState.SEARCH_RESULTS_LIST -> {
@@ -4607,7 +4729,7 @@ class ScreenAgentTools @Inject constructor(
                         Log.d(TAG, "No non-sponsored results found, trying to scroll")
                         val scrollSuccess = scrollGoogleMapsResultsList()
                         if (scrollSuccess) {
-                            delay(1000)
+                            waitForScreen(accessibilityService, "Maps results list to settle after scroll", ceilingMs = 2000, success = treeSettled())
                             val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                             if (!retryResult.success) {
                                 val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -4637,7 +4759,12 @@ class ScreenAgentTools @Inject constructor(
                         }
                     }
                     Log.i(TAG, "Successfully selected location from search results list")
-                    delay(1500) // Wait for location details to load
+                    waitForScreen(
+                        accessibilityService,
+                        "Maps location details after selecting a search result",
+                        packageName = GOOGLE_MAPS_PACKAGE,
+                        success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                    )
                 }
                 GoogleMapsScreenState.FILTERS_SCREEN -> {
                     // Accidentally on the Filters screen - press Back to close it
@@ -4677,15 +4804,28 @@ class ScreenAgentTools @Inject constructor(
                 }
                 else -> {
                     Log.w(TAG, "Unknown screen state, pressing back to try to reach a known state")
+                    var foregroundPackage: CharSequence? = rootNode.packageName
                     rootNode.recycle()
 
-                    // Press back multiple times if needed to get to a known screen
+                    // Press back multiple times if needed to get to a known screen.
+                    // Only while Maps is still in front: once Back has left Maps, another press
+                    // would land on the launcher or on Whiz itself (bug #1558).
                     for (backAttempt in 1..3) {
+                        if (!mapsRecoveryMayPressBack(foregroundPackage)) {
+                            Log.w(TAG, "Google Maps left the foreground (now: $foregroundPackage); aborting back-press recovery")
+                            return MapsActionResult(
+                                success = false,
+                                action = "get_directions",
+                                mode = mode,
+                                error = "Google Maps left the foreground while recovering from an unknown screen (now showing: ${foregroundPackage ?: "no window"})"
+                            )
+                        }
                         accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-                        delay(1000)
+                        waitForScreen(accessibilityService, "Maps to settle after back (unknown-screen recovery)", ceilingMs = 2000, success = treeSettled())
 
                         // Re-detect screen state after pressing back
                         val newRootNode = accessibilityService.getCurrentRootNode()
+                        foregroundPackage = newRootNode?.packageName
                         if (newRootNode != null) {
                             val newScreenState = detectGoogleMapsScreenState(newRootNode)
                             Log.d(TAG, "After back press $backAttempt, new screen state: $newScreenState")
@@ -4790,7 +4930,7 @@ class ScreenAgentTools @Inject constructor(
                     Log.d(TAG, "No non-sponsored results found after handling, trying to scroll")
                     val scrollSuccess = scrollGoogleMapsResultsList()
                     if (scrollSuccess) {
-                        delay(1000)
+                        waitForScreen(accessibilityService, "Maps results list to settle after scroll (post-handling)", ceilingMs = 2000, success = treeSettled())
                         val retryResult = selectLocationFromList(position = 1, fragment = null, skipSponsored = true)
                         if (!retryResult.success) {
                             val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -4820,7 +4960,12 @@ class ScreenAgentTools @Inject constructor(
                     }
                 }
                 Log.i(TAG, "Successfully selected location from search results list after handling")
-                delay(1500) // Wait for location details to load
+                waitForScreen(
+                    accessibilityService,
+                    "Maps location details after selecting a search result (post-handling)",
+                    packageName = GOOGLE_MAPS_PACKAGE,
+                    success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+                )
 
                 // Get fresh root node after selecting
                 currentRootNode = accessibilityService.getCurrentRootNode()
@@ -4889,8 +5034,7 @@ class ScreenAgentTools @Inject constructor(
                     )
                 }
 
-                // Wait for directions screen to appear with Start button
-                delay(1500)
+                // (no sleep here: the directions-screen wait below polls for the Start button)
             } else {
                 currentRootNode.recycle()
             }
@@ -4901,6 +5045,10 @@ class ScreenAgentTools @Inject constructor(
             var modeRootNode: AccessibilityNodeInfo? = null
             var terminalFailureReason: String? = null
             var clickedHomeForOrigin = false
+            // Set when the wait ends on the Transit tab. Maps rebuilds the tab strip while routes
+            // load and isSelected is not always set on the fresh nodes, so a later re-read can miss
+            // it (2026-11-17: tab proven Transit here, re-read 4ms later saw nothing, tool failed).
+            var transitSelectedDuringWait = false
 
             val waitSucceeded = waitForCondition(maxWaitMs = 10_000, maxIntervalMs = 500) {
                 val root = accessibilityService.getCurrentRootNode() ?: return@waitForCondition false
@@ -4913,7 +5061,12 @@ class ScreenAgentTools @Inject constructor(
                     return@waitForCondition true
                 }
 
-                if (hasClickableStartButton(root)) {
+                // A Start button is in the tree before it works: while the directions sheet is
+                // still sliding in over the place page, the sheet reads "Finding best route...",
+                // the place page's own Start is still present and the sheet's Start sits below the
+                // screen; a tap then does nothing (2026-11-27 dumps gmaps_at_start_tap). Only
+                // accept Start once the route has been computed.
+                if (hasClickableStartButton(root) && !isRouteStillComputing(root)) {
                     Log.d(TAG, "Found Start button")
                     modeRootNode = root
                     return@waitForCondition true
@@ -4930,6 +5083,7 @@ class ScreenAgentTools @Inject constructor(
 
                     if (currentMode?.contains("Transit", ignoreCase = true) == true) {
                         Log.d(TAG, "Found mode tabs in transit mode (no Start button expected)")
+                        transitSelectedDuringWait = true
                         modeRootNode = root
                         return@waitForCondition true
                     }
@@ -5005,7 +5159,7 @@ class ScreenAgentTools @Inject constructor(
             }
 
             // Select transportation mode if needed and click Start
-            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService)
+            val started = selectTransportModeAndStart(modeRootNode, mode, accessibilityService, transitSelectedDuringWait)
             modeRootNode.recycle()
 
             if (!started) {
@@ -5080,10 +5234,9 @@ class ScreenAgentTools @Inject constructor(
      * interactive yet, the tap no-ops and navigation never begins (bug 1410). We confirm by polling
      * for ACTIVE_NAVIGATION (drive/walk/bike) or TRANSIT_ROUTE_DETAIL (transit).
      *
-     * Budget: up to 2 verify windows x 2500ms = 5s worst case. Combined with the 15s appReady + 10s
-     * directions waits above and the 6s post-mode-switch route wait in selectTransportModeAndStart
-     * (the ceilings are rarely hit together), worst case stays under the 40s server timeout
-     * (whizvoice/maps_tools.py:563). The happy path returns the instant nav is detected.
+     * Budget: the first verify window is at most 2500ms; the window after the re-tap runs to the
+     * tool's deadline (2500ms when there is none). The happy path returns the instant nav is
+     * detected.
      */
     private suspend fun verifyNavigationStarted(
         accessibilityService: WhizAccessibilityService,
@@ -5091,7 +5244,13 @@ class ScreenAgentTools @Inject constructor(
     ): Boolean {
         val maxTaps = 2  // the original Start tap already happened; allow one re-tap
         for (tap in 1..maxTaps) {
-            val confirmed = waitForCondition(maxWaitMs = 2500, maxIntervalMs = 300) {
+            // Only the last tap may wait out the tool's budget. Earlier taps keep the short
+            // window: a Start tap that did nothing never starts navigation by waiting longer,
+            // and a budget-long wait here left the re-tap 0ms (2026-11-27, transit failed and
+            // the default-mode call took 37s).
+            val remainingMs = currentToolDeadline()?.remainingMs()
+            val verifyWindowMs = if (tap < maxTaps) minOf(2500L, remainingMs ?: 2500L) else (remainingMs ?: 2500L)
+            val confirmed = waitForCondition(maxWaitMs = verifyWindowMs, maxIntervalMs = 300) {
                 val node = accessibilityService.getRootNodeForPackage("com.google.android.apps.maps")
                     ?: return@waitForCondition false
                 val state = detectGoogleMapsScreenState(node)
@@ -5140,7 +5299,7 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
             Log.i(TAG, "Google Maps launched successfully")
-            delay(1000) // Wait for Google Maps to fully load
+            // (no sleep here: waitForAppReady below polls for Maps to foreground)
 
             val accessibilityService = WhizAccessibilityService.getInstance()
             if (accessibilityService == null) {
@@ -5156,7 +5315,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000
             )
 
             if (!appReady) {
@@ -5273,7 +5432,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 3000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000
             )
 
             if (!appReady) {
@@ -5321,8 +5480,13 @@ class ScreenAgentTools @Inject constructor(
                 )
             }
 
-            // Wait for location to load
-            delay(1000)
+            // Wait for the location details page to load
+            waitForScreen(
+                accessibilityService,
+                "Maps location details after selecting from list",
+                packageName = GOOGLE_MAPS_PACKAGE,
+                success = { detectGoogleMapsScreenState(it) == GoogleMapsScreenState.LOCATION_DETAILS },
+            )
 
             // Extract the actual address from the place details
             val finalRootNode = accessibilityService.getCurrentRootNode()
@@ -5381,7 +5545,7 @@ class ScreenAgentTools @Inject constructor(
             val appReady = waitForAppReady(
                 accessibilityService = accessibilityService,
                 packageName = "com.google.android.apps.maps",
-                maxWaitMs = 5000
+                maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000
             )
             if (!appReady) {
                 val dumpRoot = accessibilityService.getCurrentRootNode()
@@ -5917,7 +6081,17 @@ class ScreenAgentTools @Inject constructor(
         return computing
     }
 
-    private suspend fun selectTransportModeAndStart(rootNode: AccessibilityNodeInfo, mode: String?, accessibilityService: WhizAccessibilityService): Boolean {
+    /**
+     * [transitTabSelected]: the caller already saw the Transit tab selected on the directions
+     * screen (see the wait in getGoogleMapsDirections). Used only when [mode] is null, where it
+     * takes precedence over re-reading the tab, which is unreliable while Maps is loading routes.
+     */
+    private suspend fun selectTransportModeAndStart(
+        rootNode: AccessibilityNodeInfo,
+        mode: String?,
+        accessibilityService: WhizAccessibilityService,
+        transitTabSelected: Boolean = false,
+    ): Boolean {
         // If no mode specified, just click Start without changing the mode
         if (mode == null) {
             Log.d(TAG, "No mode specified, using currently selected mode")
@@ -5982,7 +6156,7 @@ class ScreenAgentTools @Inject constructor(
                         // + 10s directions waits above and the 5s verify budget below, worst case
                         // stays under the 40s server timeout (whizvoice/maps_tools.py).
                         if (modeChanged) {
-                            val routeReady = waitForCondition(maxWaitMs = 6000, maxIntervalMs = 300) {
+                            val routeReady = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 6000, maxIntervalMs = 300) {
                                 val root = accessibilityService.getCurrentRootNode()
                                     ?: return@waitForCondition false
                                 val ready = when {
@@ -6004,8 +6178,27 @@ class ScreenAgentTools @Inject constructor(
             }
         }
 
+        // The transit route list has no Start button of its own, but the Driving sheet's Start
+        // stays in the tree after the tab switch and tapping it does nothing (2026-11-27: cost
+        // a 2.5s verify window every transit call). When we know the mode is transit (we were
+        // asked for it, or the caller saw the Transit tab selected) and the mode tabs are on
+        // screen, go straight to the route cards. Without the tabs we may be on a transit trip
+        // page whose Start is real, so that case still taps Start as before.
+        val knownTransit = mode?.lowercase() == "transit" || (mode == null && transitTabSelected)
+        val onTransitRouteList = knownTransit && run {
+            val root = accessibilityService.getCurrentRootNode() ?: return@run false
+            val tabs = root.findAccessibilityNodeInfosByViewId("com.google.android.apps.maps:id/directions_mode_tabs")
+            val hasTabs = tabs.isNotEmpty()
+            tabs.forEach { it.recycle() }
+            root.recycle()
+            hasTabs
+        }
+        if (onTransitRouteList) {
+            Log.d(TAG, "Transit route list: skipping the Start button, going to route cards")
+        }
+
         // Now click the Start button using built-in search (no depth limit)
-        val freshStartRoot = accessibilityService.getCurrentRootNode()
+        val freshStartRoot = if (onTransitRouteList) null else accessibilityService.getCurrentRootNode()
         if (freshStartRoot != null) {
             val startNodes = freshStartRoot.findAccessibilityNodeInfosByText("Start")
 
@@ -6051,21 +6244,23 @@ class ScreenAgentTools @Inject constructor(
             freshStartRoot.recycle()
         }
 
-        Log.w(TAG, "Could not find or click Start button")
+        if (!onTransitRouteList) {
+            Log.w(TAG, "Could not find or click Start button")
+        }
 
         // For transit mode, we need to click a route first, then find the Start button.
         // That also applies when no mode was requested and Maps opened on its remembered
         // Transit tab: the screen is a transit route list with no Start button, so the
         // only way forward is the transit path (dumps 1578/1579/1630/1668-1670, bugs
         // 1581/1632/1672 — "Selected null mode but Start button not found").
-        val transitSelectedByDefault = mode == null && run {
+        val transitSelectedByDefault = mode == null && (transitTabSelected || run {
             val root = accessibilityService.getCurrentRootNode() ?: return@run false
             val selected = currentlySelectedTransportMode(root)
             root.recycle()
             selected?.contains("Transit", ignoreCase = true) == true
-        }
+        })
         if (transitSelectedByDefault) {
-            Log.d(TAG, "No mode requested and Maps is on the Transit tab; taking the transit path")
+            Log.d(TAG, "No mode requested and Maps is on the Transit tab (seen during wait: $transitTabSelected); taking the transit path")
         }
         if (mode?.lowercase() == "transit" || transitSelectedByDefault) {
             Log.d(TAG, "Transit mode: looking for route options to click first")
@@ -6085,7 +6280,7 @@ class ScreenAgentTools @Inject constructor(
             var tripCardNodeList = emptyList<AccessibilityNodeInfo>()
             var transitRoot: AccessibilityNodeInfo? = null
             var transitFailure: String? = null
-            waitForCondition(maxWaitMs = 5000, maxIntervalMs = 300) {
+            waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000, maxIntervalMs = 300) {
                 val root = accessibilityService.getCurrentRootNode()
                     ?: return@waitForCondition false
 
@@ -6789,90 +6984,66 @@ class ScreenAgentTools @Inject constructor(
     }
 
     /**
-     * Wait for a specific element to appear in the UI hierarchy with a timeout.
-     * Returns true if the element was found within the timeout, false otherwise.
-     */
-    private suspend fun waitForElement(
-        accessibilityService: WhizAccessibilityService,
-        checkElement: (AccessibilityNodeInfo) -> Boolean,
-        timeoutMs: Long = 3000,
-        pollIntervalMs: Long = 200
-    ): Boolean {
-        val startTime = System.currentTimeMillis()
-
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                try {
-                    if (checkElement(rootNode)) {
-                        rootNode.recycle()
-                        return true
-                    }
-                } finally {
-                    rootNode.recycle()
-                }
-            }
-            delay(pollIntervalMs)
-        }
-
-        return false
-    }
-
-    /**
      * Wait for YouTube Music search results to load by checking the UI for indicators.
      * Looks for filter chips (Songs, Videos, Artists) or search result rows with type indicators.
      * Returns true if search results appear, false if timeout.
      */
     private suspend fun waitForSearchResultsToLoad(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000
     ): Boolean {
-        var collapseAttempts = 0
-        return waitForElement(accessibilityService, { rootNode ->
-            // When the search deep link fires right after a song started, newer YT Music
-            // keeps the expanded Now Playing page on top for several seconds and nothing
-            // underneath is reachable. Minimize it here so this wait actually observes the
-            // results arriving, instead of burning its whole budget behind the player
-            // (phone dumps 1789-1798: player full-screen for the first ~2s of the later
-            // 3s menu loop, results still loading when that loop expired).
-            if (collapseAttempts < 2 &&
-                collapseYouTubeMusicExpandedPlayerIfPresent(rootNode, accessibilityService)) {
-                collapseAttempts++
-                return@waitForElement false
-            }
-            // Check for filter chips (Songs, Videos, Artists, Albums, etc.)
-            val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(
-                "com.google.android.apps.youtube.music:id/chip_cloud_chip_text"
-            )
-            if (chipNodes != null && chipNodes.isNotEmpty()) {
-                // Found filter chips - search results are loaded
-                Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
-                chipNodes.forEach { it.recycle() }
-                return@waitForElement true
-            }
-            chipNodes?.forEach { it.recycle() }
+        return waitForScreen(
+            accessibilityService,
+            "YT Music search results (filter chips or a typed result row)",
+            stillLoading = ytmSearchStillLoading,
+            success = { rootNode ->
+                // When the search deep link fires right after a song started, newer YT Music
+                // keeps the expanded Now Playing page on top for several seconds and nothing
+                // underneath is reachable. Clear it here so this wait observes the results
+                // arriving instead of spending its budget behind the player (phone dumps
+                // 1789-1798).
+                if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+                    false
+                } else {
+                    // Filter chips (Songs, Videos, Artists, Albums, ...) mean the results page is up
+                    val chipNodes = rootNode.findAccessibilityNodeInfosByViewId(YTM_CHIP_TEXT_ID)
+                    val hasChips = !chipNodes.isNullOrEmpty()
+                    if (hasChips) Log.d(TAG, "Found ${chipNodes.size} filter chips - search results loaded")
+                    chipNodes?.forEach { it.recycle() }
+                    hasChips || hasYtmResultRow(rootNode)
+                }
+            },
+        )
+    }
 
-            // Alternatively, look for search result rows with type indicators ("Song •", "Video •", etc.)
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
-
+    /** True when the tree has a result row with a type indicator ("Song •", "Video •", ...). */
+    private fun hasYtmResultRow(rootNode: AccessibilityNodeInfo): Boolean {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        try {
             for (node in allNodes) {
                 val contentDesc = node.contentDescription?.toString() ?: ""
                 val text = node.text?.toString() ?: ""
-                // Check if this looks like a search result type indicator
                 if (contentDesc.startsWith("Song •") || contentDesc.startsWith("Video •") ||
                     contentDesc.startsWith("Album •") || contentDesc.startsWith("Episode •") ||
                     text.startsWith("Song •") || text.startsWith("Video •") ||
                     text.startsWith("Album •") || text.startsWith("Episode •")) {
                     Log.d(TAG, "Found search result with type indicator: $contentDesc$text")
-                    allNodes.forEach { it.recycle() }
-                    return@waitForElement true
+                    return true
                 }
             }
+            return false
+        } finally {
             allNodes.forEach { it.recycle() }
+        }
+    }
 
-            false
-        }, timeoutMs = maxWaitMs, pollIntervalMs = 200)
+    /**
+     * YT Music is still fetching results: its load spinner is up and no result row has
+     * rendered yet. (On the CI emulator this state lasted the whole 8s of the old poll; the
+     * rows arrived a second later and the retry succeeded. Dump 1916.)
+     */
+    private val ytmSearchStillLoading: (AccessibilityNodeInfo) -> Boolean = { root ->
+        elementPresent(YTM_LOAD_PROGRESS_ID)(root) && !hasYtmResultRow(root)
     }
 
     /**
@@ -6904,6 +7075,101 @@ class ScreenAgentTools @Inject constructor(
         } finally {
             waitButtons.forEach { it.recycle() }
         }
+    }
+
+    /**
+     * If YouTube Music's expanded ("now playing") player is covering the screen, clear it so the
+     * deep-linked search results underneath become reachable. Returns true when something was
+     * tapped, so the caller re-reads the tree before matching rows.
+     *
+     * Seen live on 2026-11-26 (ui dumps ytmusic_no_action_menu / ytmusic_play_deeplink_no_result):
+     * a video ad break ("Sponsored · 1 of 2 · 0:43") keeps the player expanded over the search
+     * page, with a companion ad panel ("Close ad panel") in its lower half and, once skippable,
+     * a `skip_ad_button`. In that order: skip the ad when allowed, close the companion panel,
+     * then collapse the player with `player_collapse_button` ("Minimize"). Each control is
+     * matched by resource id and by content description so older/newer builds still work.
+     */
+    private fun dismissYouTubeMusicExpandedPlayer(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService
+    ): Boolean {
+        if (!isYouTubeMusicPlayerExpanded(rootNode)) return false
+        var tapped = false
+        val skipAd = findFirstYouTubeMusicControl(rootNode, "$YT_MUSIC_PACKAGE:id/skip_ad_button", "Skip ad")
+        if (skipAd != null) {
+            Log.d(TAG, "Expanded player shows a skippable ad; tapping Skip ad")
+            tapped = accessibilityService.clickNode(skipAd) || tapped
+            skipAd.recycle()
+        }
+        val closePanel = findFirstYouTubeMusicControl(rootNode, null, "Close ad panel")
+        if (closePanel != null) {
+            Log.d(TAG, "Expanded player shows a companion ad panel; tapping Close ad panel")
+            tapped = accessibilityService.clickNode(closePanel) || tapped
+            closePanel.recycle()
+        }
+        val collapse = findFirstYouTubeMusicControl(rootNode, "$YT_MUSIC_PACKAGE:id/player_collapse_button", "Minimize")
+        if (collapse != null) {
+            Log.d(TAG, "Collapsing the expanded player to reach the search results")
+            tapped = accessibilityService.clickNode(collapse) || tapped
+            collapse.recycle()
+        }
+        if (!tapped) Log.w(TAG, "Expanded player detected but none of Skip ad / Close ad panel / Minimize could be tapped")
+        return tapped
+    }
+
+    /** The full-screen player is up when its collapse button or an ad progress label is in the tree. */
+    private fun isYouTubeMusicPlayerExpanded(rootNode: AccessibilityNodeInfo): Boolean {
+        for (id in listOf("player_collapse_button", "ad_progress_text", "skip_ad_button")) {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId("$YT_MUSIC_PACKAGE:id/$id")
+            val found = !nodes.isNullOrEmpty()
+            nodes?.forEach { it.recycle() }
+            if (found) return true
+        }
+        return false
+    }
+
+    /** A clickable node by resource id, else by exact content description; null when absent. */
+    private fun findFirstYouTubeMusicControl(
+        rootNode: AccessibilityNodeInfo,
+        resourceId: String?,
+        contentDesc: String
+    ): AccessibilityNodeInfo? {
+        if (resourceId != null) {
+            val byId = rootNode.findAccessibilityNodeInfosByViewId(resourceId)
+            if (!byId.isNullOrEmpty()) {
+                val pick = byId.firstOrNull { it.isClickable } ?: byId[0]
+                byId.forEach { if (it != pick) it.recycle() }
+                return pick
+            }
+        }
+        val byDesc = mutableListOf<AccessibilityNodeInfo>()
+        findNodesByContentDesc(rootNode, contentDesc, byDesc)
+        val pick = byDesc.firstOrNull { it.isClickable } ?: byDesc.firstOrNull()
+        byDesc.forEach { if (it != pick) it.recycle() }
+        return pick
+    }
+
+    /**
+     * Every node in the tree except those inside the player (`player_page`, which holds the
+     * now-playing view and its up-next list). Row matchers for search results must use this:
+     * the player's up-next rows look like "Song •" result rows, so matching against them queues
+     * or plays whatever is already in the queue while reporting success for the user's query.
+     */
+    private fun collectSearchResultCandidates(rootNode: AccessibilityNodeInfo): MutableList<AccessibilityNodeInfo> {
+        val allNodes = mutableListOf<AccessibilityNodeInfo>()
+        collectAllNodes(rootNode, allNodes)
+        val playerRoots = rootNode.findAccessibilityNodeInfosByViewId("$YT_MUSIC_PACKAGE:id/player_page")
+        if (playerRoots.isNullOrEmpty()) return allNodes
+        val inPlayer = mutableListOf<AccessibilityNodeInfo>()
+        playerRoots.forEach { collectAllNodes(it, inPlayer) }
+        playerRoots.forEach { it.recycle() }
+        // AccessibilityNodeInfo.equals compares source/window ids, so containment works across copies.
+        val inPlayerSet = inPlayer.toSet()
+        val (excluded, kept) = allNodes.partition { it in inPlayerSet }
+        if (excluded.isNotEmpty()) Log.d(TAG, "Ignoring ${excluded.size} nodes inside the YT Music player when matching results")
+        excluded.forEach { it.recycle() }
+        inPlayer.forEach { it.recycle() }
+        return kept.toMutableList()
     }
 
     private fun ensureYTMusicTabSelected(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
@@ -6968,35 +7234,52 @@ class ScreenAgentTools @Inject constructor(
     private suspend fun waitForAndClickPlayButton(
         accessibilityService: WhizAccessibilityService,
         contentType: String = "song",
-        maxWaitMs: Long = 3000
     ): ClickResultInfo {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                // ANR overlay steals focus mid-search; tap Wait and re-poll so the next
-                // iteration sees YT Music's real window rather than the system dialog.
-                if (dismissSystemAnrDialogIfPresent(rootNode)) {
-                    rootNode.recycle()
-                    delay(pollIntervalMs)
-                    continue
-                }
-
+        var clicked = ClickResultInfo(false, null)
+        val outcome = pollUntil(
+            waitingFor = "YT Music '$contentType' result row to click",
+            deadline = currentToolDeadline(),
+            initialDelayMs = 200,
+            log = { Log.d(TAG, it) },
+            read = { readYtmSearchRoot(accessibilityService) },
+            success = { rootNode ->
                 val result = clickFirstYouTubeMusicResult(rootNode, accessibilityService, contentType)
-                rootNode.recycle()
-
                 if (result.clicked) {
-                    Log.d(TAG, "Result found and clicked after ${System.currentTimeMillis() - startTime}ms")
-                    return result
+                    clicked = result
+                    rootNode.recycle()
                 }
-            }
-            delay(pollIntervalMs)
+                result.clicked
+            },
+            stillLoading = { rootNode ->
+                val loading = ytmSearchStillLoading(rootNode)
+                rootNode.recycle()
+                loading
+            },
+        )
+        if (outcome is WaitOutcome.TimedOut) {
+            Log.w(TAG, "Play button not found after ${outcome.elapsedMs}ms" +
+                if (outcome.wasLoading) " (results were still loading)" else "")
         }
+        return clicked
+    }
 
-        Log.w(TAG, "Play button not found after waiting ${maxWaitMs}ms")
-        return ClickResultInfo(false, null)
+    /**
+     * Root of the YT Music search page for one poll, or null (= not ready yet) after clearing
+     * whatever was in the way: the system ANR overlay (tap Wait, never Close app) or an
+     * ad-break expanded player. Clearing takes a moment, so the poll backs off before re-reading.
+     */
+    private suspend fun readYtmSearchRoot(accessibilityService: WhizAccessibilityService): AccessibilityNodeInfo? {
+        val rootNode = accessibilityService.getCurrentRootNode() ?: return null
+        if (dismissSystemAnrDialogIfPresent(rootNode)) {
+            rootNode.recycle()
+            return null
+        }
+        if (dismissYouTubeMusicExpandedPlayer(rootNode, accessibilityService)) {
+            rootNode.recycle()
+            delay(PLAYER_DISMISS_SETTLE_MS)
+            return null
+        }
+        return rootNode
     }
 
     /**
@@ -7005,65 +7288,36 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndOpenContextMenu(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 3000
-    ): Boolean {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-        var collapseAttempts = 0
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                // Newer YT Music versions keep the expanded Now Playing page on top after the
-                // search deep link (e.g. right after playing a song), hiding the search results.
-                // Minimize it first so the result rows become reachable. Older versions that
-                // already show results simply won't have a visible collapse button.
-                if (collapseAttempts < 2 && collapseYouTubeMusicExpandedPlayerIfPresent(rootNode, accessibilityService)) {
-                    collapseAttempts++
+        query: String? = null,
+    ): ContextMenuOpen {
+        var opened = ContextMenuOpen(false)
+        val outcome = pollUntil(
+            waitingFor = "YT Music result row matching '${query ?: "any song"}' to open its Action menu",
+            deadline = currentToolDeadline(),
+            initialDelayMs = 200,
+            log = { Log.d(TAG, it) },
+            read = { readYtmSearchRoot(accessibilityService) },
+            success = { rootNode ->
+                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService, query)
+                if (result.opened) {
+                    opened = result
                     rootNode.recycle()
-                    delay(800)
-                    continue
                 }
-                val result = openYouTubeMusicContextMenu(rootNode, accessibilityService)
+                result.opened
+            },
+            stillLoading = { rootNode ->
+                val loading = ytmSearchStillLoading(rootNode)
                 rootNode.recycle()
-
-                if (result) {
-                    Log.d(TAG, "Context menu opened after ${System.currentTimeMillis() - startTime}ms")
-                    delay(500) // Small delay so user can see the menu appear
-                    return true
-                }
-            }
-            delay(pollIntervalMs)
-        }
-
-        Log.w(TAG, "Context menu not found after waiting ${maxWaitMs}ms")
-        return false
-    }
-
-    /**
-     * If YouTube Music's expanded Now Playing page is covering the screen, click its
-     * "Minimize" (player_collapse_button) to reveal the content underneath.
-     * Returns true if a collapse click was performed.
-     */
-    private fun collapseYouTubeMusicExpandedPlayerIfPresent(
-        rootNode: AccessibilityNodeInfo,
-        accessibilityService: WhizAccessibilityService
-    ): Boolean {
-        val collapseNodes = rootNode.findAccessibilityNodeInfosByViewId(
-            "com.google.android.apps.youtube.music:id/player_collapse_button"
+                loading
+            },
         )
-        if (collapseNodes.isNullOrEmpty()) return false
-        try {
-            for (node in collapseNodes) {
-                if (node.isVisibleToUser && node.isClickable) {
-                    Log.d(TAG, "Expanded Now Playing page is covering search results; minimizing it")
-                    return accessibilityService.clickNode(node)
-                }
-            }
-            return false
-        } finally {
-            collapseNodes.forEach { it.recycle() }
+        if (outcome is WaitOutcome.Met) {
+            delay(500) // Small delay so user can see the menu appear
+        } else {
+            Log.w(TAG, "Context menu not found (query=$query)" +
+                if ((outcome as WaitOutcome.TimedOut).wasLoading) " (results were still loading)" else "")
         }
+        return opened
     }
 
     /**
@@ -7072,28 +7326,17 @@ class ScreenAgentTools @Inject constructor(
      */
     private suspend fun waitForAndClickAddToQueue(
         accessibilityService: WhizAccessibilityService,
-        maxWaitMs: Long = 1500
     ): Boolean {
-        val startTime = System.currentTimeMillis()
-        val pollIntervalMs = 200L
-
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
-                val result = clickAddToQueue(rootNode, accessibilityService)
-                rootNode.recycle()
-
-                if (result) {
-                    Log.d(TAG, "Add to queue clicked after ${System.currentTimeMillis() - startTime}ms")
-                    delay(500) // Small delay so user can see the action complete
-                    return true
-                }
-            }
-            delay(pollIntervalMs)
-        }
-
-        Log.w(TAG, "Add to queue not found after waiting ${maxWaitMs}ms")
-        return false
+        // Ceiling 3s (was 1.5s): the menu is already open, so a missing "Add to queue" entry is
+        // a wrong menu, not a slow one, and should fail before the budget runs out.
+        val clicked = waitForScreen(
+            accessibilityService,
+            "YT Music 'Add to queue' entry in the open Action menu",
+            ceilingMs = 3000,
+            success = { rootNode -> clickAddToQueue(rootNode, accessibilityService) },
+        )
+        if (clicked) delay(500) // Small delay so user can see the action complete
+        return clicked
     }
 
     /**
@@ -7210,9 +7453,9 @@ class ScreenAgentTools @Inject constructor(
                 Log.w(TAG, "Failed to click Shuffle play, falling back to row click")
             }
 
-            // Fall back to clicking a result row that matches the content type
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
+            // Fall back to clicking a result row that matches the content type. Rows inside the
+            // player (its up-next list) are excluded: they are not search results.
+            val allNodes = collectSearchResultCandidates(rootNode)
 
             // Get acceptable type indicators for this content type
             val acceptableTypes = getAcceptableTypeIndicators(contentType)
@@ -7299,8 +7542,20 @@ class ScreenAgentTools @Inject constructor(
     }
 
     private suspend fun clickPlayButtonOnDetailPage(accessibilityService: WhizAccessibilityService, contentType: String = "album"): Boolean {
-        // Wait for the detail page to load
-        delay(1000)
+        // Wait for the detail page to show a Play button (the loop below picks the right one)
+        waitForScreen(accessibilityService, "YT Music detail page Play button for '$contentType'", success = { root ->
+            val nodes = mutableListOf<AccessibilityNodeInfo>()
+            collectAllNodes(root, nodes)
+            try {
+                nodes.any { n ->
+                    n.isClickable &&
+                        (n.contentDescription?.toString()?.startsWith("Play", ignoreCase = true) == true) &&
+                        !(n.viewIdResourceName ?: "").contains("mini_player")
+                }
+            } finally {
+                nodes.forEach { it.recycle() }
+            }
+        })
 
         val isPodcast = contentType.lowercase() == "episode"
         Log.d(TAG, "Looking for Play button on detail page, contentType=$contentType, isPodcast=$isPodcast")
@@ -7515,12 +7770,30 @@ class ScreenAgentTools @Inject constructor(
     }
 
 
-    private fun openYouTubeMusicContextMenu(rootNode: AccessibilityNodeInfo, accessibilityService: WhizAccessibilityService): Boolean {
+    /** Outcome of opening a result row's Action menu: whether it opened and which row it belongs to. */
+    private data class ContextMenuOpen(
+        val opened: Boolean,
+        val title: String? = null,
+        val artist: String? = null,
+    )
+
+    /**
+     * Opens the Action menu of a song result row. With [query] set, only a row whose title/artist
+     * match it (see [YouTubeMusicRowMatcher]) is used and nothing is opened otherwise, so the
+     * caller keeps polling while a stale results page is replaced by the new search. Without a
+     * query the first song row is used, with the historical fallbacks.
+     */
+    private fun openYouTubeMusicContextMenu(
+        rootNode: AccessibilityNodeInfo,
+        accessibilityService: WhizAccessibilityService,
+        query: String? = null,
+    ): ContextMenuOpen {
         try {
             // We need to find the "Action menu" button (3-dot menu) specifically for a song result
             // Song results are Button rows containing a child with content-desc like "Song •..." or "Video •..."
-            val allNodes = mutableListOf<AccessibilityNodeInfo>()
-            collectAllNodes(rootNode, allNodes)
+            // Rows inside the player (its up-next list) are excluded: queueing one of those re-queues
+            // whatever is already playing while reporting success for the user's query.
+            val allNodes = collectSearchResultCandidates(rootNode)
 
             val acceptableSongTypes = listOf("Song •", "Video •")
 
@@ -7536,19 +7809,33 @@ class ScreenAgentTools @Inject constructor(
                     val isSongResult = hasSongTypeIndicator(node, acceptableSongTypes)
                     if (isSongResult) {
                         foundSongRows++
+                        val title = extractTitleFromResultRow(node)
+                        val artist = extractArtistFromResultRow(node)
+                        if (query != null && !YouTubeMusicRowMatcher.matches(query, title, artist)) {
+                            Log.d(TAG, "Skipping song row '$title' by '$artist': does not match query '$query'")
+                            continue
+                        }
                         // Look for "Action menu" button within this row
                         val actionMenuButton = findActionMenuInRow(node)
                         if (actionMenuButton != null) {
                             val clicked = accessibilityService.clickNode(actionMenuButton)
-                            Log.d(TAG, "Clicked Action menu button for song result: $clicked")
+                            Log.d(TAG, "Clicked Action menu button for song result '$title' by '$artist': $clicked")
                             actionMenuButton.recycle()
                             allNodes.forEach { it.recycle() }
-                            return clicked
+                            return ContextMenuOpen(clicked, title, artist)
                         } else {
                             Log.d(TAG, "Found song row but no Action menu button inside")
                         }
                     }
                 }
+            }
+
+            if (query != null) {
+                // No row for this query yet (results still loading, or a stale page): let the caller
+                // poll again rather than fall back to an arbitrary row.
+                Log.d(TAG, "openContextMenu: no song row matching '$query' among $foundSongRows song rows ($foundResultRows result rows)")
+                allNodes.forEach { it.recycle() }
+                return ContextMenuOpen(false)
             }
 
             // Fallback: If no song type indicator found, collect all Action menus in result rows and try them
@@ -7571,13 +7858,13 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Fallback: Clicked second Action menu button (skipping first/top result): $clicked")
                 actionMenuButtons.forEach { it.recycle() }
                 allNodes.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             } else if (actionMenuButtons.isNotEmpty()) {
                 val clicked = accessibilityService.clickNode(actionMenuButtons[0])
                 Log.d(TAG, "Fallback: Only one Action menu found, clicking it: $clicked")
                 actionMenuButtons.forEach { it.recycle() }
                 allNodes.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             }
 
             // Final fallback: Find ANY "Action menu" buttons directly by content description
@@ -7595,7 +7882,7 @@ class ScreenAgentTools @Inject constructor(
                 Log.d(TAG, "Final fallback: Found ${directActionMenus.size} direct Action menu buttons, clicked first: $clicked")
                 allNodes.forEach { if (!directActionMenus.contains(it)) it.recycle() }
                 directActionMenus.forEach { it.recycle() }
-                return clicked
+                return ContextMenuOpen(clicked)
             }
 
             // Log what content-descs we found for debugging
@@ -7610,10 +7897,10 @@ class ScreenAgentTools @Inject constructor(
             // Dump UI for debugging before recycling nodes
             dumpUIHierarchy(rootNode, "ytmusic_no_action_menu", "No song search results with action menu found in YouTube Music")
             allNodes.forEach { it.recycle() }
-            return false
+            return ContextMenuOpen(false)
         } catch (e: Exception) {
             Log.e(TAG, "Error opening YouTube Music context menu", e)
-            return false
+            return ContextMenuOpen(false)
         }
     }
 
@@ -7784,27 +8071,24 @@ class ScreenAgentTools @Inject constructor(
         return hasSongTypeIndicator(node, acceptableTypes)
     }
 
-    private fun findActionMenuInRow(rowNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    /**
+     * The row's "Action menu" (3-dot) button, searched up to [maxDepth] levels below the row.
+     * Older YouTube Music builds put it one or two levels down; the Nov 2026 search rows nest it
+     * three deep (Button > ViewGroup > ViewGroup > Button "Action menu", ui dump
+     * ytmusic_queue_no_context_menu 2026-11-26), the same depth [hasSongTypeIndicator] allows.
+     * The returned node is the caller's to recycle.
+     */
+    private fun findActionMenuInRow(rowNode: AccessibilityNodeInfo, maxDepth: Int = 4): AccessibilityNodeInfo? {
+        if (maxDepth <= 0) return null
         for (i in 0 until rowNode.childCount) {
             val child = rowNode.getChild(i) ?: continue
             val childContentDesc = child.contentDescription?.toString() ?: ""
-
             if (childContentDesc.equals("Action menu", ignoreCase = true)) {
                 return child
             }
-
-            // Check grandchildren
-            for (j in 0 until child.childCount) {
-                val grandchild = child.getChild(j) ?: continue
-                val grandchildContentDesc = grandchild.contentDescription?.toString() ?: ""
-
-                if (grandchildContentDesc.equals("Action menu", ignoreCase = true)) {
-                    child.recycle()
-                    return grandchild
-                }
-                grandchild.recycle()
-            }
+            val deeper = findActionMenuInRow(child, maxDepth - 1)
             child.recycle()
+            if (deeper != null) return deeper
         }
         return null
     }
@@ -8048,6 +8332,87 @@ class ScreenAgentTools @Inject constructor(
             .replace(Regex("[\\s\\u200B-\\u200D\\uFEFF]"), "") // Remove all whitespace and invisible chars
             .replace(Regex("\\(you\\)$"), "") // Remove "(You)" suffix
             .replace(Regex("[()\\-]"), "") // Remove parentheses and hyphens from phone numbers
+    }
+
+    /**
+     * What a messaging app labelled a chat we were asked to open, keyed by package + normalized
+     * request: e.g. "com.whatsapp|+16282099005" -> "ruthgracewong". A request by phone number can
+     * never string-match the saved contact name WhatsApp/Messages put in the header, so without this
+     * every follow-up draft re-selected a chat we were already in. In-memory on purpose: it lives as
+     * long as this singleton (the app process); a stale entry just costs one re-selection, after
+     * which the fresh header overwrites it.
+     */
+    private val chatAliases = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun rememberChatAlias(packageName: String, requested: String, onScreen: String?) {
+        val shown = onScreen?.let { normalizeChatName(it) }?.takeIf { it.isNotBlank() } ?: return
+        val key = "$packageName|${normalizeChatName(requested)}"
+        if (chatAliases.put(key, shown) != shown) {
+            Log.d(TAG, "Remembering chat alias $key -> $shown")
+        }
+    }
+
+    /**
+     * True when [onScreen] (the header of the open chat) is the chat the user asked for: either by
+     * normalized text (handles "+1(628)209-9005" vs "+1 (628) 209-9005 (You)") or by a remembered
+     * alias from an earlier selection in this process.
+     */
+    private fun isSameChat(packageName: String, requested: String, onScreen: String?): Boolean {
+        if (onScreen == null) return false
+        val current = normalizeChatName(onScreen)
+        val wanted = normalizeChatName(requested)
+        if (current.isBlank() || wanted.isBlank()) return false
+        if (current == wanted || current.contains(wanted) || wanted.contains(current)) return true
+        return chatAliases["$packageName|$wanted"] == current
+    }
+
+    /** Header name of the open WhatsApp chat, or null when WhatsApp is not inside a chat. */
+    private fun currentWhatsAppChatName(accessibilityService: WhizAccessibilityService): String? {
+        val root = accessibilityService.getRootNodeForPackage("com.whatsapp") ?: return null
+        return try {
+            if (detectWhatsAppScreen(root) == WhatsAppScreen.INSIDE_CHAT) getCurrentWhatsAppChatName(root) else null
+        } finally {
+            root.recycle()
+        }
+    }
+
+    /**
+     * Header name of the open Messages conversation, or null when none is open. Reads the Messages
+     * window itself rather than rootInActiveWindow, which can be the keyboard or a Whiz overlay.
+     */
+    private fun currentSMSContactName(accessibilityService: WhizAccessibilityService): String? {
+        val root = accessibilityService.getRootNodeForPackage("com.google.android.apps.messaging")
+            ?: accessibilityService.getCurrentRootNode()
+            ?: return null
+        return try {
+            getCurrentSMSContactName(root)
+        } finally {
+            root.recycle()
+        }
+    }
+
+    /** [currentSMSContactName], waiting briefly for the header to render after a navigation. */
+    private suspend fun awaitSMSContactName(accessibilityService: WhizAccessibilityService, maxWaitMs: Long = 2000): String? {
+        var name: String? = currentSMSContactName(accessibilityService)
+        if (name == null) {
+            waitForCondition(maxWaitMs = maxWaitMs) {
+                name = currentSMSContactName(accessibilityService)
+                name != null
+            }
+        }
+        return name
+    }
+
+    /** [currentWhatsAppChatName], waiting briefly for the header to render after a navigation. */
+    private suspend fun awaitWhatsAppChatName(accessibilityService: WhizAccessibilityService, maxWaitMs: Long = 2000): String? {
+        var name: String? = currentWhatsAppChatName(accessibilityService)
+        if (name == null) {
+            waitForCondition(maxWaitMs = maxWaitMs) {
+                name = currentWhatsAppChatName(accessibilityService)
+                name != null
+            }
+        }
+        return name
     }
 
     /**
@@ -8450,24 +8815,133 @@ class ScreenAgentTools @Inject constructor(
         maxIntervalMs: Long = 500,
         condition: suspend () -> Boolean
     ): Boolean {
-        val startTime = System.currentTimeMillis()
-        var currentDelay = initialDelayMs
+        // Shim over pollUntil: same backoff and ceiling as before, no tool deadline.
+        // New code should call waitForScreen with a description instead.
+        return pollUntil(
+            waitingFor = "condition",
+            deadline = null,
+            ceilingMs = maxWaitMs,
+            initialDelayMs = initialDelayMs,
+            maxIntervalMs = maxIntervalMs,
+            log = { Log.d(TAG, it) },
+            read = { Unit },
+            success = { condition() },
+        ) is WaitOutcome.Met
+    }
 
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            if (condition()) {
-                Log.d(TAG, "Condition met after ${System.currentTimeMillis() - startTime}ms")
-                return true
-            }
+    /**
+     * Wait for the screen to satisfy [success], bounded by the running tool's [ToolDeadline]
+     * (and [ceilingMs], when the predicate can tell "loaded but wrong" from "still loading" and
+     * should give up early). [waitingFor] names the wait in every log line, e.g.
+     * "Messages conversation to open". [stillLoading] is reported, not used to extend.
+     *
+     * Each polled root is recycled here; predicates must not keep it.
+     */
+    private suspend fun waitForScreen(
+        accessibilityService: WhizAccessibilityService,
+        waitingFor: String,
+        ceilingMs: Long? = null,
+        packageName: String? = null,
+        stillLoading: (AccessibilityNodeInfo) -> Boolean = { false },
+        success: (AccessibilityNodeInfo) -> Boolean,
+    ): Boolean {
+        val outcome = pollUntil(
+            waitingFor = waitingFor,
+            deadline = currentToolDeadline(),
+            ceilingMs = ceilingMs,
+            log = { Log.d(TAG, it) },
+            // packageName: read that app's window rather than whatever is in front (e.g. the IME)
+            read = {
+                if (packageName != null) accessibilityService.getRootNodeForPackage(packageName)
+                else accessibilityService.getCurrentRootNode()
+            },
+            // pollUntil's contract: success(root) is the last touch when it returns true,
+            // otherwise stillLoading(root) is. Recycle in exactly those places.
+            success = { root ->
+                val met = success(root)
+                if (met) root.recycle()
+                met
+            },
+            stillLoading = { root ->
+                val loading = stillLoading(root)
+                root.recycle()
+                loading
+            },
+        )
+        if (outcome is WaitOutcome.TimedOut) {
+            Log.w(TAG, "$waitingFor: gave up after ${outcome.elapsedMs}ms" +
+                if (outcome.wasLoading) " while the screen was still loading" else "")
+        }
+        return outcome is WaitOutcome.Met
+    }
 
-            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
-            if (remainingTime > 0) {
-                delay(minOf(currentDelay, remainingTime))
-                currentDelay = minOf(currentDelay * 2, maxIntervalMs)
+    /** After MessageDraftOverlayService.stop(), wait for the overlay service to actually go away. */
+    private suspend fun awaitDraftOverlayGone() {
+        pollUntil(
+            waitingFor = "draft overlay to be dismissed",
+            deadline = currentToolDeadline(),
+            ceilingMs = 1000,
+            log = { Log.d(TAG, it) },
+            read = { Unit },
+            success = { !MessageDraftOverlayService.isActive },
+        )
+    }
+
+    // ---- Predicate factories for waitForScreen ------------------------------------------
+
+    /** True when at least one node with [viewId] is in the tree. */
+    private fun elementPresent(viewId: String): (AccessibilityNodeInfo) -> Boolean = { root ->
+        val nodes = root.findAccessibilityNodeInfosByViewId(viewId)
+        val present = !nodes.isNullOrEmpty()
+        nodes?.forEach { it.recycle() }
+        present
+    }
+
+    /** True when no node with [viewId] is in the tree. */
+    private fun elementGone(viewId: String): (AccessibilityNodeInfo) -> Boolean {
+        val present = elementPresent(viewId)
+        return { root -> !present(root) }
+    }
+
+    /** True when at least one node whose text contains [text] is in the tree. */
+    private fun textPresent(text: String): (AccessibilityNodeInfo) -> Boolean = { root ->
+        val nodes = root.findAccessibilityNodeInfosByText(text)
+        val present = !nodes.isNullOrEmpty()
+        nodes?.forEach { it.recycle() }
+        present
+    }
+
+    /**
+     * True once the tree looks the same as on the previous poll (same shape and first few
+     * texts): a wait for scrolling or animation to stop rather than for an element. Each call
+     * site must make its own instance; the previous snapshot lives in the closure.
+     */
+    private fun treeSettled(): (AccessibilityNodeInfo) -> Boolean {
+        var previous: String? = null
+        return { root ->
+            val snapshot = treeSignature(root)
+            val settled = previous != null && snapshot == previous
+            previous = snapshot
+            settled
+        }
+    }
+
+    /** Child count and the first few texts/descriptions of the tree, visiting at most 60 nodes. */
+    private fun treeSignature(root: AccessibilityNodeInfo): String {
+        val texts = ArrayList<String>(5)
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo) {
+            if (visited++ >= 60 || texts.size >= 5) return
+            val label = node.text?.toString()?.takeIf { it.isNotBlank() }
+                ?: node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+            if (label != null) texts.add(label)
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                try { visit(child) } finally { child.recycle() }
             }
         }
-
-        Log.d(TAG, "Condition not met after ${maxWaitMs}ms timeout")
-        return false
+        visit(root)
+        return "${root.childCount}|${texts.joinToString("|")}"
     }
 
     /**
@@ -8561,42 +9035,32 @@ class ScreenAgentTools @Inject constructor(
         text: String? = null,
         maxWaitMs: Long = 2000
     ): AccessibilityNodeInfo? {
-        val startTime = System.currentTimeMillis()
-        var currentDelay = 50L
-        
-        while (System.currentTimeMillis() - startTime < maxWaitMs) {
-            val rootNode = accessibilityService.getCurrentRootNode()
-            if (rootNode != null) {
+        // Shim over pollUntil: same backoff and ceiling as before, no tool deadline. Returns
+        // the first matching node (caller recycles it).
+        var found: AccessibilityNodeInfo? = null
+        pollUntil(
+            waitingFor = "element ${viewId ?: "text '$text'"}",
+            deadline = null,
+            ceilingMs = maxWaitMs,
+            log = { Log.d(TAG, it) },
+            read = { accessibilityService.getCurrentRootNode() },
+            success = { rootNode ->
                 val nodes = when {
                     viewId != null -> rootNode.findAccessibilityNodeInfosByViewId(viewId)
                     text != null -> rootNode.findAccessibilityNodeInfosByText(text)
                     else -> null
                 }
-                
-                if (nodes != null && nodes.isNotEmpty()) {
-                    val result = nodes[0]
-                    // Recycle the rest
-                    for (i in 1 until nodes.size) {
-                        nodes[i].recycle()
-                    }
-                    rootNode.recycle()
-                    Log.d(TAG, "Element found after ${System.currentTimeMillis() - startTime}ms")
-                    return result
+                if (!nodes.isNullOrEmpty()) {
+                    found = nodes[0]
+                    for (i in 1 until nodes.size) nodes[i].recycle()
+                } else {
+                    nodes?.forEach { it.recycle() }
                 }
-                
-                nodes?.forEach { it.recycle() }
                 rootNode.recycle()
-            }
-            
-            val remainingTime = maxWaitMs - (System.currentTimeMillis() - startTime)
-            if (remainingTime > 0) {
-                delay(minOf(currentDelay, remainingTime))
-                currentDelay = minOf(currentDelay * 2, 500)
-            }
-        }
-        
-        Log.d(TAG, "Element not found after ${maxWaitMs}ms timeout")
-        return null
+                found != null
+            },
+        )
+        return found
     }
     
     /**
@@ -8929,7 +9393,9 @@ class ScreenAgentTools @Inject constructor(
                     // Continue trying anyway - maybe the next one will work
                 }
 
-                delay(400) // Wait for scroll animation to complete
+                WhizAccessibilityService.getInstance()?.let {
+                    waitForScreen(it, "chat list to settle after scroll-to-top", ceilingMs = 800, success = treeSettled())
+                }
             }
 
             if (scrollAttempt >= maxScrollAttempts) {
@@ -8968,7 +9434,7 @@ class ScreenAgentTools @Inject constructor(
                         val searchFieldAppeared = waitForElement(
                             accessibilityService,
                             viewId = "com.whatsapp:id/search_input",
-                            maxWaitMs = 1500
+                            maxWaitMs = currentToolDeadline()?.remainingMs() ?: 1500
                         )
                         searchFieldAppeared?.recycle()
 
@@ -9181,6 +9647,19 @@ class ScreenAgentTools @Inject constructor(
      * Saves locally to /sdcard/Download/whiz_ui_dump_<timestamp>.txt
      * Also uploads to server asynchronously (fire-and-forget).
      */
+    /**
+     * True only while an instrumented test is driving the app: the androidx.test classes are
+     * androidTest-only dependencies, so they are on the classpath only then.
+     */
+    private val isRunningUnderInstrumentation: Boolean by lazy {
+        try {
+            Class.forName("androidx.test.platform.app.InstrumentationRegistry")
+            true
+        } catch (e: ClassNotFoundException) {
+            false
+        }
+    }
+
     internal fun dumpUIHierarchy(rootNode: AccessibilityNodeInfo, reason: String, errorMessage: String? = null, expectedFailure: Boolean = false) {
         try {
             val timestamp = System.currentTimeMillis()
@@ -10023,7 +10502,7 @@ class ScreenAgentTools @Inject constructor(
 
             // Wait for a recognizable Fitbit screen to appear (handles loading/splash)
             var currentScreen = FitbitScreen.UNKNOWN
-            val initialDetected = waitForCondition(maxWaitMs = 5000) {
+            val initialDetected = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
                 val rootNode = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                 if (rootNode != null) {
                     currentScreen = detectFitbitScreen(rootNode)
@@ -10037,7 +10516,7 @@ class ScreenAgentTools @Inject constructor(
                 for (attempt in 0 until 5) {
                     accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
 
-                    val found = waitForCondition(maxWaitMs = 2000) {
+                    val found = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2000) {
                         val rootNode = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                         if (rootNode != null) {
                             currentScreen = detectFitbitScreen(rootNode)
@@ -10216,7 +10695,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // Wait for Food detail page to load
-        val foodPageReady = waitForCondition(maxWaitMs = 5000) {
+        val foodPageReady = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
             val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
@@ -10298,7 +10777,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // Wait for dropdown to appear (look for "Add Quick Calories" text)
-        val dropdownReady = waitForCondition(maxWaitMs = 3000) {
+        val dropdownReady = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 3000) {
             val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val addQuickCalNodes = node.findAccessibilityNodeInfosByText("Add Quick Calories")
@@ -10371,7 +10850,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // Wait for Add Quick Calories screen
-        val screenReady = waitForCondition(maxWaitMs = 5000) {
+        val screenReady = waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
             val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
@@ -10496,7 +10975,7 @@ class ScreenAgentTools @Inject constructor(
         }
 
         // Wait for the Add Quick Calories screen to go away (log saved)
-        waitForCondition(maxWaitMs = 5000) {
+        waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 5000) {
             val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
             if (node != null) {
                 val screen = detectFitbitScreen(node)
@@ -10508,7 +10987,7 @@ class ScreenAgentTools @Inject constructor(
         // Press BACK to return to Fitbit home, waiting for screen change after each press
         for (i in 0 until 2) {
             accessibilityService.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            waitForCondition(maxWaitMs = 2000) {
+            waitForCondition(maxWaitMs = currentToolDeadline()?.remainingMs() ?: 2000) {
                 val node = accessibilityService.getRootNodeForPackage("com.fitbit.FitbitMobile")
                 if (node != null) {
                     val screen = detectFitbitScreen(node)

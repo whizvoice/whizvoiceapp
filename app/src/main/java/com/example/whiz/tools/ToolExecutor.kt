@@ -152,6 +152,32 @@ class ToolExecutor @Inject constructor(
     private val _toolResults = MutableSharedFlow<ToolExecutionResult>()
     val toolResults: SharedFlow<ToolExecutionResult> = _toolResults.asSharedFlow()
 
+    /**
+     * Single exit for every tool result. A screen agent tool that reports `success: false` gets a
+     * `stuck` block (see [StuckReport]) with the live interactable element list, read with
+     * [ScreenAgentTools.getUi] so the `[n]` ids are valid for agent_click without another
+     * agent_get_ui round trip. Building the block must never cost the result itself: any failure
+     * is logged and the original result is emitted unchanged.
+     */
+    private suspend fun emitResult(result: ToolExecutionResult) {
+        var toEmit = result
+        if (result is ToolExecutionResult.Success &&
+            StuckReport.shouldAttach(result.toolName, result.result, requires(result.toolName, Requirement.ACCESSIBILITY))
+        ) {
+            try {
+                val ui = runCatching { screenAgentTools.getUi("interactable") }.getOrNull()
+                val screen = ui?.takeIf { it.success }?.dump?.takeIf { it.isNotBlank() }
+                val foreground = runCatching { WhizAccessibilityService.getCurrentPackageName() }.getOrNull()
+                StuckReport.attach(result.toolName, result.result, screen, foreground, selfPackage = context.packageName)
+                Log.i(TAG, "[STUCK] attached screen (${screen?.length ?: 0} chars, foreground=$foreground) to ${result.toolName}")
+            } catch (e: Exception) {
+                Log.w(TAG, "[STUCK] could not build stuck block for ${result.toolName}: ${e.message}")
+                toEmit = result
+            }
+        }
+        _toolResults.emit(toEmit)
+    }
+
     // Dedup guard: prevents the same requestId from being executed concurrently
     private val inFlightRequestIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
@@ -213,7 +239,7 @@ class ToolExecutor @Inject constructor(
                     abandonAccessibilityWait()
                     break
                 }
-                _toolResults.emit(ToolExecutionResult.Status(
+                emitResult(ToolExecutionResult.Status(
                     toolName = toolName,
                     requestId = requestId,
                     status = "waiting_for_accessibility",
@@ -347,7 +373,7 @@ class ToolExecutor @Inject constructor(
                     abandonUnlockWait()
                     break
                 }
-                _toolResults.emit(ToolExecutionResult.Status(
+                emitResult(ToolExecutionResult.Status(
                     toolName = toolName,
                     requestId = requestId,
                     status = "waiting_for_unlock",
@@ -394,13 +420,18 @@ class ToolExecutor @Inject constructor(
         voiceManager: com.example.whiz.ui.viewmodels.VoiceManager? = null,
         chatViewModel: com.example.whiz.ui.viewmodels.ChatViewModel? = null
     ) {
-        scope.launch {
+        // The server's budget_ms for this request rides in the coroutine context as a
+        // ToolDeadline, so every wait inside the tool can bound itself by what is left.
+        val deadline = ToolDeadline.fromRequest(toolRequest)
+        scope.launch(deadline) {
             try {
                 Log.i(TAG, "🎯 TOOL EXECUTOR: Starting execution")
                 Log.i(TAG, "🎯 Full request: ${toolRequest.toString(2)}")
 
                 val toolName = toolRequest.getString("tool")
                 val requestId = toolRequest.getString("request_id")
+                Log.i(TAG, "⏱ $toolName budget ${toolRequest.optLong("budget_ms", ToolDeadline.DEFAULT_BUDGET_MS)}ms " +
+                    "(deadline reserve ${ToolDeadline.RESERVE_MS}ms, ${deadline.remainingMs()}ms remaining)")
                 val params = if (toolRequest.has("params")) {
                     toolRequest.getJSONObject("params")
                 } else {
@@ -426,7 +457,7 @@ class ToolExecutor @Inject constructor(
                     if (accessibilityChecker.isServiceEnabled()) {
                         WhizAccessibilityService.reportReconnectNeeded()
                     }
-                    _toolResults.emit(ToolExecutionResult.Status(
+                    emitResult(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
                         status = "waiting_for_accessibility",
@@ -435,7 +466,7 @@ class ToolExecutor @Inject constructor(
                     val connected = awaitAccessibility(toolName, requestId)
                     if (!connected) {
                         Log.i(TAG, "♿ Accessibility wait abandoned for tool $toolName — emitting error result")
-                        _toolResults.emit(ToolExecutionResult.Error(
+                        emitResult(ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
                             error = "Accessibility service was not enabled in time. " + waitingMessage.replace("Waiting for the user to", "The user needs to")
@@ -443,12 +474,14 @@ class ToolExecutor @Inject constructor(
                         return@launch
                     }
                     // State changed: parked → running (see the unlock gate for why).
-                    _toolResults.emit(ToolExecutionResult.Status(
+                    emitResult(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
                         status = "running",
                         message = "Accessibility service connected. Running the tool now."
                     ))
+                    // The server grants a fresh 30s on "running"; keep the device deadline in step.
+                    deadline.restart(ToolDeadline.RUNNING_EXTENSION_MS)
                     // Let the freshly bound service settle before the tool uses it.
                     delay(300)
                 }
@@ -460,7 +493,7 @@ class ToolExecutor @Inject constructor(
                     val unlockCallback = MainActivity.requestUnlockCallback
                     if (unlockCallback == null) {
                         Log.e(TAG, "🔒 No unlock callback available - MainActivity may not be active")
-                        _toolResults.emit(ToolExecutionResult.Error(
+                        emitResult(ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
                             error = "Phone is locked and cannot show unlock prompt. Please unlock your phone and try again."
@@ -470,7 +503,7 @@ class ToolExecutor @Inject constructor(
 
                     // Notify the server immediately so it extends its (short) tool deadline before
                     // it lapses. awaitUnlock re-sends this every ~50s while parked.
-                    _toolResults.emit(ToolExecutionResult.Status(
+                    emitResult(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
                         status = "waiting_for_unlock",
@@ -483,7 +516,7 @@ class ToolExecutor @Inject constructor(
                     val unlocked = awaitUnlock(toolName, requestId, unlockCallback)
                     if (!unlocked) {
                         Log.i(TAG, "🔒 Unlock wait abandoned for tool $toolName — emitting timeout result")
-                        _toolResults.emit(ToolExecutionResult.Error(
+                        emitResult(ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
                             error = "Phone stayed locked — timed out. Please unlock your phone and try again."
@@ -494,12 +527,14 @@ class ToolExecutor @Inject constructor(
                     // State changed: parked → running. Tell the server so the placeholder the model
                     // sees stops saying "waiting for unlock" (it answers mid-tool interjections from
                     // that text), and so the tool gets a fresh deadline for its own work.
-                    _toolResults.emit(ToolExecutionResult.Status(
+                    emitResult(ToolExecutionResult.Status(
                         toolName = toolName,
                         requestId = requestId,
                         status = "running",
                         message = "Phone unlocked. Running the tool now."
                     ))
+                    // The server grants a fresh 30s on "running"; keep the device deadline in step.
+                    deadline.restart(ToolDeadline.RUNNING_EXTENSION_MS)
 
                     // Small delay after unlock to let the system settle
                     delay(500)
@@ -636,7 +671,7 @@ class ToolExecutor @Inject constructor(
                             val permCallback = MainActivity.requestContactsPermissionCallback
                             if (permCallback != null) {
                                 Log.i(TAG, "📇 READ_CONTACTS not granted - showing permission dialog")
-                                _toolResults.emit(ToolExecutionResult.Status(
+                                emitResult(ToolExecutionResult.Status(
                                     toolName = toolName,
                                     requestId = requestId,
                                     status = "waiting_for_contacts_permission",
@@ -691,7 +726,7 @@ class ToolExecutor @Inject constructor(
                     }
                     else -> {
                         Log.w(TAG, "Unknown tool: $toolName")
-                        _toolResults.emit(
+                        emitResult(
                             ToolExecutionResult.Error(
                                 toolName = toolName,
                                 requestId = requestId,
@@ -721,7 +756,7 @@ class ToolExecutor @Inject constructor(
                     inFlightRequestIds.remove(requestId)
                     _activeToolCount.value = inFlightRequestIds.size
 
-                    _toolResults.emit(
+                    emitResult(
                         ToolExecutionResult.Error(
                             toolName = toolName,
                             requestId = requestId,
@@ -819,7 +854,7 @@ class ToolExecutor @Inject constructor(
             Log.i(TAG, "📤 [TOOL_RESULT] About to emit tool result for requestId=$requestId")
             Log.i(TAG, "📤 [TOOL_RESULT] Result JSON: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_launch_app",
                     requestId = requestId,
@@ -831,7 +866,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing app launcher", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_launch_app",
                     requestId = requestId,
@@ -853,12 +888,13 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.chatName?.let { put("chat_name", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
                 result.error?.let { put("error", it) }
             }
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp select chat result for requestId=$requestId: ${resultJson.toString(2)}")
             
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_whatsapp_select_chat",
                     requestId = requestId,
@@ -868,7 +904,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp select chat", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_whatsapp_select_chat",
                     requestId = requestId,
@@ -895,6 +931,9 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
                 result.displayedText?.let { put("displayed_text", it) }
+                result.chatRequested?.let { put("chat_requested", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
+                put("chat_navigated", result.chatNavigated)
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
                     "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
@@ -905,7 +944,7 @@ class ToolExecutor @Inject constructor(
             
             Log.i(TAG, "[TOOL_RESULT] WhatsApp draft message result for requestId=$requestId: ${resultJson.toString(2)}")
             
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_whatsapp_draft_message",
                     requestId = requestId,
@@ -915,7 +954,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp draft message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_whatsapp_draft_message",
                     requestId = requestId,
@@ -941,7 +980,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] WhatsApp send message result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_whatsapp_send_message",
                     requestId = requestId,
@@ -951,7 +990,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing WhatsApp send message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_whatsapp_send_message",
                     requestId = requestId,
@@ -974,12 +1013,13 @@ class ToolExecutor @Inject constructor(
                 put("success", result.success)
                 put("action", result.action)
                 result.contactName?.let { put("contact_name", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
                 result.error?.let { put("error", it) }
             }
 
             Log.i(TAG, "[TOOL_RESULT] SMS select chat result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_sms_select_chat",
                     requestId = requestId,
@@ -989,7 +1029,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing SMS select chat", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_sms_select_chat",
                     requestId = requestId,
@@ -1017,6 +1057,9 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
                 put("overlay_shown", result.overlayShown)
                 result.displayedText?.let { put("displayed_text", it) }
+                result.chatRequested?.let { put("chat_requested", it) }
+                result.chatNameOnScreen?.let { put("chat_name_on_screen", it) }
+                put("chat_navigated", result.chatNavigated)
                 // Only claim the draft is displayed when it's actually visible.
                 put("important_note", if (result.overlayShown) {
                     "WAIT FOR USER CONFIRMATION before sending. Do NOT call agent_send_message in this turn. End your turn and wait for the user's next message; only send if that message explicitly confirms they want to send. The draft is now displayed to the user for review."
@@ -1027,7 +1070,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] SMS draft message result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_sms_draft_message",
                     requestId = requestId,
@@ -1037,7 +1080,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing SMS draft message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_sms_draft_message",
                     requestId = requestId,
@@ -1062,7 +1105,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] SMS send message result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_sms_send_message",
                     requestId = requestId,
@@ -1072,7 +1115,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing SMS send message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_sms_send_message",
                     requestId = requestId,
@@ -1108,7 +1151,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Generic draft message result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_draft_message",
                     requestId = requestId,
@@ -1117,7 +1160,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing generic draft message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_draft_message",
                     requestId = requestId,
@@ -1141,7 +1184,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Generic send message result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_send_message",
                     requestId = requestId,
@@ -1150,7 +1193,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing generic send message", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_send_message",
                     requestId = requestId,
@@ -1167,7 +1210,7 @@ class ToolExecutor @Inject constructor(
         try {
             if (voiceManager == null) {
                 Log.e(TAG, "VoiceManager not provided for disable_continuous_listening")
-                _toolResults.emit(
+                emitResult(
                     ToolExecutionResult.Error(
                         toolName = "agent_disable_continuous_listening",
                         requestId = requestId,
@@ -1198,7 +1241,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Disable continuous listening result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_disable_continuous_listening",
                     requestId = requestId,
@@ -1208,7 +1251,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error disabling continuous listening", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_disable_continuous_listening",
                     requestId = requestId,
@@ -1226,7 +1269,7 @@ class ToolExecutor @Inject constructor(
         try {
             if (chatViewModel == null) {
                 Log.e(TAG, "ChatViewModel not provided for set_tts_enabled")
-                _toolResults.emit(
+                emitResult(
                     ToolExecutionResult.Error(
                         toolName = "agent_set_tts_enabled",
                         requestId = requestId,
@@ -1267,7 +1310,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Set TTS enabled result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_set_tts_enabled",
                     requestId = requestId,
@@ -1277,7 +1320,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error setting TTS enabled", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_set_tts_enabled",
                     requestId = requestId,
@@ -1298,7 +1341,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Close app result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_close_app",
                     requestId = requestId,
@@ -1356,7 +1399,7 @@ class ToolExecutor @Inject constructor(
 
             // Stop bubble overlay service if active
             Log.i(TAG, "Stopping BubbleOverlayService")
-            BubbleOverlayService.stop(context)
+            BubbleOverlayService.stop(context, cancelInFlightTools = false)
 
             // Short delay to allow service to stop cleanly
             delay(50)
@@ -1370,7 +1413,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing close app", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_close_app",
                     requestId = requestId,
@@ -1392,7 +1435,7 @@ class ToolExecutor @Inject constructor(
                     put("success", true)
                     put("message", "App is already in foreground")
                 }
-                _toolResults.emit(
+                emitResult(
                     ToolExecutionResult.Success(
                         toolName = "agent_open_app",
                         requestId = requestId,
@@ -1410,7 +1453,7 @@ class ToolExecutor @Inject constructor(
             }
             context.startActivity(intent)
 
-            BubbleOverlayService.stop(context)
+            BubbleOverlayService.stop(context, cancelInFlightTools = false)
 
             val resultJson = JSONObject().apply {
                 put("success", true)
@@ -1419,7 +1462,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Open app result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_open_app",
                     requestId = requestId,
@@ -1428,7 +1471,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing open app", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_open_app",
                     requestId = requestId,
@@ -1454,7 +1497,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Dismiss draft result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_dismiss_draft",
                     requestId = requestId,
@@ -1463,7 +1506,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error dismissing draft overlay", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_dismiss_draft",
                     requestId = requestId,
@@ -1499,7 +1542,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Music play result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_play_youtube_music",
                     requestId = requestId,
@@ -1509,7 +1552,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing music play", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_play_youtube_music",
                     requestId = requestId,
@@ -1535,12 +1578,15 @@ class ToolExecutor @Inject constructor(
                 put("action", result.action)
                 put("music_app_used", "youtube_music")
                 result.query?.let { put("query", it) }
+                // The row whose Action menu was used, so the model reports what was actually queued.
+                result.nowPlaying?.let { put("queued_title", it) }
+                result.nowPlayingArtist?.let { put("queued_artist", it) }
                 result.error?.let { put("error", it) }
             }
 
             Log.i(TAG, "[TOOL_RESULT] Music queue result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_queue_youtube_music",
                     requestId = requestId,
@@ -1550,7 +1596,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing music queue", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_queue_youtube_music",
                     requestId = requestId,
@@ -1577,7 +1623,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] YouTube Music pause result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_pause_youtube_music",
                     requestId = requestId,
@@ -1587,7 +1633,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing YouTube Music pause", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_pause_youtube_music",
                     requestId = requestId,
@@ -1615,7 +1661,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Google Maps search result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_search_google_maps_location",
                     requestId = requestId,
@@ -1625,7 +1671,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Google Maps search", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_search_google_maps_location",
                     requestId = requestId,
@@ -1653,7 +1699,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Google Maps phrase search result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_search_google_maps_phrase",
                     requestId = requestId,
@@ -1663,7 +1709,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Google Maps phrase search", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_search_google_maps_phrase",
                     requestId = requestId,
@@ -1675,7 +1721,10 @@ class ToolExecutor @Inject constructor(
 
     private suspend fun executeGetGoogleMapsDirections(requestId: String, params: JSONObject) {
         try {
-            val mode = if (params.has("mode")) params.getString("mode") else null
+            // The server sends `"mode": null` when the user did not name one. getString() turns a JSON
+            // null into the string "null", which then matched no mode and hit the "Unknown mode" path
+            // instead of the no-mode path (the Start-button failures behind bugs 1581/1632/1672).
+            val mode = if (params.has("mode") && !params.isNull("mode")) params.getString("mode").takeIf { it.isNotBlank() && it != "null" } else null
             val search = if (params.has("search")) params.getString("search") else null
             val position = if (params.has("position")) params.getInt("position") else null
             val fragment = if (params.has("fragment")) params.getString("fragment") else null
@@ -1695,7 +1744,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Google Maps directions result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_get_google_maps_directions",
                     requestId = requestId,
@@ -1705,7 +1754,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Google Maps directions", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_get_google_maps_directions",
                     requestId = requestId,
@@ -1731,7 +1780,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Google Maps recenter result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_recenter_google_maps",
                     requestId = requestId,
@@ -1741,7 +1790,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Google Maps recenter", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_recenter_google_maps",
                     requestId = requestId,
@@ -1767,7 +1816,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Google Maps fullscreen result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_fullscreen_google_maps",
                     requestId = requestId,
@@ -1777,7 +1826,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Google Maps fullscreen", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_fullscreen_google_maps",
                     requestId = requestId,
@@ -1812,7 +1861,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] Select location result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_select_location_from_list",
                     requestId = requestId,
@@ -1822,7 +1871,7 @@ class ToolExecutor @Inject constructor(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error executing select location from list", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_select_location_from_list",
                     requestId = requestId,
@@ -1852,7 +1901,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] agent_press_call_button result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_press_call_button",
                     requestId = requestId,
@@ -1861,7 +1910,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing press call button", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_press_call_button",
                     requestId = requestId,
@@ -1887,7 +1936,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.draftCalendarEvent(params)
             Log.i(TAG, "[TOOL_RESULT] agent_draft_calendar_event result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_draft_calendar_event",
                     requestId = requestId,
@@ -1896,7 +1945,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_draft_calendar_event", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_draft_calendar_event",
                     requestId = requestId,
@@ -1927,7 +1976,7 @@ class ToolExecutor @Inject constructor(
                     val wasBubbleActive = BubbleOverlayService.isActive
                     if (wasBubbleActive) {
                         Log.i(TAG, "Bubble overlay active - stopping bubble and bringing MainActivity to foreground for permission dialog")
-                        BubbleOverlayService.stop(context)
+                        BubbleOverlayService.stop(context, cancelInFlightTools = false)
                         val bringToFrontIntent = android.content.Intent(context, MainActivity::class.java).apply {
                             addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                         }
@@ -1935,7 +1984,7 @@ class ToolExecutor @Inject constructor(
                         delay(500) // Let MainActivity come to foreground
                     }
 
-                    _toolResults.emit(ToolExecutionResult.Status(
+                    emitResult(ToolExecutionResult.Status(
                         toolName = "agent_save_calendar_event",
                         requestId = requestId,
                         status = "waiting_for_calendar_permission",
@@ -1964,7 +2013,7 @@ class ToolExecutor @Inject constructor(
                             BubbleOverlayService.pendingStartTimestamp = System.currentTimeMillis()
                             BubbleOverlayService.start(context)
                         }
-                        _toolResults.emit(
+                        emitResult(
                             ToolExecutionResult.Error(
                                 toolName = "agent_save_calendar_event",
                                 requestId = requestId,
@@ -2001,7 +2050,7 @@ class ToolExecutor @Inject constructor(
                     }
                 } else {
                     Log.w(TAG, "Calendar permissions not granted and no permission callback available")
-                    _toolResults.emit(
+                    emitResult(
                         ToolExecutionResult.Error(
                             toolName = "agent_save_calendar_event",
                             requestId = requestId,
@@ -2103,7 +2152,7 @@ class ToolExecutor @Inject constructor(
                 }
             }
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_save_calendar_event",
                     requestId = requestId,
@@ -2112,7 +2161,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing save calendar event", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_save_calendar_event",
                     requestId = requestId,
@@ -2131,7 +2180,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.deleteAlarm(params)
             Log.i(TAG, "[TOOL_RESULT] agent_delete_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_delete_alarm",
                     requestId = requestId,
@@ -2140,7 +2189,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_delete_alarm", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_delete_alarm",
                     requestId = requestId,
@@ -2159,7 +2208,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.dismissAlarm()
             Log.i(TAG, "[TOOL_RESULT] agent_dismiss_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_dismiss_alarm",
                     requestId = requestId,
@@ -2168,7 +2217,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_dismiss_alarm", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_dismiss_alarm",
                     requestId = requestId,
@@ -2187,7 +2236,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.dismissTimer()
             Log.i(TAG, "[TOOL_RESULT] agent_dismiss_timer result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_dismiss_timer",
                     requestId = requestId,
@@ -2196,7 +2245,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_dismiss_timer", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_dismiss_timer",
                     requestId = requestId,
@@ -2215,7 +2264,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.stopRinging()
             Log.i(TAG, "[TOOL_RESULT] agent_stop_ringing result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_stop_ringing",
                     requestId = requestId,
@@ -2224,7 +2273,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_stop_ringing", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_stop_ringing",
                     requestId = requestId,
@@ -2258,7 +2307,7 @@ class ToolExecutor @Inject constructor(
                 put("message", message)
             }
             Log.i(TAG, "[TOOL_RESULT] agent_snooze_rage_shake result for requestId=$requestId: ${resultJson.toString(2)}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_snooze_rage_shake",
                     requestId = requestId,
@@ -2267,7 +2316,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_snooze_rage_shake", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_snooze_rage_shake",
                     requestId = requestId,
@@ -2281,7 +2330,7 @@ class ToolExecutor @Inject constructor(
         Log.i(TAG, "Executing agent_submit_bug_report")
         val message = params.optString("message").takeIf { it.isNotBlank() }
         if (message == null) {
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_submit_bug_report",
                     requestId = requestId,
@@ -2298,7 +2347,7 @@ class ToolExecutor @Inject constructor(
                 put("message", "Bug report submitted.")
             }
             Log.i(TAG, "[TOOL_RESULT] agent_submit_bug_report result for requestId=$requestId: ${resultJson.toString(2)}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_submit_bug_report",
                     requestId = requestId,
@@ -2308,7 +2357,7 @@ class ToolExecutor @Inject constructor(
         } else {
             val err = result.exceptionOrNull()
             Log.e(TAG, "Error executing agent_submit_bug_report", err)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_submit_bug_report",
                     requestId = requestId,
@@ -2327,7 +2376,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = deviceControlTools.dismissAmdroidAlarm()
             Log.i(TAG, "[TOOL_RESULT] agent_dismiss_amdroid_alarm result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_dismiss_amdroid_alarm",
                     requestId = requestId,
@@ -2336,7 +2385,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_dismiss_amdroid_alarm", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_dismiss_amdroid_alarm",
                     requestId = requestId,
@@ -2361,7 +2410,7 @@ class ToolExecutor @Inject constructor(
             val resultJson = action(params)
             Log.i(TAG, "[TOOL_RESULT] $toolName result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = toolName,
                     requestId = requestId,
@@ -2370,7 +2419,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing $toolName", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = toolName,
                     requestId = requestId,
@@ -2391,7 +2440,7 @@ class ToolExecutor @Inject constructor(
         val callback = MainActivity.requestGoogleContactsConsentCallback
         if (callback == null) {
             Log.w(TAG, "No Google Contacts consent callback registered (no foreground Activity)")
-            _toolResults.emit(ToolExecutionResult.Success(
+            emitResult(ToolExecutionResult.Success(
                 toolName = toolName,
                 requestId = requestId,
                 result = JSONObject().put("declined", true).put("reason", "No UI available for consent")
@@ -2400,7 +2449,7 @@ class ToolExecutor @Inject constructor(
         }
 
         Log.i(TAG, "🔗 Requesting Google Contacts consent")
-        _toolResults.emit(ToolExecutionResult.Status(
+        emitResult(ToolExecutionResult.Status(
             toolName = toolName,
             requestId = requestId,
             status = "waiting_for_google_contacts_consent",
@@ -2413,7 +2462,7 @@ class ToolExecutor @Inject constructor(
         val heartbeat = scope.launch {
             while (true) {
                 delay(30_000L)
-                _toolResults.emit(ToolExecutionResult.Status(
+                emitResult(ToolExecutionResult.Status(
                     toolName = toolName,
                     requestId = requestId,
                     status = "waiting_for_google_contacts_consent",
@@ -2450,7 +2499,7 @@ class ToolExecutor @Inject constructor(
                 result.put("server_auth_code", outcome)
             }
         }
-        _toolResults.emit(ToolExecutionResult.Success(toolName = toolName, requestId = requestId, result = result))
+        emitResult(ToolExecutionResult.Success(toolName = toolName, requestId = requestId, result = result))
     }
 
     // Method to list available tools (useful for discovery)
@@ -2496,7 +2545,7 @@ class ToolExecutor @Inject constructor(
                 val topUpCallback = MainActivity.requestHealthConnectPermissionCallback
                 if (topUpCallback != null) {
                     Log.i(TAG, "🏥 Missing HC perms (${missingPerms.size}/${desiredPerms.size}); requesting full bundle upfront")
-                    _toolResults.emit(
+                    emitResult(
                         ToolExecutionResult.Status(
                             toolName = "agent_log_health_data",
                             requestId = requestId,
@@ -2525,7 +2574,7 @@ class ToolExecutor @Inject constructor(
                     val permCallback = MainActivity.requestHealthConnectPermissionCallback
                     if (permCallback != null) {
                         Log.i(TAG, "🏥 HC permission missing (${initialHcResult.permission}); showing permission dialog")
-                        _toolResults.emit(
+                        emitResult(
                             ToolExecutionResult.Status(
                                 toolName = "agent_log_health_data",
                                 requestId = requestId,
@@ -2643,7 +2692,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] agent_log_health_data result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_log_health_data",
                     requestId = requestId,
@@ -2652,7 +2701,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_log_health_data", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_log_health_data",
                     requestId = requestId,
@@ -2668,7 +2717,7 @@ class ToolExecutor @Inject constructor(
 
             val callback = MainActivity.openHealthAppSettingsCallback
             val opened = if (callback != null) {
-                _toolResults.emit(
+                emitResult(
                     ToolExecutionResult.Status(
                         toolName = "agent_open_health_app_settings",
                         requestId = requestId,
@@ -2695,7 +2744,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] agent_open_health_app_settings result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_open_health_app_settings",
                     requestId = requestId,
@@ -2704,7 +2753,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing agent_open_health_app_settings", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_open_health_app_settings",
                     requestId = requestId,
@@ -2729,7 +2778,7 @@ class ToolExecutor @Inject constructor(
 
             Log.i(TAG, "[TOOL_RESULT] agent_close_other_app result for requestId=$requestId: ${resultJson.toString(2)}")
 
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_close_other_app",
                     requestId = requestId,
@@ -2738,7 +2787,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing close other app", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_close_other_app",
                     requestId = requestId,
@@ -2757,7 +2806,7 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_press_back result for requestId=$requestId: ${resultJson.toString(2)}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_press_back",
                     requestId = requestId,
@@ -2766,7 +2815,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing press back", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_press_back",
                     requestId = requestId,
@@ -2788,7 +2837,7 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_get_ui result for requestId=$requestId: success=${result.success}, nodes=${result.nodeCount}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_get_ui",
                     requestId = requestId,
@@ -2797,7 +2846,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing get ui", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_get_ui",
                     requestId = requestId,
@@ -2822,7 +2871,7 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_peek_app result for requestId=$requestId: success=${result.success}, peeked=${result.peekedPackage}, nodes=${result.nodeCount}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_peek_app",
                     requestId = requestId,
@@ -2831,7 +2880,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing peek app", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_peek_app",
                     requestId = requestId,
@@ -2853,7 +2902,7 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_click result for requestId=$requestId: ${resultJson.toString(2)}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_click",
                     requestId = requestId,
@@ -2862,7 +2911,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing click", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_click",
                     requestId = requestId,
@@ -2891,7 +2940,7 @@ class ToolExecutor @Inject constructor(
                 result.error?.let { put("error", it) }
             }
             Log.i(TAG, "[TOOL_RESULT] agent_insert_text result for requestId=$requestId: ${resultJson.toString(2)}")
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Success(
                     toolName = "agent_insert_text",
                     requestId = requestId,
@@ -2900,7 +2949,7 @@ class ToolExecutor @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error executing insert text", e)
-            _toolResults.emit(
+            emitResult(
                 ToolExecutionResult.Error(
                     toolName = "agent_insert_text",
                     requestId = requestId,

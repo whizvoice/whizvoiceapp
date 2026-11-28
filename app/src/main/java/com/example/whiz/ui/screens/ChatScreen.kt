@@ -731,14 +731,24 @@ fun ChatScreen(
         // Enable continuous listening on voice-activated entry (wake word, long-press, OS assistant)
         // OR for new chats (no local row yet). For existing-chat re-entry without voice
         // activation, respect the user's current state (the MainActivity nav listener restores it).
-        if (effectiveHasPermission && (enableTTSMode || viewModel.isNewChat(chatId))) {
-            voiceManager.updateContinuousListeningEnabled(true)
-            viewModel.ensureContinuousListeningEnabled()
-            voiceInitialized.value = true
-        } else if (!effectiveHasPermission) {
-            // No microphone permission - voice setup skipped
-        } else {
-            voiceInitialized.value = true // Mark as initialized so we don't override later
+        val micWasOnBeforeLookup = voiceManager.isContinuousListeningEnabled.value
+        val shouldEnable = effectiveHasPermission && (enableTTSMode || viewModel.isNewChat(chatId))
+        // The isNewChat lookup can resume on the database thread; the speech recognizer may only
+        // be started from the main thread.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            if (shouldEnable) {
+                // If the mic was turned off while the lookup was running, leave it off
+                val turnedOffMeanwhile = micWasOnBeforeLookup && !voiceManager.isContinuousListeningEnabled.value
+                if (!turnedOffMeanwhile) {
+                    voiceManager.updateContinuousListeningEnabled(true)
+                    viewModel.ensureContinuousListeningEnabled()
+                }
+                voiceInitialized.value = true
+            } else if (!effectiveHasPermission) {
+                // No microphone permission - voice setup skipped
+            } else {
+                voiceInitialized.value = true // Mark as initialized so we don't override later
+            }
         }
 
         // Note: TTS enabling is now handled by the separate LaunchedEffect above

@@ -38,6 +38,29 @@ cd whizvoiceapp
 ./run_tests_on_debug.sh
 ```
 
+### screen agent tests (instrumented)
+
+Instrumented screen agent tests. They drive the real third-party app with UiAutomator and assert on
+in-process tool results, the media session, or the live stream volume instead of a vision model's
+reading of a screenshot. They need a real phone (skipped on CI/emulator), the whizvoicetest login,
+and for the messaging tests the other test phone reachable. A plain `./run_tests_on_debug.sh` run
+includes them. The runner gives each of these classes its own Gradle invocation (its own app
+process): they observe the Hilt-injected `ToolExecutor` through the live app, and an Activity or
+Service left over from a previous test class in the same process holds the previous class's Hilt
+component, so the tool runs but the new class never sees the result.
+
+```
+# just the five screen agent tests
+./run_tests_on_debug.sh --screen-agent
+
+# individually
+./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.SmsDraftMessageTest
+./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.WhatsAppDraftMessageTest
+./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.YouTubeMusicTest
+./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.GoogleMapsDirectionsTest
+./run_tests_on_debug.sh --skip-unit --test com.example.whiz.integration.MediaStreamDuckTest
+```
+
 ### run tests on emulator
 
 ```
@@ -77,7 +100,10 @@ to shut down: `adb -s emulator-5554 emu kill` or close the window.
 sudo journalctl -u whizvoice --since "Aug 05 07:15:36 UTC" --no-pager > whizvoice_server_logs.txt
 ```
 
-### integration tests
+### autofix verification tests (python)
+
+The screen agent tests themselves are instrumented tests (see "screen agent tests" above). The
+Python venv is only needed for the autofix verification tests in `autofix_tests/`.
 
 #### set up
 
@@ -97,5 +123,5 @@ export ANTHROPIC_API_KEY=your-key-here
 #### run
 
 ```
-./venv/bin/pytest run_screen_agent_tests.py
+./venv/bin/pytest autofix_tests
 ```

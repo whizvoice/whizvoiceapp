@@ -7,6 +7,9 @@ import com.example.whiz.data.preferences.WakeWordPreferences
 import com.example.whiz.data.repository.WhizRepository
 import com.example.whiz.data.remote.WhizServerRepository
 import com.example.whiz.services.WakeWordService
+import com.example.whiz.services.WakeWordServiceSupervisor
+import com.example.whiz.services.WakeWordStartFailure
+import com.example.whiz.services.WakeWordStartTrigger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +25,7 @@ class ChatsListViewModel @Inject constructor(
     private val repository: WhizRepository,
     private val whizServerRepository: WhizServerRepository,
     private val wakeWordPreferences: WakeWordPreferences,
+    private val wakeWordServiceSupervisor: WakeWordServiceSupervisor,
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context
 ) : ViewModel() {
 
@@ -40,6 +44,13 @@ class ChatsListViewModel @Inject constructor(
 
     // Wake word state
     val isWakeWordEnabled: StateFlow<Boolean> = wakeWordPreferences.isEnabled
+
+    // Non-null while wake word is enabled but Android refused to start it with the app on screen
+    val wakeWordStartFailure: StateFlow<WakeWordStartFailure?> = wakeWordServiceSupervisor.failure
+
+    fun retryWakeWordStart() {
+        wakeWordServiceSupervisor.ensureRunning(WakeWordStartTrigger.USER_RETRY)
+    }
 
     fun toggleWakeWord() {
         viewModelScope.launch {

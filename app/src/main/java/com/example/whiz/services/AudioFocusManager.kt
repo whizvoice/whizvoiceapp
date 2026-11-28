@@ -137,7 +137,7 @@ class AudioFocusManager @Inject constructor(
             // the other app. setWillPauseWhenDucked(true) opts us out of silent auto-ducking: we
             // receive AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK instead and attemptDuckingReRequest() puts
             // us back on top so the other app ducks for us. Do not remove. (Verified red->green by
-            // run_screen_agent_tests.py::test_google_maps_directions.)
+            // the Google Maps directions screen agent test, now GoogleMapsDirectionsTest.)
             .setWillPauseWhenDucked(true)
             // EXPERIMENT: force ducking even on apps that handle ducking themselves and ignore the
             // polite duck (Google Maps nav keeps its voice at full volume otherwise — confirmed via

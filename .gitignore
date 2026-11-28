@@ -26,7 +26,6 @@ snapshot_encryption_key.txt
 current_screen.png
 adb_tests/screenshots/*
 __pycache__/
-screen_agent_test_output/*
 autofix_test_output/
 debug_apk_checksum
 production_apk_checksum
